@@ -1,14 +1,52 @@
 import {
   AttachmentBuilder,
+  AutocompleteInteraction,
   ChatInputCommandInteraction,
   EmbedBuilder,
+  SlashCommandStringOption,
   SlashCommandBuilder,
 } from 'discord.js';
 import { PaladinsCatApi, PaladinsCatApiError } from './api-client.js';
 import { RenderService } from './render-service.js';
 import { QueueFullError } from './render-queue.js';
+import type { Champion } from './types.js';
 
 const accent = 0x2dd4a3;
+const championOption = (option: SlashCommandStringOption) => option
+  .setName('champion')
+  .setDescription('Champion name')
+  .setRequired(true)
+  .setAutocomplete(true);
+
+function normalized(value: string) {
+  return value.normalize('NFKD').toLocaleLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+export function championAutocompleteChoices(champions: Champion[], input: string) {
+  const query = normalized(input);
+  const unique = [...new Map(
+    champions
+      .filter((champion) => champion?.name)
+      .map((champion) => [normalized(champion.name), champion] as const),
+  ).values()];
+
+  return unique
+    .map((champion) => {
+      const key = normalized(champion.name);
+      const words = champion.name.split(/[^a-z0-9]+/i).map(normalized).filter(Boolean);
+      const score = !query ? 4
+        : key === query ? 0
+          : key.startsWith(query) ? 1
+            : words.some((word) => word.startsWith(query)) ? 2
+              : key.includes(query) ? 3
+                : Number.POSITIVE_INFINITY;
+      return { champion, score };
+    })
+    .filter(({ score }) => Number.isFinite(score))
+    .sort((left, right) => left.score - right.score || left.champion.name.localeCompare(right.champion.name))
+    .slice(0, 25)
+    .map(({ champion }) => ({ name: champion.name.slice(0, 100), value: champion.name.slice(0, 100) }));
+}
 
 export const commandData = [
   new SlashCommandBuilder().setName('help').setDescription('List PaladinsCat bot commands'),
@@ -23,7 +61,7 @@ export const commandData = [
   new SlashCommandBuilder().setName('loadouts').setDescription('List a player’s saved loadouts')
     .addStringOption((option) => option.setName('player').setDescription('Player name or ID').setRequired(true)),
   new SlashCommandBuilder().setName('champion').setDescription('Show champion ranked statistics')
-    .addStringOption((option) => option.setName('champion').setDescription('Champion name').setRequired(true)),
+    .addStringOption(championOption),
   new SlashCommandBuilder().setName('leaderboard').setDescription('Show the ranked leaderboard'),
   new SlashCommandBuilder().setName('random').setDescription('Choose a random champion')
     .addStringOption((option) => option.setName('role').setDescription('Optional class').addChoices(
@@ -35,8 +73,29 @@ export const commandData = [
 
 export class CommandHandler {
   private readonly imageCooldowns = new Map<string, number>();
+  private championCache: { values: Champion[]; expiresAt: number } | null = null;
 
   constructor(private readonly api: PaladinsCatApi, private readonly renders: RenderService, private readonly webUrl: string) {}
+
+  async warmAutocomplete(): Promise<void> {
+    await this.championsForAutocomplete();
+  }
+
+  async handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+    const focused = interaction.options.getFocused(true);
+    if (focused.name !== 'champion') {
+      await interaction.respond([]);
+      return;
+    }
+
+    try {
+      const champions = await this.championsForAutocomplete();
+      await interaction.respond(championAutocompleteChoices(champions, String(focused.value ?? '')));
+    } catch (error) {
+      console.warn(`[bot] champion autocomplete failed: ${error instanceof Error ? error.message : error}`);
+      if (!interaction.responded) await interaction.respond([]);
+    }
+  }
 
   async handle(interaction: ChatInputCommandInteraction) {
     try {
@@ -158,6 +217,21 @@ export class CommandHandler {
       '`/champion` champion ranked statistics', '`/leaderboard` top ranked players',
       '`/random` random champion by optional class', '`/status` API and renderer health',
     ].join('\n'));
+  }
+
+  private async championsForAutocomplete(): Promise<Champion[]> {
+    const now = Date.now();
+    if (this.championCache && this.championCache.expiresAt > now) return this.championCache.values;
+    try {
+      const values = (await this.api.champions())
+        .filter((champion) => champion?.name)
+        .sort((left, right) => left.name.localeCompare(right.name));
+      this.championCache = { values, expiresAt: now + 60 * 60 * 1000 };
+      return values;
+    } catch (error) {
+      if (this.championCache) return this.championCache.values;
+      throw error;
+    }
   }
 
   private errorMessage(error: unknown) {

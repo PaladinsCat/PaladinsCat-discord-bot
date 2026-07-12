@@ -35,9 +35,16 @@ if (config.mode === 'dummy') {
       : Routes.applicationCommands(config.applicationId!);
     await rest.put(route, { body: commandData });
     console.log(`[bot] registered ${commandData.length} slash commands${config.developmentGuildId ? ' in development guild' : ' globally'}`);
+    void commands.warmAutocomplete()
+      .then(() => console.log('[bot] champion autocomplete catalog warmed'))
+      .catch((error) => console.warn(`[bot] champion autocomplete warm-up failed: ${error instanceof Error ? error.message : error}`));
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
+    if (interaction.isAutocomplete()) {
+      await commands.handleAutocomplete(interaction);
+      return;
+    }
     if (interaction.isChatInputCommand()) await commands.handle(interaction);
   });
   client.on(Events.Error, (error) => console.error('[bot] Discord client error', error));

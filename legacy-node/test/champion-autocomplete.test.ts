@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { championAutocompleteChoices, commandData } from '../src/commands.js';
+import type { Champion } from '../src/types.js';
+
+const champions: Champion[] = [
+  { id: 1, name: 'Androxus' },
+  { id: 2, name: 'Ash' },
+  { id: 3, name: 'Mal\'Damba' },
+  { id: 4, name: 'Sha Lin' },
+  { id: 5, name: 'Yagorath' },
+];
+
+test('champion autocomplete shows an alphabetical roster when focused', () => {
+  assert.deepEqual(championAutocompleteChoices(champions, ''), [
+    { name: 'Androxus', value: 'Androxus' },
+    { name: 'Ash', value: 'Ash' },
+    { name: 'Mal\'Damba', value: 'Mal\'Damba' },
+    { name: 'Sha Lin', value: 'Sha Lin' },
+    { name: 'Yagorath', value: 'Yagorath' },
+  ]);
+});
+
+test('champion autocomplete handles partial words and punctuation-free aliases', () => {
+  assert.deepEqual(championAutocompleteChoices(champions, 'damba'), [
+    { name: 'Mal\'Damba', value: 'Mal\'Damba' },
+  ]);
+  assert.deepEqual(championAutocompleteChoices(champions, 'sha'), [
+    { name: 'Sha Lin', value: 'Sha Lin' },
+  ]);
+});
+
+test('champion autocomplete respects Discord\'s 25-choice response limit', () => {
+  const roster = Array.from({ length: 59 }, (_, index) => ({
+    id: index + 1,
+    name: `Champion ${String(index + 1).padStart(2, '0')}`,
+  }));
+  assert.equal(championAutocompleteChoices(roster, '').length, 25);
+});
+
+test('every registered champion option enables Discord autocomplete', () => {
+  const championOptions = commandData.flatMap((command) => command.options ?? [])
+    .filter((option) => option.name === 'champion');
+  assert.ok(championOptions.length > 0);
+  assert.ok(championOptions.every((option) => 'autocomplete' in option && option.autocomplete === true));
+});
