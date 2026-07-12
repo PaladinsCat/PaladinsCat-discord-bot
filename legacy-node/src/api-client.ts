@@ -7,10 +7,26 @@ export class PaladinsCatApiError extends Error {
 }
 
 export class PaladinsCatApi {
-  constructor(private readonly baseUrl: string, private readonly timeoutMs = 12000) {}
+  private readonly localOnly: boolean;
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(
+    private readonly baseUrl: string,
+    private readonly timeoutMs = 12000,
+    options: { localOnly?: boolean; fetchImpl?: typeof fetch } = {},
+  ) {
+    this.localOnly = options.localOnly ?? false;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+
+  private readPath(path: string): string {
+    if (!this.localOnly) return path;
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}refresh=false`;
+  }
 
   private async get<T>(path: string): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       headers: { Accept: 'application/json', 'User-Agent': 'PaladinsCatDiscordBot/0.1' },
       signal: AbortSignal.timeout(this.timeoutMs),
     });
@@ -33,17 +49,17 @@ export class PaladinsCatApi {
 
   async player(input: string): Promise<PlayerProfileResponse> {
     const resolved = await this.resolvePlayer(input);
-    return this.get(`/players/${resolved.id}?include=ratings,champions`);
+    return this.get(this.readPath(`/players/${resolved.id}?include=ratings,champions`));
   }
 
   async playerHistory(input: string, limit = 10): Promise<Array<Record<string, unknown>>> {
     const resolved = await this.resolvePlayer(input);
-    return this.get(`/players/${resolved.id}/matches?limit=${limit}&refresh=false`);
+    return this.get(this.readPath(`/players/${resolved.id}/matches?limit=${limit}`));
   }
 
   async playerLoadouts(input: string): Promise<Record<string, unknown>> {
     const resolved = await this.resolvePlayer(input);
-    return this.get(`/players/${resolved.id}/loadouts`);
+    return this.get(this.readPath(`/players/${resolved.id}/loadouts`));
   }
 
   async liveMatch(input: string): Promise<Record<string, unknown>> {
@@ -52,7 +68,7 @@ export class PaladinsCatApi {
   }
 
   async match(id: string): Promise<MatchRecord> {
-    const payload = await this.get<{ matches: MatchRecord[] }>(`/matches/${encodeURIComponent(id)}`);
+    const payload = await this.get<{ matches: MatchRecord[] }>(this.readPath(`/matches/${encodeURIComponent(id)}`));
     const match = payload.matches?.[0];
     if (!match) throw new PaladinsCatApiError(`Match ${id} was not found`, 404);
     return match;
@@ -60,6 +76,6 @@ export class PaladinsCatApi {
 
   champions(): Promise<Champion[]> { return this.get('/champions'); }
   champion(idOrSlug: string): Promise<Record<string, unknown>> { return this.get(`/champions/${encodeURIComponent(idOrSlug)}`); }
-  rankedLeaderboard(limit = 10): Promise<Array<Record<string, unknown>>> { return this.get(`/stats/ranked-leaderboard?top=${limit}`); }
+  rankedLeaderboard(limit = 10): Promise<Array<Record<string, unknown>>> { return this.get(`/stats/ranked-leaderboard?tier=26&top=${limit}`); }
   status(): Promise<Record<string, unknown>> { return this.get('/health'); }
 }

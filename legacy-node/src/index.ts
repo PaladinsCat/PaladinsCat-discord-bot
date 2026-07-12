@@ -8,7 +8,7 @@ import { commandData, CommandHandler } from './commands.js';
 import { startHealthServer } from './health.js';
 
 const config = loadConfig();
-const api = new PaladinsCatApi(config.apiUrl);
+const api = new PaladinsCatApi(config.apiUrl, 12000, { localOnly: config.localOnly });
 const renders = new RenderService(new MatchRenderer(new AssetCatalog(config.assetRoot)), {
   concurrency: config.renderConcurrency,
   queueLimit: config.renderQueueLimit,
