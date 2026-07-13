@@ -64,7 +64,7 @@ test('shows friendly region, queue, and mode labels while hiding ranked-only cas
   const markup = html.slice(html.indexOf('</style>'));
   assert.match(markup, /<header class="hero casual">/);
   assert.match(markup, /<div class="score casual">/);
-  assert.match(markup, /<div class="queue"><span>NA<\/span><span>Casual<\/span><span>Siege<\/span><\/div>/);
+  assert.match(markup, /<div class="queue"><span>NA Casual<\/span><span>Siege<\/span><\/div>/);
   assert.doesNotMatch(markup, /Queue 424/);
   assert.match(markup, /Warder&#39;s Gate/);
   assert.doesNotMatch(markup, /score-bans/);
@@ -82,9 +82,9 @@ test('maps other live queues to human-readable game modes without exposing IDs',
     players: [],
   };
   const document = (value: MatchRecord) => (renderer as unknown as { document(record: MatchRecord): string }).document(value);
-  assert.match(document(base), /<span>EU<\/span><span>Casual<\/span><span>Onslaught<\/span>/);
+  assert.match(document(base), /<span>EU Casual<\/span><span>Onslaught<\/span>/);
   const deathmatch = { ...base, match: { ...base.match, queue_id: 469 } };
-  assert.match(document(deathmatch), /<span>EU<\/span><span>Casual<\/span><span>Team Deathmatch<\/span>/);
+  assert.match(document(deathmatch), /<span>EU Casual<\/span><span>Team Deathmatch<\/span>/);
   assert.doesNotMatch(document(deathmatch), /Queue 469/);
 });
 

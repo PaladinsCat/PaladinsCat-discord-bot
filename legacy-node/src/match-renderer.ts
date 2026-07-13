@@ -7,7 +7,7 @@ import { AssetCatalog } from './asset-catalog.js';
 const WIDTH = 1280;
 const HEIGHT = 720;
 const SCALE = 1.6;
-const TEMPLATE_VERSION = 8;
+const TEMPLATE_VERSION = 9;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
@@ -147,7 +147,7 @@ export class MatchRenderer {
     const mapName = match.map.replace(/^(?:(?:Ranked|Live|WIP)\s+)+/i, '').replace(/\bv\d+\b/ig, '').trim();
     const presentation = queuePresentation(match.queue_id);
     const ranked = presentation.ranked;
-    const queue = [match.region || '—', presentation.category, presentation.mode];
+    const queue = [`${match.region || '—'} ${presentation.category}`, presentation.mode];
     const bans = [...(record.bans ?? [])].sort((a, b) => Number(a.ban_slot ?? 0) - Number(b.ban_slot ?? 0));
     const split = Math.ceil(bans.length / 2);
     const banSet = (entries: typeof bans) => entries.slice(0, 4).map((ban) => `<span class="ban-pick"><img src="${assetUrl(this.assets.championIcon(ban.champion_name))}" alt="${xml(ban.champion_name)}"/></span>`).join('');
