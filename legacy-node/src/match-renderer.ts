@@ -111,7 +111,6 @@ export class MatchRenderer {
     return puppeteer.launch({
       executablePath: this.chromiumPath,
       headless: true,
-      dumpio: process.env.PALADINSCAT_RENDER_DEBUG === 'true',
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--font-render-hinting=medium', '--allow-file-access-from-files'],
     });
   }
