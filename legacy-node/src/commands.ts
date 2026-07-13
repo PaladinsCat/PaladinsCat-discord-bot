@@ -145,7 +145,7 @@ export class CommandHandler {
     if (!/^\d{6,20}$/.test(id)) throw new Error('Enter a valid numeric match ID.');
     const record = await this.api.match(id);
     const buffer = await this.renders.match(record);
-    const attachment = new AttachmentBuilder(buffer, { name: `paladinscat-match-${id}.jpg`, description: `Paladins match ${id}` });
+    const attachment = new AttachmentBuilder(buffer, { name: `paladinscat-match-${id}.png`, description: `Paladins match ${id}` });
     return interaction.editReply({ content: `${this.webUrl}/matches/${id}`, files: [attachment] });
   }
 

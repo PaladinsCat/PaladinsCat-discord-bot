@@ -6,9 +6,9 @@ import { AssetCatalog } from '../src/asset-catalog.js';
 import { MatchRenderer } from '../src/match-renderer.js';
 
 const matchId = process.argv[2];
-if (!matchId) throw new Error('Usage: npm run render:sample -- <match-id> [output.jpg]');
+if (!matchId) throw new Error('Usage: npm run render:sample -- <match-id> [output.png]');
 const config = loadConfig();
 const record = await new PaladinsCatApi(config.apiUrl).match(matchId);
-const output = path.resolve(process.argv[3] ?? `paladinscat-match-${matchId}.jpg`);
+const output = path.resolve(process.argv[3] ?? `paladinscat-match-${matchId}.png`);
 await fs.writeFile(output, await new MatchRenderer(new AssetCatalog(config.assetRoot)).render(record));
 console.log(output);

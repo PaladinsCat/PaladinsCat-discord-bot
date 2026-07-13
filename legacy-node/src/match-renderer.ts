@@ -5,7 +5,7 @@ import { AssetCatalog } from './asset-catalog.js';
 const WIDTH = 2048;
 const HEIGHT = 1152;
 const SCALE = 1.6;
-const TEMPLATE_VERSION = 2;
+const TEMPLATE_VERSION = 3;
 const GRID_CENTERS = [46, 102, 161, 303, 444, 505, 589, 702, 796, 886, 994, 1102, 1210];
 
 export type MatchImageTheme = 'dark' | 'light';
@@ -76,7 +76,7 @@ export class MatchRenderer {
 
     return sharp({ create: { width: WIDTH, height: HEIGHT, channels: 3, background: '#161618' } })
       .composite(composites)
-      .jpeg({ quality: 94, mozjpeg: true, chromaSubsampling: '4:4:4' })
+      .png({ compressionLevel: 6, adaptiveFiltering: true })
       .toBuffer();
   }
 
