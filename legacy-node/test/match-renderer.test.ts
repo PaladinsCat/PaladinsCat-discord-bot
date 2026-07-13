@@ -64,7 +64,8 @@ test('hides ranked-only bans and average tier for casual match images', () => {
   const markup = html.slice(html.indexOf('</style>'));
   assert.match(markup, /<header class="hero casual">/);
   assert.match(markup, /<div class="score casual">/);
-  assert.match(markup, /<span>NA<\/span><span>Casual<\/span><span>Queue 424<\/span>/);
+  assert.doesNotMatch(markup, /class="queue"/);
+  assert.doesNotMatch(markup, /Queue 424|Casual/);
   assert.match(markup, /Warder&#39;s Gate/);
   assert.doesNotMatch(markup, /score-bans/);
   assert.doesNotMatch(markup, /tier-meta/);

@@ -129,7 +129,7 @@ export class MatchRenderer {
     const { match } = record;
     const mapName = match.map.replace(/^(?:(?:Ranked|Live|WIP)\s+)+/i, '').replace(/\bv\d+\b/ig, '').trim();
     const ranked = match.queue_id === 486;
-    const queue = [match.region || '—', ranked ? 'Ranked' : 'Casual', ranked ? 'Siege' : `Queue ${match.queue_id}`];
+    const queue = ranked ? [match.region || '—', 'Ranked', 'Siege'] : [];
     const bans = [...(record.bans ?? [])].sort((a, b) => Number(a.ban_slot ?? 0) - Number(b.ban_slot ?? 0));
     const split = Math.ceil(bans.length / 2);
     const banSet = (entries: typeof bans) => entries.slice(0, 4).map((ban) => `<span class="ban-pick"><img src="${assetUrl(this.assets.championIcon(ban.champion_name))}" alt="${xml(ban.champion_name)}"/></span>`).join('');
@@ -144,7 +144,10 @@ export class MatchRenderer {
     const tierMarkup = averageTier === null
       ? ''
       : `<div class="tier-meta"><img src="${assetUrl(this.assets.rankIcon(averageTier))}" alt="${xml(TIER_NAMES[averageTier] ?? 'Unranked')}"/><div><div class="meta-value">${xml(TIER_NAMES[averageTier] ?? 'Unranked')}</div><div class="meta-label">Avg tier</div></div></div>`;
-    return `<header class="hero${ranked ? '' : ' casual'}"><div><div class="brand-line"><span class="brand-name"><img src="${assetUrl(this.assets.icon('paladinscat'))}" alt=""/> PaladinsCat</span><div class="queue">${queue.map((word) => `<span>${xml(word)}</span>`).join('')}</div></div><div class="map-line"><div class="${mapClass}" title="${xml(mapName)}">${xml(mapName)}</div></div></div><div class="score${ranked ? '' : ' casual'}">${banMarkup}<span class="score-number team-one-score">${match.team1_score}</span><span class="score-separator">/</span><span class="score-number team-two-score">${match.team2_score}</span>${rightBanMarkup}</div><div class="match-meta${ranked ? '' : ' casual-meta'}">${tierMarkup}<div><div class="meta-value">${duration(match.duration_seconds)}</div><div class="meta-label">Duration</div></div><div><div class="meta-value">${xml(match.match_id)}</div><div class="meta-label">Match ID</div></div></div></header>`;
+    const queueMarkup = ranked
+      ? `<div class="queue">${queue.map((word) => `<span>${xml(word)}</span>`).join('')}</div>`
+      : '';
+    return `<header class="hero${ranked ? '' : ' casual'}"><div><div class="brand-line"><span class="brand-name"><img src="${assetUrl(this.assets.icon('paladinscat'))}" alt=""/> PaladinsCat</span>${queueMarkup}</div><div class="map-line"><div class="${mapClass}" title="${xml(mapName)}">${xml(mapName)}</div></div></div><div class="score${ranked ? '' : ' casual'}">${banMarkup}<span class="score-number team-one-score">${match.team1_score}</span><span class="score-separator">/</span><span class="score-number team-two-score">${match.team2_score}</span>${rightBanMarkup}</div><div class="match-meta${ranked ? '' : ' casual-meta'}">${tierMarkup}<div><div class="meta-value">${duration(match.duration_seconds)}</div><div class="meta-label">Duration</div></div><div><div class="meta-value">${xml(match.match_id)}</div><div class="meta-label">Match ID</div></div></div></header>`;
   }
 
   private teamRows(record: MatchRecord, team: 1 | 2) {
