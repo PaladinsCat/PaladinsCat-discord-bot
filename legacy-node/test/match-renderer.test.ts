@@ -47,7 +47,7 @@ test('resolves WIP map names to the shared ranked map art', () => {
   assert.match(assets.mapImage('WIP Serpent Beach V2') ?? '', /Ranked_Serpent_Beach/i);
 });
 
-test('hides ranked-only bans and average tier for casual match images', () => {
+test('shows friendly region, queue, and mode labels while hiding ranked-only casual fields', () => {
   const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
   const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
   const record: MatchRecord = {
@@ -64,12 +64,28 @@ test('hides ranked-only bans and average tier for casual match images', () => {
   const markup = html.slice(html.indexOf('</style>'));
   assert.match(markup, /<header class="hero casual">/);
   assert.match(markup, /<div class="score casual">/);
-  assert.doesNotMatch(markup, /class="queue"/);
-  assert.doesNotMatch(markup, /Queue 424|Casual/);
+  assert.match(markup, /<div class="queue"><span>NA<\/span><span>Casual<\/span><span>Siege<\/span><\/div>/);
+  assert.doesNotMatch(markup, /Queue 424/);
   assert.match(markup, /Warder&#39;s Gate/);
   assert.doesNotMatch(markup, /score-bans/);
   assert.doesNotMatch(markup, /tier-meta/);
   assert.doesNotMatch(markup, /Avg tier/i);
+});
+
+test('maps other live queues to human-readable game modes without exposing IDs', () => {
+  const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
+  const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
+  const base: MatchRecord = {
+    match: { match_id: '1', entry_datetime: new Date().toISOString(), queue_id: 452,
+      duration_seconds: 600, region: 'EU', map: 'Marauder\'s Port', team1_score: 1,
+      team2_score: 0, winning_task_force: 1, broken: false, recovered: true, private: false },
+    players: [],
+  };
+  const document = (value: MatchRecord) => (renderer as unknown as { document(record: MatchRecord): string }).document(value);
+  assert.match(document(base), /<span>EU<\/span><span>Casual<\/span><span>Onslaught<\/span>/);
+  const deathmatch = { ...base, match: { ...base.match, queue_id: 469 } };
+  assert.match(document(deathmatch), /<span>EU<\/span><span>Casual<\/span><span>Team Deathmatch<\/span>/);
+  assert.doesNotMatch(document(deathmatch), /Queue 469/);
 });
 
 test('keeps the prototype light theme available to renderer consumers', { skip: requiresChromium && 'requires PALADINSCAT_CHROMIUM_PATH for the CSS-native browser renderer' }, async () => {
