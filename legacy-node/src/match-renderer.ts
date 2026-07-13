@@ -7,7 +7,7 @@ import { AssetCatalog } from './asset-catalog.js';
 const WIDTH = 1280;
 const HEIGHT = 720;
 const SCALE = 1.6;
-const TEMPLATE_VERSION = 6;
+const TEMPLATE_VERSION = 7;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 export type MatchImageTheme = 'dark' | 'light';
@@ -129,12 +129,22 @@ export class MatchRenderer {
     const { match } = record;
     const mapName = match.map.replace(/^(?:(?:Ranked|Live|WIP)\s+)+/i, '').replace(/\bv\d+\b/ig, '').trim();
     const ranked = match.queue_id === 486;
-    const queue = [match.region || '—', ranked ? 'Ranked' : 'Casual', ranked ? 'Siege' : `Queue #${match.queue_id}`];
+    const queue = [match.region || '—', ranked ? 'Ranked' : 'Casual', ranked ? 'Siege' : `Queue ${match.queue_id}`];
     const bans = [...(record.bans ?? [])].sort((a, b) => Number(a.ban_slot ?? 0) - Number(b.ban_slot ?? 0));
     const split = Math.ceil(bans.length / 2);
     const banSet = (entries: typeof bans) => entries.slice(0, 4).map((ban) => `<span class="ban-pick"><img src="${assetUrl(this.assets.championIcon(ban.champion_name))}" alt="${xml(ban.champion_name)}"/></span>`).join('');
-    const averageTier = this.averageTier(record.players);
-    return `<header class="hero"><div><div class="brand-line"><img src="${assetUrl(this.assets.icon('paladinscat'))}" alt=""/> PaladinsCat</div><div class="map-line"><div class="map-name">${xml(mapName)}</div><div class="queue">${queue.map((word) => `<span>${xml(word)}</span>`).join('')}</div></div></div><div class="score"><div class="score-bans left"><span class="ban-label">Bans</span><div class="ban-picks">${banSet(bans.slice(0, split))}</div></div><span class="score-number team-one-score">${match.team1_score}</span><span class="score-separator">/</span><span class="score-number team-two-score">${match.team2_score}</span><div class="score-bans right"><span class="ban-label">Bans</span><div class="ban-picks">${banSet(bans.slice(split))}</div></div></div><div class="match-meta"><div class="tier-meta"><img src="${assetUrl(this.assets.rankIcon(averageTier))}" alt="${xml(TIER_NAMES[averageTier] ?? 'Unranked')}"/><div><div class="meta-value">${xml(TIER_NAMES[averageTier] ?? 'Unranked')}</div><div class="meta-label">Avg tier</div></div></div><div><div class="meta-value">${duration(match.duration_seconds)}</div><div class="meta-label">Duration</div></div><div><div class="meta-value">${xml(match.match_id)}</div><div class="meta-label">Match ID</div></div></div></header>`;
+    const averageTier = ranked ? this.averageTier(record.players) : null;
+    const mapClass = mapName.length > 19 ? 'map-name long' : 'map-name';
+    const banMarkup = ranked
+      ? `<div class="score-bans left"><span class="ban-label">Bans</span><div class="ban-picks">${banSet(bans.slice(0, split))}</div></div>`
+      : '';
+    const rightBanMarkup = ranked
+      ? `<div class="score-bans right"><span class="ban-label">Bans</span><div class="ban-picks">${banSet(bans.slice(split))}</div></div>`
+      : '';
+    const tierMarkup = averageTier === null
+      ? ''
+      : `<div class="tier-meta"><img src="${assetUrl(this.assets.rankIcon(averageTier))}" alt="${xml(TIER_NAMES[averageTier] ?? 'Unranked')}"/><div><div class="meta-value">${xml(TIER_NAMES[averageTier] ?? 'Unranked')}</div><div class="meta-label">Avg tier</div></div></div>`;
+    return `<header class="hero${ranked ? '' : ' casual'}"><div><div class="brand-line"><span class="brand-name"><img src="${assetUrl(this.assets.icon('paladinscat'))}" alt=""/> PaladinsCat</span><div class="queue">${queue.map((word) => `<span>${xml(word)}</span>`).join('')}</div></div><div class="map-line"><div class="${mapClass}" title="${xml(mapName)}">${xml(mapName)}</div></div></div><div class="score${ranked ? '' : ' casual'}">${banMarkup}<span class="score-number team-one-score">${match.team1_score}</span><span class="score-separator">/</span><span class="score-number team-two-score">${match.team2_score}</span>${rightBanMarkup}</div><div class="match-meta${ranked ? '' : ' casual-meta'}">${tierMarkup}<div><div class="meta-value">${duration(match.duration_seconds)}</div><div class="meta-label">Duration</div></div><div><div class="meta-value">${xml(match.match_id)}</div><div class="meta-label">Match ID</div></div></div></header>`;
   }
 
   private teamRows(record: MatchRecord, team: 1 | 2) {

@@ -47,6 +47,30 @@ test('resolves WIP map names to the shared ranked map art', () => {
   assert.match(assets.mapImage('WIP Serpent Beach V2') ?? '', /Ranked_Serpent_Beach/i);
 });
 
+test('hides ranked-only bans and average tier for casual match images', () => {
+  const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
+  const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
+  const record: MatchRecord = {
+    match: { match_id: '1280758080', entry_datetime: new Date().toISOString(), queue_id: 424,
+      duration_seconds: 768, region: 'NA', map: "LIVE Warder's Gate", team1_score: 2,
+      team2_score: 4, winning_task_force: 2, broken: false, recovered: true, private: false },
+    players: [],
+    bans: [
+      { ban_slot: 1, champion_id: 1, champion_name: 'Imani' },
+      { ban_slot: 2, champion_id: 2, champion_name: 'Khan' },
+    ],
+  };
+  const html = (renderer as unknown as { document(value: MatchRecord): string }).document(record);
+  const markup = html.slice(html.indexOf('</style>'));
+  assert.match(markup, /<header class="hero casual">/);
+  assert.match(markup, /<div class="score casual">/);
+  assert.match(markup, /<span>NA<\/span><span>Casual<\/span><span>Queue 424<\/span>/);
+  assert.match(markup, /Warder&#39;s Gate/);
+  assert.doesNotMatch(markup, /score-bans/);
+  assert.doesNotMatch(markup, /tier-meta/);
+  assert.doesNotMatch(markup, /Avg tier/i);
+});
+
 test('keeps the prototype light theme available to renderer consumers', { skip: requiresChromium && 'requires PALADINSCAT_CHROMIUM_PATH for the CSS-native browser renderer' }, async () => {
   const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
   const renderer = new MatchRenderer(new AssetCatalog(assetRoot), { theme: 'light' });
