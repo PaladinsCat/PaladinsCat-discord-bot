@@ -1,149 +1,168 @@
-import sharp, { type OverlayOptions } from 'sharp';
+import fs from 'node:fs';
+import path from 'node:path';
+import puppeteer from 'puppeteer-core';
 import type { MatchPlayer, MatchRecord } from './types.js';
 import { AssetCatalog } from './asset-catalog.js';
 
-const WIDTH = 2048;
-const HEIGHT = 1152;
+const WIDTH = 1280;
+const HEIGHT = 720;
 const SCALE = 1.6;
-const TEMPLATE_VERSION = 3;
-const GRID_CENTERS = [46, 102, 161, 303, 444, 505, 589, 702, 796, 886, 994, 1102, 1210];
+const TEMPLATE_VERSION = 5;
+const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 export type MatchImageTheme = 'dark' | 'light';
 export const DEFAULT_MATCH_IMAGE_THEME: MatchImageTheme = 'dark';
 
 function xml(value: unknown) {
-  return String(value ?? '').replace(/[<>&"']/g, (char) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[char]!);
+  return String(value ?? '').replace(/[<>&"']/g, (character) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' })[character]!);
 }
 
 function number(value: number | undefined) { return Math.round(Number(value ?? 0)).toLocaleString('en-US'); }
 function compact(value: number) { return Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(1)}k` : number(value); }
 function duration(seconds: number) { return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`; }
 function damage(player: MatchPlayer) { return Number(player.damage_done_physical || player.damage_done_in_hand || 0); }
-function tier(player: MatchPlayer) { const value = Number(player.tier ?? player.league_tier ?? 0); return Number.isFinite(value) ? Math.max(0, Math.min(27, Math.floor(value))) : 0; }
+function tier(player: MatchPlayer) { const value = Number(player.kbm_tier ?? player.tier ?? player.league_tier ?? 0); return Number.isFinite(value) ? Math.max(0, Math.min(27, Math.floor(value))) : 0; }
 function party(player: MatchPlayer) { const value = Number(player.party ?? player.party_number ?? player.party_id ?? 0); return Number.isFinite(value) && value > 0 ? Math.floor(value) : null; }
+const assetDataUrls = new Map<string, string>();
 
-type PlayerMetrics = { credits: number; objective: number; damage: number; taken: number; shielding: number; healing: number };
+function assetUrl(source: string | null) {
+  if (!source) return '';
+  const cached = assetDataUrls.get(source);
+  if (cached) return cached;
+  const extension = path.extname(source).toLowerCase();
+  const mime = extension === '.png' ? 'image/png' : extension === '.webp' ? 'image/webp' : extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : 'image/avif';
+  const value = `data:${mime};base64,${fs.readFileSync(source).toString('base64')}`;
+  assetDataUrls.set(source, value);
+  return value;
+}
 
+function defaultTemplatePath() {
+  const configured = process.env.PALADINSCAT_SCOREBOARD_TEMPLATE;
+  if (configured) return configured;
+  const development = path.resolve(process.cwd(), '../../dev/prototypes/match-result-scoreboard.html');
+  return fs.existsSync(development) ? development : path.resolve(process.cwd(), 'templates/match-result-scoreboard.html');
+}
+
+function defaultChromiumPath() {
+  if (process.env.PALADINSCAT_CHROMIUM_PATH) return process.env.PALADINSCAT_CHROMIUM_PATH;
+  if (process.platform === 'win32') {
+    const edge = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+    const chrome = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+    return fs.existsSync(edge) ? edge : chrome;
+  }
+  return '/usr/bin/chromium-browser';
+}
+
+type Metrics = { credits: number; objective: number; damage: number; taken: number; shielding: number; healing: number };
+
+/**
+ * Browser renderer for the Discord attachment. The CSS is extracted directly
+ * from the development prototype; no visual rules are reimplemented in SVG.
+ */
 export class MatchRenderer {
   readonly templateVersion = TEMPLATE_VERSION;
   readonly theme: MatchImageTheme;
+  private readonly css: string;
 
-  constructor(private readonly assets: AssetCatalog, options: { theme?: MatchImageTheme } = {}) {
+  constructor(
+    private readonly assets: AssetCatalog,
+    options: { theme?: MatchImageTheme; templatePath?: string; chromiumPath?: string } = {},
+  ) {
     this.theme = options.theme ?? DEFAULT_MATCH_IMAGE_THEME;
-    sharp.concurrency(1);
-    sharp.cache({ memory: 24, files: 0, items: 48 });
+    const templatePath = options.templatePath ?? defaultTemplatePath();
+    const template = fs.readFileSync(templatePath, 'utf8');
+    const match = template.match(/<style>([\s\S]*?)<\/style>/i);
+    if (!match?.[1]) throw new Error(`Scoreboard prototype CSS was not found in ${templatePath}.`);
+    this.css = match[1];
+    this.chromiumPath = options.chromiumPath ?? defaultChromiumPath();
   }
+
+  private readonly chromiumPath: string;
 
   async render(record: MatchRecord): Promise<Buffer> {
-    const teams = [1, 2].map((team) => record.players.filter((player) => player.task_force === team).slice(0, 5));
-    const composites: OverlayOptions[] = [];
-    const map = this.assets.mapImage(record.match.map);
-    if (map) {
-      try {
-        const input = await sharp(map).resize(WIDTH, HEIGHT, { fit: 'cover' }).modulate({ saturation: 1.15 }).ensureAlpha(.7).png().toBuffer();
-        composites.push({ input, left: 0, top: 0 });
-      } catch { /* A missing map still produces a valid dark scoreboard. */ }
+    const browser = await this.launchBrowser();
+    const page = await browser.newPage();
+    try {
+      await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: SCALE });
+      await page.setContent(this.document(record), { waitUntil: 'load' });
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+        await Promise.all([...document.images].map(async (image) => {
+          if (!image.complete) await new Promise<void>((resolve) => { image.addEventListener('load', () => resolve(), { once: true }); image.addEventListener('error', () => resolve(), { once: true }); });
+          await image.decode().catch(() => undefined);
+        }));
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      });
+      const board = await page.$('#scoreboard');
+      if (!board) throw new Error('Scoreboard markup did not render.');
+      return Buffer.from(await board.screenshot({ type: 'png' }));
+    } finally {
+      await page.close();
+      await browser.close();
     }
-    composites.push({ input: Buffer.from(this.svg(record, teams)), left: 0, top: 0 });
-
-    const place = async (source: string | null, x: number, y: number, width: number, height: number, fit: 'cover' | 'contain' = 'cover') => {
-      if (!source) return;
-      try {
-        const input = await sharp(source).resize(Math.round(width * SCALE), Math.round(height * SCALE), { fit }).png().toBuffer();
-        composites.push({ input, left: Math.round(x * SCALE), top: Math.round(y * SCALE) });
-      } catch { /* Text remains usable if an individual asset is unavailable. */ }
-    };
-
-    await place(this.assets.icon('paladinscat'), 28, 341, 22, 22, 'contain');
-    await place(this.assets.rankIcon(this.averageTier(record.players)), 958, 357, 32, 32, 'contain');
-    for (const [teamIndex, players] of teams.entries()) {
-      const startY = teamIndex === 0 ? 26 : 416;
-      for (const [rowIndex, player] of players.entries()) {
-        const y = startY + rowIndex * 55;
-        await place(this.assets.championIcon(player.champion_name), 20, y + 1.5, 52, 52);
-        await place(this.assets.rankIcon(tier(player)), 80, y + 6.5, 44, 42, 'contain');
-        await place(this.assets.icon('Currency_Credits'), 548, y + 20, 15, 15, 'contain');
-      }
-    }
-
-    const sortedBans = [...(record.bans ?? [])].sort((a, b) => Number(a.ban_slot ?? 0) - Number(b.ban_slot ?? 0));
-    const split = Math.ceil(sortedBans.length / 2);
-    for (const [side, bans] of [sortedBans.slice(0, split), sortedBans.slice(split)].entries()) {
-      const visible = bans.slice(0, 4);
-      const startX = side === 0 ? 430 - visible.length * 28 : 850 - visible.length * 28;
-      for (const [index, ban] of visible.entries()) await place(this.assets.championIcon(ban.champion_name), startX + index * 58, 352, 52, 52);
-    }
-
-    return sharp({ create: { width: WIDTH, height: HEIGHT, channels: 3, background: '#161618' } })
-      .composite(composites)
-      .png({ compressionLevel: 6, adaptiveFiltering: true })
-      .toBuffer();
   }
 
-  private svg(record: MatchRecord, teams: MatchPlayer[][]) {
-    const match = record.match;
-    const headers = ['PARTY', '', 'LEVEL', 'PLAYER', 'ELO', 'TALENT', 'CREDITS', 'K / D / A', 'OB. TIME', 'DAMAGE', 'TAKEN', 'SHIELDING', 'HEALING'];
-    const header = headers.map((label, index) => `<text x="${GRID_CENTERS[index]}" y="15" class="column"${index === 3 ? ' text-anchor="start"' : ''}>${label}</text>`).join('');
-    const playerRows = teams.map((players, teamIndex) => this.teamRows(players, teamIndex === 0 ? 1 : 2, teamIndex === 0 ? 26 : 416, match.winning_task_force)).join('');
-    const avgTier = this.averageTier(record.players);
-    const tierNames = ['Unranked','Bronze V','Bronze IV','Bronze III','Bronze II','Bronze I','Silver V','Silver IV','Silver III','Silver II','Silver I','Gold V','Gold IV','Gold III','Gold II','Gold I','Platinum V','Platinum IV','Platinum III','Platinum II','Platinum I','Diamond V','Diamond IV','Diamond III','Diamond II','Diamond I','Master','Grandmaster'];
-    const mapName = match.map.replace(/^(?:(?:Ranked|Live)\s+)+/i, '');
+  private launchBrowser() {
+    return puppeteer.launch({
+      executablePath: this.chromiumPath,
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--font-render-hinting=medium', '--allow-file-access-from-files'],
+    });
+  }
+
+  private document(record: MatchRecord) {
+    const map = assetUrl(this.assets.mapImage(record.match.map));
+    const background = map ? `#scoreboard::before{background-image:url('${map}')!important}` : '';
+    return `<!doctype html><html><head><meta charset="utf-8"/><style>${this.css}\n${background}\nbody{min-height:720px;padding:0;background:transparent}.scoreboard{transform:none}.scoreboard-canvas{width:1280px;height:720px}.viewport{width:1280px;max-width:none}.prototype-note{display:none}</style></head><body data-theme="${this.theme}"><main class="viewport"><div class="scoreboard-canvas"><section class="scoreboard" id="scoreboard" aria-label="Paladins match scoreboard">${this.hero(record)}${this.columns()}<div class="players" id="team-one">${this.teamRows(record, 1)}</div>${this.summary(record, 1)}<div class="players" id="team-two">${this.teamRows(record, 2)}</div>${this.summary(record, 2)}</section></div></main></body></html>`;
+  }
+
+  private columns() {
+    return `<div class="columns grid-row"><div>Party</div><div></div><div>Level</div><div>Player</div><div>Elo</div><div>Talent</div><div>Credits</div><div>K / D / A</div><div>OB. Time</div><div>Damage</div><div>Taken</div><div>Shielding</div><div>Healing</div></div>`;
+  }
+
+  private hero(record: MatchRecord) {
+    const { match } = record;
+    const mapName = match.map.replace(/^(?:(?:Ranked|Live|WIP)\s+)+/i, '').replace(/\bv\d+\b/ig, '').trim();
     const ranked = match.queue_id === 486;
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 1280 720">
-      <defs><filter id="glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
-      <style>
-        text{font-family:Inter,"DejaVu Sans",Arial,sans-serif}.column{font-size:8.5px;font-weight:760;fill:#758397;text-anchor:middle;dominant-baseline:middle;letter-spacing:1px}
-        .name{font-size:18px;font-weight:760;fill:#f4f7fb}.sub{font-size:12.5px;font-weight:550;fill:#8c99ab;letter-spacing:.4px}
-        .value{font-size:21px;font-weight:720;fill:#f4f7fb;text-anchor:middle;dominant-baseline:middle}.small{font-size:18px}.summary{font-size:11.5px;font-weight:760;fill:#f4f7fb;text-anchor:middle;dominant-baseline:middle}
-        .brand{font-size:13px;font-weight:760;fill:#f4f7fb}.map{font-size:23px;font-weight:780;fill:#f4f7fb}.queue{font-size:11px;font-weight:780;fill:#c2ccd8;letter-spacing:1.6px}
-        .label{font-size:9px;font-weight:500;fill:#8c99ab;letter-spacing:1.1px}.meta{font-size:14px;font-weight:700;fill:#f4f7fb}.team{font-size:9px;font-weight:800;letter-spacing:1px}.result{font-size:8px;font-weight:760;letter-spacing:.7px}
-      </style>
-      <rect width="1280" height="720" fill="#161618" fill-opacity=".3"/>
-      <rect width="1280" height="26" fill="#161618" fill-opacity=".8"/>${header}
-      ${playerRows}
-      <rect x="0" y="330" width="1280" height="86" fill="#161618" fill-opacity=".30" stroke="#37d6c0" stroke-opacity=".24"/>
-      <text x="58" y="353" class="brand">PaladinsCat</text><text x="28" y="389" class="map">${xml(mapName)}</text>
-      <text x="250" y="374" class="queue">${xml(match.region || '—')}</text><text x="250" y="386" class="queue">${ranked ? 'RANKED' : 'CASUAL'}</text><text x="250" y="398" class="queue">SIEGE</text>
-      <text x="505" y="345" class="label" text-anchor="middle">BANS</text><text x="775" y="345" class="label" text-anchor="middle">BANS</text>
-      <text x="602" y="374" font-size="41" font-weight="820" fill="#0c4493" text-anchor="middle">${match.team1_score}</text><text x="640" y="377" font-size="17" fill="#607086" text-anchor="middle">/</text><text x="678" y="384" font-size="41" font-weight="820" fill="#a52b2b" text-anchor="middle">${match.team2_score}</text>
-      <text x="1010" y="359" class="label">AVG TIER</text><text x="1010" y="378" class="meta">${tierNames[avgTier] ?? 'Unranked'}</text>
-      <text x="1080" y="359" class="label">DURATION</text><text x="1080" y="378" class="meta">${duration(match.duration_seconds)}</text>
-      <text x="1252" y="359" class="label" text-anchor="end">MATCH ID</text><text x="1252" y="378" class="meta" text-anchor="end">${xml(match.match_id)}</text>
-      <rect x=".5" y=".5" width="1279" height="719" rx="18" fill="none" stroke="#6f8299" stroke-opacity=".45"/>
-    </svg>`;
+    const queue = [match.region || '—', ranked ? 'Ranked' : 'Casual', ranked ? 'Siege' : `Queue #${match.queue_id}`];
+    const bans = [...(record.bans ?? [])].sort((a, b) => Number(a.ban_slot ?? 0) - Number(b.ban_slot ?? 0));
+    const split = Math.ceil(bans.length / 2);
+    const banSet = (entries: typeof bans) => entries.slice(0, 4).map((ban) => `<span class="ban-pick"><img src="${assetUrl(this.assets.championIcon(ban.champion_name))}" alt="${xml(ban.champion_name)}"/></span>`).join('');
+    const averageTier = this.averageTier(record.players);
+    return `<header class="hero"><div><div class="brand-line"><img src="${assetUrl(this.assets.icon('paladinscat'))}" alt=""/> PaladinsCat</div><div class="map-line"><div class="map-name">${xml(mapName)}</div><div class="queue">${queue.map((word) => `<span>${xml(word)}</span>`).join('')}</div></div></div><div class="score"><div class="score-bans left"><span class="ban-label">Bans</span><div class="ban-picks">${banSet(bans.slice(0, split))}</div></div><span class="score-number team-one-score">${match.team1_score}</span><span class="score-separator">/</span><span class="score-number team-two-score">${match.team2_score}</span><div class="score-bans right"><span class="ban-label">Bans</span><div class="ban-picks">${banSet(bans.slice(split))}</div></div></div><div class="match-meta"><div class="tier-meta"><img src="${assetUrl(this.assets.rankIcon(averageTier))}" alt="${xml(TIER_NAMES[averageTier] ?? 'Unranked')}"/><div><div class="meta-value">${xml(TIER_NAMES[averageTier] ?? 'Unranked')}</div><div class="meta-label">Avg tier</div></div></div><div><div class="meta-value">${duration(match.duration_seconds)}</div><div class="meta-label">Duration</div></div><div><div class="meta-value">${xml(match.match_id)}</div><div class="meta-label">Match ID</div></div></div></header>`;
   }
 
-  private teamRows(players: MatchPlayer[], team: number, startY: number, winningTeam: number) {
-    const rows = players.slice(0, 5);
-    const metrics = rows.map((player): PlayerMetrics => ({ credits: Number(player.gold_earned ?? 0), objective: Number(player.objective_assists ?? 0), damage: damage(player), taken: Number(player.damage_taken ?? 0), shielding: Number(player.damage_mitigated ?? 0), healing: Number(player.healing ?? 0) }));
-    const keys: Array<keyof PlayerMetrics> = ['credits','objective','damage','taken','shielding','healing'];
-    const maxima = Object.fromEntries(keys.map((key) => [key, Math.max(0, ...metrics.map((row) => row[key]))])) as Record<keyof PlayerMetrics, number>;
-    const colors = team === 1 ? ['#0b3d84','#072958'] : ['#952727','#631a1a'];
-    const separators = [76,128,194,412,476,534,644,760,832,940,1048,1156];
-    const rowSvg = Array.from({ length: 5 }, (_, index) => {
-      const player = rows[index]; const y = startY + index * 55;
-      if (!player) return `<rect y="${y}" width="1280" height="55" fill="${colors[index % 2]}" fill-opacity=".8"/>`;
+  private teamRows(record: MatchRecord, team: 1 | 2) {
+    const players = record.players.filter((player) => player.task_force === team).slice(0, 5);
+    const facts = new Map((record.facts ?? []).map((fact) => [String(fact.player_id), fact]));
+    const metrics = players.map((player) => this.metrics(player));
+    const max = (key: keyof Metrics) => Math.max(0, ...metrics.map((values) => values[key]));
+    return players.map((player, index) => {
       const values = metrics[index]!;
-      const partyNumber = party(player);
-      const underlines = ([['credits',589,'#f9c95f'],['objective',796,'#f4b974'],['damage',886,'#ff6675'],['taken',994,'#c94f60'],['shielding',1102,'#87a8ff'],['healing',1210,'#66e3a4']] as const)
-        .filter(([key]) => values[key] > 0 && values[key] === maxima[key]).map(([,x,color]) => `<line x1="${x-28}" x2="${x+28}" y1="${y+49}" y2="${y+49}" stroke="${color}" stroke-width="2" stroke-opacity=".6" filter="url(#glow)"/>`).join('');
-      return `<g><rect y="${y}" width="1280" height="55" fill="${colors[index % 2]}" fill-opacity=".8"/><line y1="${y+55}" y2="${y+55}" x2="1280" stroke="#94a3b8" stroke-opacity=".18"/>
-        ${separators.map((x) => `<line x1="${x}" x2="${x}" y1="${y+5}" y2="${y+50}" stroke="#94a3b8" stroke-opacity=".2"/>`).join('')}
-        ${partyNumber ? `<rect x="57" y="${y-2}" width="20" height="17" rx="8" fill="#0f766e" fill-opacity=".94"/><text x="67" y="${y+7}" font-size="9" font-weight="850" fill="#f5fffd" text-anchor="middle">${partyNumber}</text>` : ''}
-        <text x="161" y="${y+28}" class="value" font-size="16.5">${number(player.final_match_level)}</text><text x="206" y="${y+22}" class="name">${xml(player.player_name || 'PRIVATE')}</text><text x="206" y="${y+42}" class="sub">PID ${xml(player.player_id || 0)}</text>
-        <text x="444" y="${y+28}" class="value" font-size="16.5">${player.queue_elo ? number(player.queue_elo) : '—'}</text><text x="589" y="${y+28}" class="value">${number(values.credits)}</text><text x="702" y="${y+28}" class="value small">${player.kills} / ${player.deaths} / ${player.assists}</text>
-        <text x="796" y="${y+28}" class="value">${number(values.objective)}</text><text x="886" y="${y+28}" class="value">${number(values.damage)}</text><text x="994" y="${y+28}" class="value">${number(values.taken)}</text><text x="1102" y="${y+28}" class="value">${number(values.shielding)}</text><text x="1210" y="${y+28}" class="value">${number(values.healing)}</text>${underlines}</g>`;
+      const fact = facts.get(String(player.player_id));
+      const talent = fact?.talents?.[0];
+      const talentIcon = talent ? this.assets.talentIcon(talent.champion_name || player.champion_name, talent.talent_name) : null;
+      const peak = (key: keyof Metrics, requireValue = false) => values[key] === max(key) && (!requireValue || values[key] > 0) ? ' peak' : '';
+      const level = Number(player.final_match_level ?? 0) || Number(player.account_level ?? 0);
+      return `<div class="player-row grid-row"><div class="champion-wrap"><img class="champion-icon" src="${assetUrl(this.assets.championIcon(player.champion_name))}" alt="${xml(player.champion_name)}"/>${party(player) ? `<span class="party-badge" title="Party ${party(player)}">${party(player)}</span>` : ''}</div><div class="rank"><img src="${assetUrl(this.assets.rankIcon(tier(player)))}" alt="${xml(TIER_NAMES[tier(player)] ?? 'Unranked')}"/></div><div class="level">${number(level)}</div><div class="player"><div class="player-name">${xml(player.player_name || 'PRIVATE')}</div><div class="player-sub">PID ${xml(player.player_id || 0)}</div></div><div class="player-elo">${player.queue_elo ? number(player.queue_elo) : '—'}</div><img class="talent-icon" src="${assetUrl(talentIcon)}" alt="${xml(talent?.talent_name ?? '')}"/><div class="metric credits${peak('credits')}"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${number(values.credits)}</div><div class="metric kda">${player.kills} / ${player.deaths} / ${player.assists}</div><div class="metric obj${peak('objective')}">${number(values.objective)}</div><div class="metric damage${peak('damage')}">${number(values.damage)}</div><div class="metric taken${peak('taken')}">${number(values.taken)}</div><div class="metric shield${peak('shielding', true)}">${number(values.shielding)}</div><div class="metric heal${peak('healing', true)}">${number(values.healing)}</div></div>`;
     }).join('');
-    const summaryY = startY + 275;
-    const divisor = Math.max(1, rows.length);
-    const sum = (key: keyof PlayerMetrics) => metrics.reduce((total, row) => total + row[key], 0);
-    const avgLevel = Math.round(rows.reduce((total, player) => total + Number(player.final_match_level ?? 0), 0) / divisor);
-    const eloRows = rows.filter((player) => Number(player.queue_elo ?? 0) > 0);
-    const avgElo = eloRows.length ? Math.round(eloRows.reduce((total, player) => total + Number(player.queue_elo), 0) / eloRows.length) : 0;
-    const kda = `${rows.reduce((s,p)=>s+p.kills,0)} / ${rows.reduce((s,p)=>s+p.deaths,0)} / ${rows.reduce((s,p)=>s+p.assists,0)}`;
-    const totals = [`AVG ${number(avgLevel)}`, avgElo ? `AVG ${number(avgElo)}` : 'AVG —', compact(sum('credits')), kda, compact(sum('objective')), compact(sum('damage')), compact(sum('taken')), compact(sum('shielding')), compact(sum('healing'))];
-    const accent = team === 1 ? '#0c4493' : '#a52b2b';
-    return `${rowSvg}<g><rect y="${summaryY}" width="1280" height="29" fill="#161618" fill-opacity=".8"/><circle cx="22" cy="${summaryY+14.5}" r="3" fill="${accent}"/><text x="31" y="${summaryY+17}" class="team" fill="${accent}">TEAM ${team}</text><text x="78" y="${summaryY+17}" class="result" fill="${accent}">${team === winningTeam ? 'WIN' : 'DEFEAT'}</text>${[161,444,589,702,796,886,994,1102,1210].map((x,index)=>`<text x="${x}" y="${summaryY+15}" class="summary">${totals[index]}</text>`).join('')}</g>`;
+  }
+
+  private summary(record: MatchRecord, team: 1 | 2) {
+    const players = record.players.filter((player) => player.task_force === team).slice(0, 5);
+    const metrics = players.map((player) => this.metrics(player));
+    const sum = (key: keyof Metrics) => metrics.reduce((total, values) => total + values[key], 0);
+    const divisor = Math.max(1, players.length);
+    const level = Math.round(players.reduce((total, player) => total + (Number(player.final_match_level ?? 0) || Number(player.account_level ?? 0)), 0) / divisor);
+    const elo = Math.round(players.reduce((total, player) => total + Number(player.queue_elo ?? 0), 0) / divisor);
+    const kda = `${players.reduce((total, player) => total + player.kills, 0)} / ${players.reduce((total, player) => total + player.deaths, 0)} / ${players.reduce((total, player) => total + player.assists, 0)}`;
+    const won = record.match.winning_task_force === team;
+    const classes = team === 1 ? 'team-one' : 'team-two';
+    return `<div class="team-bar ${classes} grid-row" id="team-${team === 1 ? 'one' : 'two'}-summary"><div class="team-heading"><div class="team-name">Team ${team} <span class="result">${won ? 'Win' : 'Defeat'}</span></div></div><div class="team-total level-total average-total"><span class="team-average-label">AVG</span>${number(level)}</div><div class="team-total elo-total average-total"><span class="team-average-label">AVG</span>${number(elo)}</div><div class="team-total credits-total"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${compact(sum('credits'))}</div><div class="team-total kda-total">${kda}</div><div class="team-total objective-total">${compact(sum('objective'))}</div><div class="team-total damage-total">${compact(sum('damage'))}</div><div class="team-total taken-total">${compact(sum('taken'))}</div><div class="team-total shield-total">${compact(sum('shielding'))}</div><div class="team-total healing-total">${compact(sum('healing'))}</div></div>`;
+  }
+
+  private metrics(player: MatchPlayer): Metrics {
+    return { credits: Number(player.gold_earned ?? 0), objective: Number(player.objective_assists ?? 0), damage: damage(player), taken: Number(player.damage_taken ?? 0), shielding: Number(player.damage_mitigated ?? 0), healing: Number(player.healing ?? 0) };
   }
 
   private averageTier(players: MatchPlayer[]) {

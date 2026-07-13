@@ -21,9 +21,27 @@ export class AssetCatalog {
       ?? null;
   }
 
+  talentIcon(championName: string, talentName: string): string | null {
+    const files = this.championFiles ??= this.loadChampionFiles();
+    // Seris's published asset keeps its historical Soul Collector name.
+    const assetName = championName === 'Seris' && talentName === 'Resuscitate'
+      ? 'Seris Soul Collector'
+      : `${championName} ${talentName}`;
+    const wanted = normalized(`Talent ${assetName}`);
+    const matches = files.filter((file) => normalized(path.parse(file).name) === wanted);
+    // Sharp decodes the published talent AVIFs with an opaque black canvas on
+    // Alpine/libvips. The matching PNGs preserve the intended transparency.
+    return matches.find((file) => path.extname(file).toLowerCase() === '.png')
+      ?? matches[0]
+      ?? null;
+  }
+
   mapImage(mapName: string): string | null {
     const files = this.mapFiles ??= this.loadFiles('maps');
-    const wanted = normalized(mapName.replace(/^(?:(?:ranked|live)\s+)+/i, ''));
+    const wanted = normalized(mapName
+      .replace(/^(?:(?:ranked|live|wip)\s+)+/i, '')
+      .replace(/\bv\d+\b/ig, '')
+      .trim());
     return files.find((file) => normalized(path.parse(file).name) === normalized(`Ranked ${wanted}`))
       ?? files.find((file) => normalized(path.parse(file).name).includes(wanted) && normalized(file).includes('ranked'))
       ?? files.find((file) => normalized(path.parse(file).name).includes(wanted))

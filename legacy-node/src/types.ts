@@ -15,6 +15,16 @@ export interface MatchRecord {
   };
   players: MatchPlayer[];
   bans?: Array<{ ban_slot?: number; champion_id: number; champion_name: string }>;
+  facts?: MatchFactPlayer[];
+}
+
+export interface MatchFactPlayer {
+  player_id: string;
+  talents: Array<{
+    talent_id: number;
+    talent_name: string;
+    champion_name?: string;
+  }>;
 }
 
 export interface MatchPlayer {
@@ -33,10 +43,13 @@ export interface MatchPlayer {
   gold_earned: number;
   objective_assists?: number;
   final_match_level?: number;
+  account_level?: number;
   party?: number;
   party_id?: number;
   party_number?: number;
   tier?: number;
+  kbm_tier?: number;
+  kbm_rank?: number;
   queue_elo?: number;
   win_status: string;
   task_force: number;

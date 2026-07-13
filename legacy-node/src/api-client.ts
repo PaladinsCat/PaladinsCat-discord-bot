@@ -1,4 +1,4 @@
-import type { Champion, MatchRecord, PlayerProfileResponse, PlayerSearchResult } from './types.js';
+import type { Champion, MatchFactPlayer, MatchPlayer, MatchRecord, PlayerProfileResponse, PlayerSearchResult } from './types.js';
 
 export class PaladinsCatApiError extends Error {
   constructor(message: string, public readonly status: number) {
@@ -68,10 +68,43 @@ export class PaladinsCatApi {
   }
 
   async match(id: string): Promise<MatchRecord> {
-    const payload = await this.get<{ matches: MatchRecord[] }>(this.readPath(`/matches/${encodeURIComponent(id)}`));
+    const [payload, facts] = await Promise.all([
+      this.get<{ matches: MatchRecord[] }>(this.readPath(`/matches/${encodeURIComponent(id)}`)),
+      this.get<{ players?: MatchFactPlayer[] }>(`/matches/fact/${encodeURIComponent(id)}`).catch(() => null),
+    ]);
     const match = payload.matches?.[0];
     if (!match) throw new PaladinsCatApiError(`Match ${id} was not found`, 404);
-    return match;
+    const profiles = await Promise.all(match.players.map(async (player) => {
+      try {
+        const profile = await this.get<PlayerProfileResponse>(this.readPath(`/players/${player.player_id}?include=ratings`));
+        return this.hydrateMatchPlayer(player, profile, match.match.queue_id);
+      } catch {
+        return player;
+      }
+    }));
+    return { ...match, players: profiles, facts: facts?.players ?? [] };
+  }
+
+  private hydrateMatchPlayer(player: MatchPlayer, response: PlayerProfileResponse, queueId: number): MatchPlayer {
+    const profile = response.player ?? {};
+    const queueRatings = response.queueRatings ?? [];
+    const rating = queueRatings.find((row) => Number(row.queue_id) === queueId)
+      ?? queueRatings.find((row) => Number(row.queue_id) === 486)
+      ?? queueRatings[0];
+    const numeric = (value: unknown): number | undefined => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+    return {
+      ...player,
+      // Match rows commonly have final_match_level=0. The web exporter uses
+      // the profile level in that case, so do the same for Discord.
+      final_match_level: numeric(player.final_match_level) || numeric(profile.level) || numeric(player.account_level) || 0,
+      tier: numeric(profile.kbm_tier) ?? numeric(player.tier) ?? numeric(player.league_tier) ?? 0,
+      kbm_tier: numeric(profile.kbm_tier),
+      kbm_rank: numeric(profile.kbm_rank),
+      queue_elo: numeric(rating?.mu),
+    };
   }
 
   champions(): Promise<Champion[]> { return this.get('/champions'); }
