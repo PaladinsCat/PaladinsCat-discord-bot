@@ -6,7 +6,7 @@ import { AssetCatalog } from '../src/asset-catalog.js';
 import { MatchRenderer } from '../src/match-renderer.js';
 import type { MatchRecord } from '../src/types.js';
 
-test('renders an optimized 1280x720 JPEG from shared frontend assets', async () => {
+test('renders the dark-default optimized 2048x1152 JPEG from shared frontend assets', async () => {
   const players = Array.from({ length: 10 }, (_, index) => ({
     player_id: String(index + 1), player_name: `Player ${index + 1}`,
     champion_id: 2205, champion_name: 'Androxus', kills: index, deaths: 5,
@@ -22,10 +22,12 @@ test('renders an optimized 1280x720 JPEG from shared frontend assets', async () 
     players,
   };
   const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
-  const output = await new MatchRenderer(new AssetCatalog(assetRoot)).render(record);
+  const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
+  assert.equal(renderer.theme, 'dark');
+  const output = await renderer.render(record);
   const metadata = await sharp(output).metadata();
   assert.equal(metadata.format, 'jpeg');
-  assert.equal(metadata.width, 1280);
-  assert.equal(metadata.height, 720);
+  assert.equal(metadata.width, 2048);
+  assert.equal(metadata.height, 1152);
   assert.ok(output.byteLength < 1024 * 1024);
 });

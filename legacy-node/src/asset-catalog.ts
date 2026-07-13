@@ -7,6 +7,8 @@ function normalized(value: string) {
 
 export class AssetCatalog {
   private championFiles: string[] | null = null;
+  private mapFiles: string[] | null = null;
+  private rankFiles: string[] | null = null;
 
   constructor(private readonly root: string) {}
 
@@ -19,11 +21,54 @@ export class AssetCatalog {
       ?? null;
   }
 
+  mapImage(mapName: string): string | null {
+    const files = this.mapFiles ??= this.loadFiles('maps');
+    const wanted = normalized(mapName.replace(/^(?:(?:ranked|live)\s+)+/i, ''));
+    return files.find((file) => normalized(path.parse(file).name) === normalized(`Ranked ${wanted}`))
+      ?? files.find((file) => normalized(path.parse(file).name).includes(wanted) && normalized(file).includes('ranked'))
+      ?? files.find((file) => normalized(path.parse(file).name).includes(wanted))
+      ?? null;
+  }
+
+  rankIcon(tier: number): string | null {
+    const files = this.rankFiles ??= this.loadFiles('rank-tiers', true);
+    if (tier <= 0) return files.find((file) => normalized(file).includes('rankiconqualifying')) ?? null;
+    if (tier >= 27) return files.find((file) => normalized(file).includes('rankicongrandmaster')) ?? null;
+    if (tier === 26) return files.find((file) => normalized(file).includes('rankiconmaster')) ?? null;
+    const groups = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'];
+    const group = Math.floor((tier - 1) / 5);
+    const division = 5 - ((tier - 1) % 5);
+    const wanted = normalized(`RankIcon ${groups[group] ?? 'Bronze'} ${division}`);
+    return files.find((file) => normalized(path.parse(file).name) === wanted) ?? null;
+  }
+
+  icon(name: string): string | null {
+    const directory = path.join(this.root, 'icons');
+    if (!fs.existsSync(directory)) return null;
+    const wanted = normalized(name);
+    const file = fs.readdirSync(directory).find((entry) => normalized(path.parse(entry).name) === wanted);
+    return file ? path.join(directory, file) : null;
+  }
+
   private loadChampionFiles() {
-    const directory = path.join(this.root, 'champions');
+    return this.loadFiles('champions');
+  }
+
+  private loadFiles(directoryName: string, recursive = false): string[] {
+    const directory = path.join(this.root, directoryName);
     if (!fs.existsSync(directory)) return [];
-    return fs.readdirSync(directory)
-      .filter((file) => /\.(avif|png|webp|jpe?g)$/i.test(file))
-      .map((file) => path.join(directory, file));
+    return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) return recursive ? this.loadNestedFiles(target) : [];
+      return /\.(avif|png|webp|jpe?g)$/i.test(entry.name) ? [target] : [];
+    });
+  }
+
+  private loadNestedFiles(directory: string): string[] {
+    return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) return this.loadNestedFiles(target);
+      return /\.(avif|png|webp|jpe?g)$/i.test(entry.name) ? [target] : [];
+    });
   }
 }
