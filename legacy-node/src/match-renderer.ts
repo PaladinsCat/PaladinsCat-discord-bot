@@ -7,7 +7,7 @@ import { AssetCatalog } from './asset-catalog.js';
 const WIDTH = 1280;
 const HEIGHT = 720;
 const SCALE = 1.6;
-const TEMPLATE_VERSION = 5;
+const TEMPLATE_VERSION = 6;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 export type MatchImageTheme = 'dark' | 'light';
@@ -73,7 +73,10 @@ export class MatchRenderer {
     const template = fs.readFileSync(templatePath, 'utf8');
     const match = template.match(/<style>([\s\S]*?)<\/style>/i);
     if (!match?.[1]) throw new Error(`Scoreboard prototype CSS was not found in ${templatePath}.`);
-    this.css = match[1];
+    // The prototype imports Inter from Google Fonts. Render containers must not
+    // depend on an external font request, so the runtime image supplies the same
+    // font through fontconfig and keeps every prototype rule otherwise unchanged.
+    this.css = match[1].replace(/@import\s+url\(['"]https:\/\/fonts\.googleapis\.com\/[^'"]+['"]\);?/g, '');
     this.chromiumPath = options.chromiumPath ?? defaultChromiumPath();
   }
 
@@ -84,7 +87,9 @@ export class MatchRenderer {
     const page = await browser.newPage();
     try {
       await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: SCALE });
-      await page.setContent(this.document(record), { waitUntil: 'load' });
+      // The source prototype has an external font import. Waiting for the load
+      // event lets a network-restricted render container hang on that request.
+      await page.setContent(this.document(record), { waitUntil: 'domcontentloaded' });
       await page.evaluate(async () => {
         await document.fonts.ready;
         await Promise.all([...document.images].map(async (image) => {

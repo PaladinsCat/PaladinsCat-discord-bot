@@ -8,7 +8,7 @@ RUN npm run build
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apk add --no-cache chromium fontconfig ttf-dejavu
+RUN apk add --no-cache chromium fontconfig font-inter ttf-dejavu
 ENV PALADINSCAT_CHROMIUM_PATH=/usr/bin/chromium-browser \
     HOME=/tmp \
     XDG_CACHE_HOME=/tmp
