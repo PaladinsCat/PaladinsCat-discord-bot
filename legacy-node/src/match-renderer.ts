@@ -76,7 +76,7 @@ export class MatchRenderer {
 
     return sharp({ create: { width: WIDTH, height: HEIGHT, channels: 3, background: '#161618' } })
       .composite(composites)
-      .jpeg({ quality: 86, mozjpeg: true, chromaSubsampling: '4:4:4' })
+      .jpeg({ quality: 94, mozjpeg: true, chromaSubsampling: '4:4:4' })
       .toBuffer();
   }
 
