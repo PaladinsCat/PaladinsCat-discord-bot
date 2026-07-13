@@ -92,7 +92,7 @@ export class MatchRenderer {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 1280 720">
       <defs><filter id="glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
       <style>
-        text{font-family:Inter,Arial,sans-serif}.column{font-size:8.5px;font-weight:760;fill:#758397;text-anchor:middle;dominant-baseline:middle;letter-spacing:1px}
+        text{font-family:Inter,"DejaVu Sans",Arial,sans-serif}.column{font-size:8.5px;font-weight:760;fill:#758397;text-anchor:middle;dominant-baseline:middle;letter-spacing:1px}
         .name{font-size:18px;font-weight:760;fill:#f4f7fb}.sub{font-size:12.5px;font-weight:550;fill:#8c99ab;letter-spacing:.4px}
         .value{font-size:21px;font-weight:720;fill:#f4f7fb;text-anchor:middle;dominant-baseline:middle}.small{font-size:18px}.summary{font-size:11.5px;font-weight:760;fill:#f4f7fb;text-anchor:middle;dominant-baseline:middle}
         .brand{font-size:13px;font-weight:760;fill:#f4f7fb}.map{font-size:23px;font-weight:780;fill:#f4f7fb}.queue{font-size:11px;font-weight:780;fill:#c2ccd8;letter-spacing:1.6px}
