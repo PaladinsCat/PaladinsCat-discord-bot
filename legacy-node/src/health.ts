@@ -15,11 +15,8 @@ export function startHealthServer(port: number, renders: RenderService, api: Pal
     const previewMatch = url.pathname.match(/^\/preview\/player\/(\d{1,20})(?:\.json)?$/);
     if (request.method === 'GET' && previewMatch?.[1]) {
       try {
-        const [profile, history] = await Promise.all([
-          api.playerById(previewMatch[1]),
-          api.playerHistoryById(previewMatch[1], 5).catch(() => []),
-        ]);
-        const payload = buildPlayerProfileMessage(profile, history, webUrl);
+        const profile = await api.playerById(previewMatch[1]);
+        const payload = buildPlayerProfileMessage(profile, webUrl);
         const wantsJson = previewMatch[0].endsWith('.json') || url.searchParams.get('format') === 'json';
         response.writeHead(200, { 'content-type': wantsJson ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8', 'cache-control': 'no-store' });
         response.end(wantsJson ? JSON.stringify(payload) : renderDiscordPreview(payload));

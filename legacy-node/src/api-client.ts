@@ -105,9 +105,9 @@ export class PaladinsCatApi {
     };
     return {
       ...player,
-      // Match rows commonly have final_match_level=0. The web exporter uses
-      // the profile level in that case, so do the same for Discord.
-      final_match_level: numeric(player.final_match_level) || numeric(profile.level) || numeric(player.account_level) || 0,
+      // Match payload levels are capped at 999. Prefer the refreshed profile's
+      // XP-derived level whenever it is available.
+      final_match_level: numeric(profile.level) || numeric(player.final_match_level) || numeric(player.account_level) || 0,
       tier: numeric(profile.kbm_tier) ?? numeric(player.tier) ?? numeric(player.league_tier) ?? 0,
       kbm_tier: numeric(profile.kbm_tier),
       kbm_rank: numeric(profile.kbm_rank),

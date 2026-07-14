@@ -18,25 +18,35 @@ test('player profile message uses a compact, Discord-safe profile layout', () =>
       { champion_name: 'Androxus', mu: 1820, matches_played: 100 },
       { champion_name: 'Ash', mu: 1700, matches_played: 90 },
     ],
-  }, [
-    { win_status: 'Winner', champion_name: 'Androxus', kills: 15, deaths: 7, assists: 9, damage_per_minute: 4239.27 },
-    { win_status: 'Loser', champion_name: 'Ash', kills: 2, deaths: 6, assists: 4 },
-  ], 'https://paladinscat.com');
+  }, 'https://paladinscat.com');
 
   assert.deepEqual(validateDiscordMessage(payload), []);
   assert.deepEqual(payload.allowedMentions, { parse: [] });
   const embed = payload.embeds?.[0];
   assert.ok(embed);
   assert.equal(embed.url, 'https://paladinscat.com/players/42');
+  assert.equal(embed.thumbnail?.url, 'https://cdn.example/avatar.png');
   assert.match(embed.title ?? '', /Name\\_with/);
   assert.ok((embed.description ?? '').includes('Champion \\*of\\* Tides'));
   assert.ok(embed.fields?.some((field) => field.name === 'Ranked KBM' && field.value.includes('Grandmaster #12')));
-  assert.ok(embed.fields?.some((field) => field.name === 'Recent form' && field.value.includes('Androxus')));
+  assert.ok(!embed.fields?.some((field) => field.name === 'Recent form'));
   assert.ok(embed.fields?.some((field) => field.name === 'Top champions'));
   const preview = renderDiscordPreview(payload);
   assert.match(preview, /Discord message preview/);
   assert.match(preview, /Mentions disabled/);
   assert.match(preview, /Exact Discord payload/);
+});
+
+test('player profile message uses the local avatar when Hi-Rez has no image link', () => {
+  const payload = buildPlayerProfileMessage({
+    player: { id: '42', name: 'Fallback avatar', avatar_url: null },
+  }, 'https://paladinscat.com/');
+
+  const embed = payload.embeds?.[0];
+  assert.equal(embed?.thumbnail?.url, 'https://paladinscat.com/images/icons/Avatar_Default_Icon.png');
+  const preview = renderDiscordPreview(payload);
+  assert.match(preview, /Avatar_Default_Icon\.avif/);
+  assert.match(preview, /Avatar_Default_Icon\.png/);
 });
 
 test('Discord validator rejects payloads that exceed platform limits', () => {

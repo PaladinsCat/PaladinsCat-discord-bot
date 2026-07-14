@@ -1,5 +1,6 @@
 import type { APIEmbed } from 'discord.js';
 import { validateDiscordMessage, type DiscordMessagePayload } from './discord-message.js';
+import { DEFAULT_PLAYER_AVATAR_PATH } from './player-profile-message.js';
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>'"]/g, (character) => ({
@@ -26,6 +27,16 @@ function embedTextLength(embed: APIEmbed): number {
   ].filter(Boolean).join('').length;
 }
 
+function renderThumbnail(url: string | undefined): string {
+  if (!url) return '';
+  const image = `<img class="thumbnail" src="${escapeHtml(url)}" alt="Profile thumbnail">`;
+  const pathname = url.split(/[?#]/, 1)[0] ?? '';
+  if (!pathname.endsWith(DEFAULT_PLAYER_AVATAR_PATH)) return image;
+
+  const avifUrl = url.replace(/Avatar_Default_Icon\.png(?=([?#]|$))/i, 'Avatar_Default_Icon.avif');
+  return `<picture><source srcset="${escapeHtml(avifUrl)}" type="image/avif">${image}</picture>`;
+}
+
 function renderEmbed(embed: APIEmbed): string {
   const fields = (embed.fields ?? []).map((field) => `
     <section class="field${field.inline ? ' inline' : ''}">
@@ -40,7 +51,7 @@ function renderEmbed(embed: APIEmbed): string {
         ${embed.description ? `<p class="description">${markdown(embed.description)}</p>` : ''}
         ${fields ? `<div class="fields">${fields}</div>` : ''}
       </div>
-      ${embed.thumbnail?.url ? `<img class="thumbnail" src="${escapeHtml(embed.thumbnail.url)}" alt="Profile thumbnail">` : ''}
+      ${renderThumbnail(embed.thumbnail?.url)}
     </div>
     ${embed.footer?.text ? `<footer>${markdown(embed.footer.text)}</footer>` : ''}
   </article>`;

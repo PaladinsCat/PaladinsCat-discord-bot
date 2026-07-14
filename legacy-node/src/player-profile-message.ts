@@ -3,8 +3,7 @@ import { assertDiscordMessage, type DiscordMessagePayload } from './discord-mess
 import type { PlayerProfileResponse } from './types.js';
 
 const accent = 0x2dd4a3;
-
-type RecentMatch = Record<string, unknown>;
+export const DEFAULT_PLAYER_AVATAR_PATH = '/images/icons/Avatar_Default_Icon.png';
 
 function number(value: unknown): number | null {
   const parsed = Number(value);
@@ -34,6 +33,12 @@ function formatPercent(wins: unknown, losses: unknown): string | null {
   return games > 0 ? `${((winValue / games) * 100).toFixed(1)}%` : null;
 }
 
+function playerAvatarUrl(value: unknown, webUrl: string): string {
+  const rawUrl = String(value ?? '').trim();
+  if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
+  return `${webUrl.replace(/\/+$/, '')}${DEFAULT_PLAYER_AVATAR_PATH}`;
+}
+
 function tierName(tier: unknown, rank: unknown): string {
   const value = integer(tier) ?? 0;
   const leaderboardRank = integer(rank) ?? 0;
@@ -56,16 +61,6 @@ function formatQueue(label: string, tier: unknown, rank: unknown, points: unknow
   const record = games > 0 ? `\n${formatNumber(wins)}W – ${formatNumber(losses)}L` : '';
   const tp = (number(points) ?? 0) > 0 ? ` · ${formatNumber(points)} TP` : '';
   return { name: label, value: `${tierName(tier, rank)}${tp}${record}`, inline: true };
-}
-
-function formatRecentMatch(row: RecentMatch): string {
-  const win = String(row.win_status ?? '').toLocaleLowerCase();
-  const result = win === 'winner' || win === 'win' ? '🟢' : '🔴';
-  const champion = compact(row.champion_name, 40) || 'Unknown champion';
-  const kda = `${formatNumber(row.kills)}/${formatNumber(row.deaths)}/${formatNumber(row.assists)}`;
-  const dpm = number(row.damage_per_minute);
-  const performance = dpm != null && dpm > 0 ? ` · ${Math.round(dpm).toLocaleString()} DPM` : '';
-  return `${result} **${champion}** · ${kda}${performance}`;
 }
 
 function topChampionField(rows: Array<Record<string, unknown>>): APIEmbedField | null {
@@ -98,7 +93,6 @@ function performanceField(player: Record<string, unknown>): APIEmbedField | null
 
 export function buildPlayerProfileMessage(
   response: PlayerProfileResponse,
-  recentMatches: RecentMatch[],
   webUrl: string,
 ): DiscordMessagePayload {
   const player = response.player;
@@ -132,7 +126,6 @@ export function buildPlayerProfileMessage(
   if (performance) fields.push(performance);
   const champions = topChampionField(response.championRatings ?? []);
   if (champions) fields.push(champions);
-  if (recentMatches.length > 0) fields.push({ name: 'Recent form', value: recentMatches.slice(0, 5).map(formatRecentMatch).join('\n'), inline: false });
 
   const refreshedAt = new Date(String(response.profileRefresh?.refreshed_at ?? player.last_updated ?? ''));
   const timestamp = Number.isFinite(refreshedAt.getTime()) ? refreshedAt.toISOString() : undefined;
@@ -143,8 +136,8 @@ export function buildPlayerProfileMessage(
     url: `${webUrl}/players/${playerId}`,
     description: description || undefined,
     fields,
-    thumbnail: player.avatar_url ? { url: String(player.avatar_url) } : undefined,
-    footer: { text: 'PaladinsCat • Use /history for more matches' },
+    thumbnail: { url: playerAvatarUrl(player.avatar_url, webUrl) },
+    footer: { text: 'PaladinsCat' },
     timestamp,
   };
 

@@ -123,11 +123,8 @@ export class CommandHandler {
 
   private async player(interaction: ChatInputCommandInteraction) {
     const resolved = await this.api.resolvePlayer(interaction.options.getString('player', true));
-    const [response, recentMatches] = await Promise.all([
-      this.api.playerById(resolved.id),
-      this.api.playerHistoryById(resolved.id, 5).catch(() => []),
-    ]);
-    return interaction.editReply(buildPlayerProfileMessage(response, recentMatches, this.webUrl));
+    const response = await this.api.playerById(resolved.id);
+    return interaction.editReply(buildPlayerProfileMessage(response, this.webUrl));
   }
 
   private async match(interaction: ChatInputCommandInteraction) {
