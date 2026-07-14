@@ -35,6 +35,7 @@ function xml(value: unknown) {
 }
 
 function number(value: number | undefined) { return Math.round(Number(value ?? 0)).toLocaleString('en-US'); }
+function score(value: number | null | undefined) { return value ?? '?'; }
 function compact(value: number) { return Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(1)}k` : number(value); }
 function duration(seconds: number) { return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`; }
 function utcTimestamp(value: string) {
@@ -178,7 +179,7 @@ export class MatchRenderer {
       match.private ? '<span class="status-tag private">Private</span>' : '',
     ].join('');
     const contextMarkup = `<div class="match-context"><span>${xml(match.region || '—')}</span><span>${xml(presentation.mode)}</span></div>`;
-    return `<header class="hero${ranked ? '' : ' casual'}"><div class="match-identity"><div class="brand-line"><span class="brand-name"><img src="${assetUrl(this.assets.icon('paladinscat'))}" alt=""/> PaladinsCat</span><div class="status-tags">${statusMarkup}</div></div><div class="map-line"><div class="${mapClass}" title="${xml(mapName)}">${xml(mapName)}</div></div>${contextMarkup}</div><div class="score${ranked ? '' : ' casual'}">${banMarkup}<span class="score-number team-one-score">${match.team1_score}</span><span class="score-separator">/</span><span class="score-number team-two-score">${match.team2_score}</span>${rightBanMarkup}</div><div class="match-meta${ranked ? '' : ' casual-meta'}">${tierMarkup}<time class="timestamp-meta" datetime="${xml(match.entry_datetime)}">${xml(utcTimestamp(match.entry_datetime))}</time><div class="duration-meta"><div class="meta-value">${duration(match.duration_seconds)}</div><div class="meta-label">Duration</div></div><div class="match-id-meta"><div class="meta-value">${xml(match.match_id)}</div><div class="meta-label">Match ID</div></div></div></header>`;
+    return `<header class="hero${ranked ? '' : ' casual'}"><div class="match-identity"><div class="brand-line"><span class="brand-name"><img src="${assetUrl(this.assets.icon('paladinscat'))}" alt=""/> PaladinsCat</span><div class="status-tags">${statusMarkup}</div></div><div class="map-line"><div class="${mapClass}" title="${xml(mapName)}">${xml(mapName)}</div></div>${contextMarkup}</div><div class="score${ranked ? '' : ' casual'}">${banMarkup}<span class="score-number team-one-score">${score(match.team1_score)}</span><span class="score-separator">/</span><span class="score-number team-two-score">${score(match.team2_score)}</span>${rightBanMarkup}</div><div class="match-meta${ranked ? '' : ' casual-meta'}">${tierMarkup}<time class="timestamp-meta" datetime="${xml(match.entry_datetime)}">${xml(utcTimestamp(match.entry_datetime))}</time><div class="duration-meta"><div class="meta-value">${duration(match.duration_seconds)}</div><div class="meta-label">Duration</div></div><div class="match-id-meta"><div class="meta-value">${xml(match.match_id)}</div><div class="meta-label">Match ID</div></div></div></header>`;
   }
 
   private teamRows(record: MatchRecord, team: 1 | 2) {

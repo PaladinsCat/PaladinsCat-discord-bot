@@ -6,8 +6,8 @@ export interface MatchRecord {
     duration_seconds: number;
     region: string;
     map: string;
-    team1_score: number;
-    team2_score: number;
+    team1_score: number | null;
+    team2_score: number | null;
     winning_task_force: number;
     broken: boolean;
     recovered: boolean;

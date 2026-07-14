@@ -78,6 +78,23 @@ test('shows the approved casual hero while preserving ranked metadata coordinate
   assert.match(markup, /class="match-id-meta"/);
 });
 
+test('renders an unknown Siege score as a question mark', () => {
+  const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
+  const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
+  const record: MatchRecord = {
+    match: { match_id: '1280787404', entry_datetime: '2026-07-14T18:48:30Z', queue_id: 486,
+      duration_seconds: 900, region: 'NA', map: "Ranked Warder's Gate", team1_score: null,
+      team2_score: 4, winning_task_force: 2, broken: true, recovered: true, private: false },
+    players: [],
+  };
+
+  const html = (renderer as unknown as { document(value: MatchRecord): string }).document(record);
+  const markup = html.slice(html.indexOf('</style>'));
+  assert.match(markup, /team-one-score">\?<\/span>/);
+  assert.match(markup, /team-two-score">4<\/span>/);
+  assert.doesNotMatch(markup, /team-one-score">null<\/span>/);
+});
+
 test('maps other live queues to human-readable game modes without exposing IDs', () => {
   const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
   const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
