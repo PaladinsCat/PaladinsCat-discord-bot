@@ -7,7 +7,7 @@ import { AssetCatalog } from './asset-catalog.js';
 const WIDTH = 1280;
 const HEIGHT = 720;
 const SCALE = 1.6;
-const TEMPLATE_VERSION = 9;
+const TEMPLATE_VERSION = 10;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
@@ -37,6 +37,17 @@ function xml(value: unknown) {
 function number(value: number | undefined) { return Math.round(Number(value ?? 0)).toLocaleString('en-US'); }
 function compact(value: number) { return Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(1)}k` : number(value); }
 function duration(seconds: number) { return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`; }
+function utcTimestamp(value: string) {
+  const trimmed = String(value ?? '').trim();
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(trimmed)
+    ? `${trimmed.replace(' ', 'T')}Z`
+    : trimmed;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return '—';
+  const datePart = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  const timePart = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' });
+  return `${datePart} · ${timePart} UTC`;
+}
 function damage(player: MatchPlayer) { return Number(player.damage_done_physical || player.damage_done_in_hand || 0); }
 function tier(player: MatchPlayer) { const value = Number(player.kbm_tier ?? player.tier ?? player.league_tier ?? 0); return Number.isFinite(value) ? Math.max(0, Math.min(27, Math.floor(value))) : 0; }
 function party(player: MatchPlayer) { const value = Number(player.party ?? player.party_number ?? player.party_id ?? 0); return Number.isFinite(value) && value > 0 ? Math.floor(value) : null; }
@@ -147,11 +158,10 @@ export class MatchRenderer {
     const mapName = match.map.replace(/^(?:(?:Ranked|Live|WIP)\s+)+/i, '').replace(/\bv\d+\b/ig, '').trim();
     const presentation = queuePresentation(match.queue_id);
     const ranked = presentation.ranked;
-    const queue = [`${match.region || '—'} ${presentation.category}`, presentation.mode];
     const bans = [...(record.bans ?? [])].sort((a, b) => Number(a.ban_slot ?? 0) - Number(b.ban_slot ?? 0));
     const split = Math.ceil(bans.length / 2);
     const banSet = (entries: typeof bans) => entries.slice(0, 4).map((ban) => `<span class="ban-pick"><img src="${assetUrl(this.assets.championIcon(ban.champion_name))}" alt="${xml(ban.champion_name)}"/></span>`).join('');
-    const averageTier = ranked ? this.averageTier(record.players) : null;
+    const averageTier = this.averageTier(record.players);
     const mapClass = mapName.length > 19 ? 'map-name long' : 'map-name';
     const banMarkup = ranked
       ? `<div class="score-bans left"><span class="ban-label">Bans</span><div class="ban-picks">${banSet(bans.slice(0, split))}</div></div>`
@@ -159,11 +169,16 @@ export class MatchRenderer {
     const rightBanMarkup = ranked
       ? `<div class="score-bans right"><span class="ban-label">Bans</span><div class="ban-picks">${banSet(bans.slice(split))}</div></div>`
       : '';
-    const tierMarkup = averageTier === null
-      ? ''
-      : `<div class="tier-meta"><img src="${assetUrl(this.assets.rankIcon(averageTier))}" alt="${xml(TIER_NAMES[averageTier] ?? 'Unranked')}"/><div><div class="meta-value">${xml(TIER_NAMES[averageTier] ?? 'Unranked')}</div><div class="meta-label">Avg tier</div></div></div>`;
-    const queueMarkup = `<div class="queue">${queue.map((word) => `<span>${xml(word)}</span>`).join('')}</div>`;
-    return `<header class="hero${ranked ? '' : ' casual'}"><div><div class="brand-line"><span class="brand-name"><img src="${assetUrl(this.assets.icon('paladinscat'))}" alt=""/> PaladinsCat</span>${queueMarkup}</div><div class="map-line"><div class="${mapClass}" title="${xml(mapName)}">${xml(mapName)}</div></div></div><div class="score${ranked ? '' : ' casual'}">${banMarkup}<span class="score-number team-one-score">${match.team1_score}</span><span class="score-separator">/</span><span class="score-number team-two-score">${match.team2_score}</span>${rightBanMarkup}</div><div class="match-meta${ranked ? '' : ' casual-meta'}">${tierMarkup}<div><div class="meta-value">${duration(match.duration_seconds)}</div><div class="meta-label">Duration</div></div><div><div class="meta-value">${xml(match.match_id)}</div><div class="meta-label">Match ID</div></div></div></header>`;
+    const tierName = TIER_NAMES[averageTier] ?? 'Unranked';
+    const tierMarkup = `<div class="tier-meta"${ranked ? '' : ' aria-hidden="true"'}><img src="${assetUrl(this.assets.rankIcon(averageTier))}" alt="${ranked ? xml(tierName) : ''}"/><div><div class="meta-value">${xml(tierName)}</div><div class="meta-label">Avg tier</div></div></div>`;
+    const statusMarkup = [
+      `<span class="status-tag ${ranked ? 'ranked' : 'casual'}">${ranked ? 'Ranked' : 'Casual'}</span>`,
+      match.broken && !match.recovered ? '<span class="status-tag broken">Broken</span>' : '',
+      match.recovered ? '<span class="status-tag recovered">Recovered</span>' : '',
+      match.private ? '<span class="status-tag private">Private</span>' : '',
+    ].join('');
+    const contextMarkup = `<div class="match-context"><span>${xml(match.region || '—')}</span><span>${xml(presentation.mode)}</span></div>`;
+    return `<header class="hero${ranked ? '' : ' casual'}"><div class="match-identity"><div class="brand-line"><span class="brand-name"><img src="${assetUrl(this.assets.icon('paladinscat'))}" alt=""/> PaladinsCat</span><div class="status-tags">${statusMarkup}</div></div><div class="map-line"><div class="${mapClass}" title="${xml(mapName)}">${xml(mapName)}</div></div>${contextMarkup}</div><div class="score${ranked ? '' : ' casual'}">${banMarkup}<span class="score-number team-one-score">${match.team1_score}</span><span class="score-separator">/</span><span class="score-number team-two-score">${match.team2_score}</span>${rightBanMarkup}</div><div class="match-meta${ranked ? '' : ' casual-meta'}">${tierMarkup}<time class="timestamp-meta" datetime="${xml(match.entry_datetime)}">${xml(utcTimestamp(match.entry_datetime))}</time><div class="duration-meta"><div class="meta-value">${duration(match.duration_seconds)}</div><div class="meta-label">Duration</div></div><div class="match-id-meta"><div class="meta-value">${xml(match.match_id)}</div><div class="meta-label">Match ID</div></div></div></header>`;
   }
 
   private teamRows(record: MatchRecord, team: 1 | 2) {

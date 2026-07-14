@@ -47,11 +47,11 @@ test('resolves WIP map names to the shared ranked map art', () => {
   assert.match(assets.mapImage('WIP Serpent Beach V2') ?? '', /Ranked_Serpent_Beach/i);
 });
 
-test('shows friendly region, queue, and mode labels while hiding ranked-only casual fields', () => {
+test('shows the approved casual hero while preserving ranked metadata coordinates', () => {
   const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
   const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
   const record: MatchRecord = {
-    match: { match_id: '1280758080', entry_datetime: new Date().toISOString(), queue_id: 424,
+    match: { match_id: '1280758080', entry_datetime: '2026-07-14T00:35:00Z', queue_id: 424,
       duration_seconds: 768, region: 'NA', map: "LIVE Warder's Gate", team1_score: 2,
       team2_score: 4, winning_task_force: 2, broken: false, recovered: true, private: false },
     players: [],
@@ -61,15 +61,21 @@ test('shows friendly region, queue, and mode labels while hiding ranked-only cas
     ],
   };
   const html = (renderer as unknown as { document(value: MatchRecord): string }).document(record);
+  assert.match(html, /\.match-meta\.casual-meta \.tier-meta \{ visibility: hidden; \}/);
+  assert.doesNotMatch(html, /\.match-meta\.casual-meta \{ grid-template-areas:/);
   const markup = html.slice(html.indexOf('</style>'));
   assert.match(markup, /<header class="hero casual">/);
   assert.match(markup, /<div class="score casual">/);
-  assert.match(markup, /<div class="queue"><span>NA Casual<\/span><span>Siege<\/span><\/div>/);
+  assert.match(markup, /<span class="status-tag casual">Casual<\/span>/);
+  assert.match(markup, /<span class="status-tag recovered">Recovered<\/span>/);
+  assert.match(markup, /<div class="match-context"><span>NA<\/span><span>Siege<\/span><\/div>/);
   assert.doesNotMatch(markup, /Queue 424/);
   assert.match(markup, /Warder&#39;s Gate/);
   assert.doesNotMatch(markup, /score-bans/);
-  assert.doesNotMatch(markup, /tier-meta/);
-  assert.doesNotMatch(markup, /Avg tier/i);
+  assert.match(markup, /<div class="match-meta casual-meta"><div class="tier-meta" aria-hidden="true">/);
+  assert.match(markup, /Jul 14, 2026 · 12:35 AM UTC/);
+  assert.match(markup, /class="duration-meta"/);
+  assert.match(markup, /class="match-id-meta"/);
 });
 
 test('maps other live queues to human-readable game modes without exposing IDs', () => {
@@ -82,10 +88,33 @@ test('maps other live queues to human-readable game modes without exposing IDs',
     players: [],
   };
   const document = (value: MatchRecord) => (renderer as unknown as { document(record: MatchRecord): string }).document(value);
-  assert.match(document(base), /<span>EU Casual<\/span><span>Onslaught<\/span>/);
+  assert.match(document(base), /<div class="match-context"><span>EU<\/span><span>Onslaught<\/span><\/div>/);
   const deathmatch = { ...base, match: { ...base.match, queue_id: 469 } };
-  assert.match(document(deathmatch), /<span>EU Casual<\/span><span>Team Deathmatch<\/span>/);
+  assert.match(document(deathmatch), /<div class="match-context"><span>EU<\/span><span>Team Deathmatch<\/span><\/div>/);
   assert.doesNotMatch(document(deathmatch), /Queue 469/);
+});
+
+test('renders mutually exclusive recovery tags and the private tag', () => {
+  const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
+  const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
+  const base: MatchRecord = {
+    match: { match_id: '1', entry_datetime: '2026-07-14 00:35:00', queue_id: 486,
+      duration_seconds: 600, region: 'EU', map: 'Ranked Stone Keep (Classic)', team1_score: 1,
+      team2_score: 0, winning_task_force: 1, broken: true, recovered: true, private: true },
+    players: [],
+  };
+  const document = (value: MatchRecord) => (renderer as unknown as { document(record: MatchRecord): string }).document(value);
+  const recovered = document(base);
+  assert.match(recovered, /status-tag ranked">Ranked/);
+  assert.match(recovered, /status-tag recovered">Recovered/);
+  assert.match(recovered, /status-tag private">Private/);
+  assert.doesNotMatch(recovered, /status-tag broken">Broken/);
+  assert.match(recovered, /Jul 14, 2026 · 12:35 AM UTC/);
+
+  const broken = document({ ...base, match: { ...base.match, recovered: false } });
+  assert.match(broken, /status-tag broken">Broken/);
+  assert.match(broken, /status-tag private">Private/);
+  assert.doesNotMatch(broken, /status-tag recovered">Recovered/);
 });
 
 test('keeps the prototype light theme available to renderer consumers', { skip: requiresChromium && 'requires PALADINSCAT_CHROMIUM_PATH for the CSS-native browser renderer' }, async () => {
