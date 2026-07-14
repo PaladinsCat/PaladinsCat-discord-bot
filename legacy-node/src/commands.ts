@@ -7,6 +7,7 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import { PaladinsCatApi, PaladinsCatApiError } from './api-client.js';
+import { buildPlayerProfileMessage } from './player-profile-message.js';
 import { RenderService } from './render-service.js';
 import { QueueFullError } from './render-queue.js';
 import type { Champion } from './types.js';
@@ -121,19 +122,12 @@ export class CommandHandler {
   }
 
   private async player(interaction: ChatInputCommandInteraction) {
-    const response = await this.api.player(interaction.options.getString('player', true));
-    const p = response.player as Record<string, any>;
-    const wins = Number(p.wins ?? 0), losses = Number(p.losses ?? 0);
-    const embed = new EmbedBuilder().setColor(accent).setTitle(String(p.name)).setURL(`${this.webUrl}/players/${p.id}`)
-      .setDescription([p.title, `${p.region ?? 'Unknown region'} · ${p.platform ?? 'Unknown platform'}`].filter(Boolean).join('\n'))
-      .addFields(
-        { name: 'Ranked', value: `Tier ${p.kbm_tier ?? 0} · ${Number(p.kbm_points ?? 0).toLocaleString()} TP`, inline: true },
-        { name: 'Record', value: `${wins.toLocaleString()}W / ${losses.toLocaleString()}L`, inline: true },
-        { name: 'Level', value: String(p.level ?? '—'), inline: true },
-        { name: 'Performance', value: `DPM ${Number(p.avg_dpm ?? 0).toLocaleString()} · HPM ${Number(p.avg_hpm ?? 0).toLocaleString()} · MPM ${Number(p.avg_mpm ?? 0).toLocaleString()}` },
-      );
-    if (p.avatar_url) embed.setThumbnail(String(p.avatar_url));
-    return interaction.editReply({ embeds: [embed] });
+    const resolved = await this.api.resolvePlayer(interaction.options.getString('player', true));
+    const [response, recentMatches] = await Promise.all([
+      this.api.playerById(resolved.id),
+      this.api.playerHistoryById(resolved.id, 5).catch(() => []),
+    ]);
+    return interaction.editReply(buildPlayerProfileMessage(response, recentMatches, this.webUrl));
   }
 
   private async match(interaction: ChatInputCommandInteraction) {

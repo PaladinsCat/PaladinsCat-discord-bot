@@ -49,12 +49,20 @@ export class PaladinsCatApi {
 
   async player(input: string): Promise<PlayerProfileResponse> {
     const resolved = await this.resolvePlayer(input);
-    return this.get(this.readPath(`/players/${resolved.id}?include=ratings,champions`));
+    return this.playerById(resolved.id);
+  }
+
+  async playerById(playerId: string): Promise<PlayerProfileResponse> {
+    return this.get(this.readPath(`/players/${encodeURIComponent(playerId)}?include=ratings,champions`));
   }
 
   async playerHistory(input: string, limit = 10): Promise<Array<Record<string, unknown>>> {
     const resolved = await this.resolvePlayer(input);
-    return this.get(this.readPath(`/players/${resolved.id}/matches?limit=${limit}`));
+    return this.playerHistoryById(resolved.id, limit);
+  }
+
+  async playerHistoryById(playerId: string, limit = 10): Promise<Array<Record<string, unknown>>> {
+    return this.get(this.readPath(`/players/${encodeURIComponent(playerId)}/matches?limit=${limit}`));
   }
 
   async playerLoadouts(input: string): Promise<Record<string, unknown>> {
