@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { validateDiscordMessage } from '../src/discord-message.js';
+import { renderDiscordPreview } from '../src/discord-preview.js';
 import { buildPlayerProfileMessage } from '../src/player-profile-message.js';
 
 test('player profile message uses a compact, Discord-safe profile layout', () => {
@@ -32,6 +33,10 @@ test('player profile message uses a compact, Discord-safe profile layout', () =>
   assert.ok(embed.fields?.some((field) => field.name === 'Ranked KBM' && field.value.includes('Grandmaster #12')));
   assert.ok(embed.fields?.some((field) => field.name === 'Recent form' && field.value.includes('Androxus')));
   assert.ok(embed.fields?.some((field) => field.name === 'Top champions'));
+  const preview = renderDiscordPreview(payload);
+  assert.match(preview, /Discord message preview/);
+  assert.match(preview, /Mentions disabled/);
+  assert.match(preview, /Exact Discord payload/);
 });
 
 test('Discord validator rejects payloads that exceed platform limits', () => {

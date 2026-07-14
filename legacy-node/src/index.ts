@@ -17,7 +17,7 @@ const renders = new RenderService(new MatchRenderer(new AssetCatalog(config.asse
   cacheTtlMs: config.renderCacheTtlMs,
 });
 let discordState = config.mode === 'dummy' ? 'dummy' : 'starting';
-const health = startHealthServer(config.healthPort, renders, api, () => ({ mode: config.mode, discord: discordState }));
+const health = startHealthServer(config.healthPort, renders, api, config.webUrl, () => ({ mode: config.mode, discord: discordState }));
 let client: Client | null = null;
 
 if (config.mode === 'dummy') {
