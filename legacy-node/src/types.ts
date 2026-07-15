@@ -75,7 +75,6 @@ export interface PlayerProfileResponse {
   profileRefresh?: Record<string, unknown>;
   globalStats?: Record<string, unknown> | null;
   queueRatings?: Array<Record<string, unknown>>;
-  championRatings?: Array<Record<string, unknown>>;
 }
 
 export interface Champion {

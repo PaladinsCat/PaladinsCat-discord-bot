@@ -53,7 +53,7 @@ export class PaladinsCatApi {
   }
 
   async playerById(playerId: string): Promise<PlayerProfileResponse> {
-    return this.get(this.readPath(`/players/${encodeURIComponent(playerId)}?include=ratings,champions`));
+    return this.get(this.readPath(`/players/${encodeURIComponent(playerId)}?include=ratings`));
   }
 
   async playerHistory(input: string, limit = 10): Promise<Array<Record<string, unknown>>> {

@@ -33,7 +33,7 @@ test('local-only bot reads suppress backend Hi-Rez fallbacks', async () => {
   await api.match('123');
 
   assert.deepEqual(urls, [
-    'http://backend:3005/players/123?include=ratings,champions&refresh=false',
+    'http://backend:3005/players/123?include=ratings&refresh=false',
     'http://backend:3005/players/123/matches?limit=10&refresh=false',
     'http://backend:3005/players/123/loadouts?refresh=false',
     'http://backend:3005/matches/123?refresh=false',
@@ -66,7 +66,7 @@ test('normal mode preserves database-first backend fallback behavior', async () 
   await api.match('123');
 
   assert.deepEqual(urls, [
-    'http://backend:3005/players/123?include=ratings,champions',
+    'http://backend:3005/players/123?include=ratings',
     'http://backend:3005/matches/123',
     'http://backend:3005/matches/fact/123',
   ]);

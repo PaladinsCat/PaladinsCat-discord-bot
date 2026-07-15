@@ -106,24 +106,6 @@ function rankedField(label: string, tier: unknown, rank: unknown, points: unknow
   return { name: label, value: codeBlock(lines), inline: false };
 }
 
-function topChampionField(rows: Array<Record<string, unknown>>): APIEmbedField | null {
-  const top = rows
-    .map((row) => ({
-      name: compact(row.champion_name ?? row.name, 42),
-      rating: number(row.elo ?? row.mu ?? row.rating),
-      matches: number(row.matches_played ?? row.total_matches),
-    }))
-    .filter((row) => row.name && (row.rating != null || (row.matches ?? 0) > 0))
-    .sort((left, right) => (right.rating ?? 0) - (left.rating ?? 0) || (right.matches ?? 0) - (left.matches ?? 0))
-    .slice(0, 3);
-  if (top.length === 0) return null;
-  return {
-    name: 'Top champions',
-    value: top.map((row) => `${row.name}${row.rating != null ? ` · ${Math.round(row.rating).toLocaleString()} ELO` : ''}`).join('\n'),
-    inline: false,
-  };
-}
-
 function performanceField(player: Record<string, unknown>): APIEmbedField | null {
   const metrics = [
     ['DPM', player.avg_dpm], ['HPM', player.avg_hpm], ['MPM', player.avg_mpm], ['EGPM', player.avg_egpm],
@@ -153,15 +135,17 @@ export function buildPlayerProfileMessage(
   const wins = number(player.wins) ?? 0;
   const losses = number(player.losses) ?? 0;
   const totalMatches = wins + losses;
+  const kda = globalKda(response.globalStats);
   fields.push({
     name: 'General',
     value: codeBlock([
-      statLine('Name', playerName),
       statLine('Account ID', String(player.id)),
       statLine('Account level', formatNumber(player.level)),
-      statLine('Win rate', record ? `${record} (${formatNumber(player.wins)}–${formatNumber(player.losses)})` : '—'),
-      statLine('Total matches', formatNumber(totalMatches)),
       statLine('Total XP', formatNumber(player.total_xp)),
+      statLine('Total matches', formatNumber(totalMatches)),
+      statLine('Casual deserted', formatNumber(player.leaves)),
+      statLine('Win rate', record ? `${record} (${formatNumber(player.wins)}–${formatNumber(player.losses)})` : '—'),
+      ...(kda ? [statLine('Global KDA', kda)] : []),
     ]),
     inline: false,
   });
@@ -181,8 +165,6 @@ export function buildPlayerProfileMessage(
   if (mastery != null && mastery > 0) otherLines.push(statLine('Mastery level', formatNumber(mastery)));
   const achievements = number(player.total_achievements);
   if (achievements != null && achievements > 0) otherLines.push(statLine('Achievements', formatNumber(achievements)));
-  const kda = globalKda(response.globalStats);
-  if (kda) otherLines.push(statLine('Global KDA', kda));
   const createdAt = formatDate(player.created_datetime);
   if (createdAt) otherLines.push(statLine('Account created', createdAt));
   const lastLogin = formatDate(player.last_login_datetime);
@@ -193,8 +175,6 @@ export function buildPlayerProfileMessage(
 
   const performance = performanceField(player);
   if (performance) fields.push(performance);
-  const champions = topChampionField(response.championRatings ?? []);
-  if (champions) fields.push(champions);
 
   const refreshedAt = new Date(String(response.profileRefresh?.refreshed_at ?? player.last_updated ?? ''));
   const timestamp = Number.isFinite(refreshedAt.getTime()) ? refreshedAt.toISOString() : undefined;

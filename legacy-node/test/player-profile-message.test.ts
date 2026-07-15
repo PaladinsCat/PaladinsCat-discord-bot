@@ -15,10 +15,6 @@ test('player profile message uses a compact, Discord-safe profile layout', () =>
       created_datetime: '2018-11-25T00:00:00Z', last_login_datetime: '2026-07-14T00:00:00Z',
     },
     profileRefresh: { refreshed_at: '2026-07-14T00:00:00Z' },
-    championRatings: [
-      { champion_name: 'Androxus', mu: 1820, matches_played: 100 },
-      { champion_name: 'Ash', mu: 1700, matches_played: 90 },
-    ],
     globalStats: { kills: 16869, deaths: 9454, assists: 23460, wins: 964, losses: 779 },
   }, 'https://paladinscat.com');
 
@@ -31,13 +27,17 @@ test('player profile message uses a compact, Discord-safe profile layout', () =>
   assert.match(embed.title ?? '', /Name\\_with/);
   assert.ok((embed.title ?? '').includes('Champion \\*of\\* Tides'));
   assert.ok(embed.fields?.some((field) => field.name === 'General' && field.value.includes('Account level')));
+  const general = embed.fields?.find((field) => field.name === 'General')?.value ?? '';
+  assert.ok(!general.includes('Name'));
+  assert.ok(general.indexOf('Total XP') < general.indexOf('Total matches'));
+  assert.ok(general.includes('Casual deserted'));
+  assert.ok(general.indexOf('Win rate') < general.indexOf('Global KDA'));
   assert.ok(embed.fields?.some((field) => field.name === 'Ranked KBM' && field.value.includes('Grandmaster #12')));
   assert.ok(embed.fields?.some((field) => field.name === 'Other' && field.value.includes('Platform')));
-  assert.ok(embed.fields?.some((field) => field.name === 'Other' && field.value.includes('Global KDA')));
   assert.ok(embed.fields?.some((field) => field.name === 'Other' && field.value.includes('Account created')));
   assert.ok(embed.fields?.some((field) => field.name === 'Other' && field.value.includes('Last login')));
   assert.ok(!embed.fields?.some((field) => field.name === 'Recent form'));
-  assert.ok(embed.fields?.some((field) => field.name === 'Top champions'));
+  assert.ok(!embed.fields?.some((field) => field.name === 'Top champions'));
   const preview = renderDiscordPreview(payload);
   assert.match(preview, /Discord message preview/);
   assert.match(preview, /Mentions disabled/);
