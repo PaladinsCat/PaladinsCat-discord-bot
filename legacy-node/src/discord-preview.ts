@@ -12,12 +12,19 @@ function escapeHtml(value: string): string {
 // cards. The raw payload is shown alongside it, so Discord remains the final
 // rendering authority while this stays a safe, faithful design preview.
 function markdown(value: string | undefined): string {
+  const codeBlocks: string[] = [];
   const escaped = escapeHtml(value ?? '')
+    .replace(/```([\s\S]*?)```/g, (_match, code: string) => {
+      const index = codeBlocks.push(`<pre class="discord-code">${code.trim()}</pre>`) - 1;
+      return `\u0000CODE_BLOCK_${index}\u0000`;
+    })
     .replace(/\\([\\`*_~])/g, '$1')
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
-  return escaped.replace(/\n/g, '<br>');
+  return escaped
+    .replace(/\n/g, '<br>')
+    .replace(/\u0000CODE_BLOCK_(\d+)\u0000/g, (_match, index: string) => codeBlocks[Number(index)] ?? '');
 }
 
 function embedTextLength(embed: APIEmbed): number {
@@ -41,7 +48,7 @@ function renderEmbed(embed: APIEmbed): string {
   const fields = (embed.fields ?? []).map((field) => `
     <section class="field${field.inline ? ' inline' : ''}">
       <h3>${markdown(field.name)}</h3>
-      <p>${markdown(field.value)}</p>
+      <div class="field-value">${markdown(field.value)}</div>
     </section>`).join('');
   return `<article class="embed" style="--accent:#${(embed.color ?? 0x2dd4a3).toString(16).padStart(6, '0')}">
     ${embed.author?.name ? `<div class="author">${markdown(embed.author.name)}</div>` : ''}
@@ -72,9 +79,9 @@ export function renderDiscordPreview(payload: DiscordMessagePayload): string {
   .content { min-width:0; flex:1; } .sender { font-weight:700; } .tag { color:#fff; background:#5865f2; border-radius:3px; font-size:10px; padding:1px 3px; margin-left:5px; }
   .embed { margin-top:6px; max-width:620px; border-left:4px solid var(--accent); border-radius:4px; background:#2b2d31; padding:10px 12px; }
   .author, footer { color:#b5bac1; font-size:12px; } .embed-body { display:flex; gap:18px; justify-content:space-between; } .copy { min-width:0; flex:1; }
-  h2 { font-size:16px; margin:6px 0; color:#f2f3f5; } .description, .field p { margin:5px 0; line-height:1.35; } .fields { display:flex; flex-wrap:wrap; gap:12px 18px; margin-top:12px; }
-  .field { width:100%; } .field.inline { width:calc(33.333% - 12px); min-width:145px; } .field h3 { font-size:12px; margin:0; color:#f2f3f5; } .field p { font-size:13px; white-space:normal; }
-  .thumbnail { width:80px; height:80px; border-radius:4px; object-fit:cover; } code { background:#1e1f22; padding:1px 3px; border-radius:3px; } details { margin-top:24px; color:#b5bac1; } pre { overflow:auto; padding:12px; background:#1e1f22; border-radius:6px; font-size:12px; }
+  h2 { font-size:16px; margin:6px 0; color:#f2f3f5; } .description, .field-value { margin:5px 0; line-height:1.35; } .fields { display:flex; flex-wrap:wrap; gap:12px 18px; margin-top:12px; }
+  .field { width:100%; } .field.inline { width:calc(33.333% - 12px); min-width:145px; } .field h3 { font-size:12px; margin:0; color:#f2f3f5; } .field-value { font-size:13px; white-space:normal; }
+  .thumbnail { width:80px; height:80px; border-radius:4px; object-fit:cover; } code { background:#1e1f22; padding:1px 3px; border-radius:3px; } details { margin-top:24px; color:#b5bac1; } pre { overflow:auto; padding:12px; background:#1e1f22; border-radius:6px; font-size:12px; } pre.discord-code { margin:5px 0; border:1px solid #3f4147; border-radius:3px; color:#dbdee1; font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space:pre; }
   .error { color:#ffb4ab; } @media (max-width:560px) { body { padding:12px; } .field.inline { width:100%; } }
 </style></head><body><main>
 <header><h1>Discord message preview</h1><div class="limits">${escapeHtml(counters || 'No embeds')}<br>Mentions disabled</div></header>

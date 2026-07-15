@@ -33,6 +33,22 @@ function formatPercent(wins: unknown, losses: unknown): string | null {
   return games > 0 ? `${((winValue / games) * 100).toFixed(1)}%` : null;
 }
 
+function codeBlock(lines: string[]): string {
+  return `\`\`\`\n${lines.join('\n')}\n\`\`\``;
+}
+
+function statLine(label: string, value: string): string {
+  return `${label.padEnd(14)}: ${value}`;
+}
+
+function formatPlaytime(hours: unknown, minutes: unknown): string | null {
+  const totalHours = number(hours) ?? ((number(minutes) ?? 0) / 60);
+  if (!Number.isFinite(totalHours) || totalHours <= 0) return null;
+  const roundedHours = Math.floor(totalHours);
+  const days = Math.floor(roundedHours / 24);
+  return days > 0 ? `${days}d ${roundedHours % 24}h (${roundedHours.toLocaleString()} hours)` : `${roundedHours} hours`;
+}
+
 function playerAvatarUrl(value: unknown, webUrl: string): string {
   const rawUrl = String(value ?? '').trim();
   if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
@@ -54,13 +70,19 @@ function tierName(tier: unknown, rank: unknown): string {
   return names[value] ?? 'Unranked';
 }
 
-function formatQueue(label: string, tier: unknown, rank: unknown, points: unknown, wins: unknown, losses: unknown): APIEmbedField | null {
+function rankedField(label: string, tier: unknown, rank: unknown, points: unknown, wins: unknown, losses: unknown, leaves: unknown): APIEmbedField | null {
   const value = integer(tier) ?? 0;
   const games = (number(wins) ?? 0) + (number(losses) ?? 0);
   if (value <= 0 && games <= 0 && (number(points) ?? 0) <= 0) return null;
-  const record = games > 0 ? `\n${formatNumber(wins)}W – ${formatNumber(losses)}L` : '';
-  const tp = (number(points) ?? 0) > 0 ? ` · ${formatNumber(points)} TP` : '';
-  return { name: label, value: `${tierName(tier, rank)}${tp}${record}`, inline: true };
+  const lines = [
+    statLine('Rank', tierName(tier, rank)),
+    statLine('TP', formatNumber(points)),
+  ];
+  const winRate = formatPercent(wins, losses);
+  if (winRate) lines.push(statLine('Win rate', `${winRate} (${formatNumber(wins)}–${formatNumber(losses)})`));
+  const leavesValue = number(leaves);
+  if (leavesValue != null && leavesValue > 0) lines.push(statLine('Times deserted', formatNumber(leavesValue)));
+  return { name: label, value: codeBlock(lines), inline: false };
 }
 
 function topChampionField(rows: Array<Record<string, unknown>>): APIEmbedField | null {
@@ -77,7 +99,7 @@ function topChampionField(rows: Array<Record<string, unknown>>): APIEmbedField |
   return {
     name: 'Top champions',
     value: top.map((row) => `${row.name}${row.rating != null ? ` · ${Math.round(row.rating).toLocaleString()} ELO` : ''}`).join('\n'),
-    inline: true,
+    inline: false,
   };
 }
 
@@ -88,7 +110,11 @@ function performanceField(player: Record<string, unknown>): APIEmbedField | null
     .map(([label, value]) => ({ label, value: number(value) }))
     .filter((metric): metric is { label: string; value: number } => metric.value != null && metric.value > 0);
   if (metrics.length === 0) return null;
-  return { name: 'Ranked performance', value: metrics.map((metric) => `${metric.label} ${Math.round(metric.value).toLocaleString()}`).join(' · '), inline: true };
+  return {
+    name: 'Ranked performance',
+    value: codeBlock(metrics.map((metric) => statLine(metric.label, Math.round(metric.value).toLocaleString()))),
+    inline: false,
+  };
 }
 
 export function buildPlayerProfileMessage(
@@ -98,29 +124,45 @@ export function buildPlayerProfileMessage(
   const player = response.player;
   const playerId = encodeURIComponent(String(player.id));
   const playerName = compact(player.name, 256) || 'Unknown player';
-  const context = [
-    number(player.level) != null ? `Level ${formatNumber(player.level)}` : '',
-    compact(player.region, 40),
-    compact(player.platform, 40),
-  ].filter(Boolean).join(' • ');
   const title = compact(player.title, 220);
-  const description = [context ? `**${context}**` : '', title ? `*${title}*` : ''].filter(Boolean).join('\n');
+  const heading = title ? `${playerName} (${title})`.slice(0, 256) : playerName;
   const fields: APIEmbedField[] = [];
 
-  const kbm = formatQueue('Ranked KBM', player.kbm_tier, player.kbm_rank, player.kbm_points, player.kbm_wins, player.kbm_losses);
-  const controller = formatQueue('Ranked Controller', player.controller_tier, player.controller_rank, player.controller_points, player.controller_wins, player.controller_losses);
+  const record = formatPercent(player.wins, player.losses);
+  const wins = number(player.wins) ?? 0;
+  const losses = number(player.losses) ?? 0;
+  const totalMatches = wins + losses;
+  fields.push({
+    name: 'General',
+    value: codeBlock([
+      statLine('Name', playerName),
+      statLine('Account ID', String(player.id)),
+      statLine('Account level', formatNumber(player.level)),
+      statLine('Win rate', record ? `${record} (${formatNumber(player.wins)}–${formatNumber(player.losses)})` : '—'),
+      statLine('Total matches', formatNumber(totalMatches)),
+      statLine('Total XP', formatNumber(player.total_xp)),
+    ]),
+    inline: false,
+  });
+
+  const kbm = rankedField('Ranked KBM', player.kbm_tier, player.kbm_rank, player.kbm_points, player.kbm_wins, player.kbm_losses, player.kbm_leaves);
+  const controller = rankedField('Ranked Controller', player.controller_tier, player.controller_rank, player.controller_points, player.controller_wins, player.controller_losses, player.controller_leaves);
   if (kbm) fields.push(kbm);
   if (controller) fields.push(controller);
 
-  const record = formatPercent(player.wins, player.losses);
-  fields.push({
-    name: 'Account record',
-    value: `${formatNumber(player.wins)}W – ${formatNumber(player.losses)}L${record ? `\n${record} win rate` : ''}`,
-    inline: true,
-  });
-
-  const playtime = number(player.hours_played);
-  if (playtime != null && playtime > 0) fields.push({ name: 'Playtime', value: `${Math.round(playtime).toLocaleString()} hours`, inline: true });
+  const otherLines = [
+    statLine('Platform', compact(player.platform, 40) || 'Unknown'),
+    statLine('Region', compact(player.region, 40) || 'Unknown'),
+  ];
+  const playtime = formatPlaytime(player.hours_played, player.minutes_played);
+  if (playtime) otherLines.push(statLine('Playtime', playtime));
+  const mastery = number(player.mastery_level);
+  if (mastery != null && mastery > 0) otherLines.push(statLine('Mastery level', formatNumber(mastery)));
+  const achievements = number(player.total_achievements);
+  if (achievements != null && achievements > 0) otherLines.push(statLine('Achievements', formatNumber(achievements)));
+  const loadingFrame = compact(player.loading_frame, 80);
+  if (loadingFrame) otherLines.push(statLine('Loading frame', loadingFrame));
+  fields.push({ name: 'Other', value: codeBlock(otherLines), inline: false });
 
   const performance = performanceField(player);
   if (performance) fields.push(performance);
@@ -132,9 +174,8 @@ export function buildPlayerProfileMessage(
   const embed: APIEmbed = {
     color: accent,
     author: { name: 'PaladinsCat Player Profile' },
-    title: playerName,
+    title: heading,
     url: `${webUrl}/players/${playerId}`,
-    description: description || undefined,
     fields,
     thumbnail: { url: playerAvatarUrl(player.avatar_url, webUrl) },
     footer: { text: 'PaladinsCat' },

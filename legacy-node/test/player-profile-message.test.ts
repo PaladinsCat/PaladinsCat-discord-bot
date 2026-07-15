@@ -27,14 +27,17 @@ test('player profile message uses a compact, Discord-safe profile layout', () =>
   assert.equal(embed.url, 'https://paladinscat.com/players/42');
   assert.equal(embed.thumbnail?.url, 'https://cdn.example/avatar.png');
   assert.match(embed.title ?? '', /Name\\_with/);
-  assert.ok((embed.description ?? '').includes('Champion \\*of\\* Tides'));
+  assert.ok((embed.title ?? '').includes('Champion \\*of\\* Tides'));
+  assert.ok(embed.fields?.some((field) => field.name === 'General' && field.value.includes('Account level')));
   assert.ok(embed.fields?.some((field) => field.name === 'Ranked KBM' && field.value.includes('Grandmaster #12')));
+  assert.ok(embed.fields?.some((field) => field.name === 'Other' && field.value.includes('Platform')));
   assert.ok(!embed.fields?.some((field) => field.name === 'Recent form'));
   assert.ok(embed.fields?.some((field) => field.name === 'Top champions'));
   const preview = renderDiscordPreview(payload);
   assert.match(preview, /Discord message preview/);
   assert.match(preview, /Mentions disabled/);
   assert.match(preview, /Exact Discord payload/);
+  assert.match(preview, /discord-code/);
 });
 
 test('player profile message uses the local avatar when Hi-Rez has no image link', () => {
