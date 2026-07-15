@@ -1,5 +1,6 @@
 import { escapeMarkdown, type APIEmbed, type APIEmbedField } from 'discord.js';
 import { assertDiscordMessage, type DiscordMessagePayload } from './discord-message.js';
+import { canonicalAvatarAssetUrl } from './paladins-avatar-assets.js';
 import type { PlayerProfileResponse } from './types.js';
 
 const accent = 0x2dd4a3;
@@ -49,10 +50,30 @@ function formatPlaytime(hours: unknown, minutes: unknown): string | null {
   return days > 0 ? `${days}d ${roundedHours % 24}h (${roundedHours.toLocaleString()} hours)` : `${roundedHours} hours`;
 }
 
-function playerAvatarUrl(value: unknown, webUrl: string): string {
+function playerAvatarUrl(value: unknown, avatarId: unknown, webUrl: string): string {
+  const canonicalAssetUrl = canonicalAvatarAssetUrl(avatarId);
+  if (canonicalAssetUrl) return canonicalAssetUrl;
   const rawUrl = String(value ?? '').trim();
   if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
   return `${webUrl.replace(/\/+$/, '')}${DEFAULT_PLAYER_AVATAR_PATH}`;
+}
+
+function formatDate(value: unknown): string | null {
+  const date = new Date(String(value ?? ''));
+  if (!Number.isFinite(date.getTime())) return null;
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC',
+  }).format(date);
+}
+
+function globalKda(stats: unknown): string | null {
+  if (!stats || typeof stats !== 'object') return null;
+  const values = stats as Record<string, unknown>;
+  const kills = number(values.kills);
+  const deaths = number(values.deaths);
+  const assists = number(values.assists);
+  if (kills == null || deaths == null || assists == null) return null;
+  return ((kills + assists / 2) / Math.max(deaths, 1)).toFixed(2);
 }
 
 function tierName(tier: unknown, rank: unknown): string {
@@ -160,6 +181,12 @@ export function buildPlayerProfileMessage(
   if (mastery != null && mastery > 0) otherLines.push(statLine('Mastery level', formatNumber(mastery)));
   const achievements = number(player.total_achievements);
   if (achievements != null && achievements > 0) otherLines.push(statLine('Achievements', formatNumber(achievements)));
+  const kda = globalKda(response.globalStats);
+  if (kda) otherLines.push(statLine('Global KDA', kda));
+  const createdAt = formatDate(player.created_datetime);
+  if (createdAt) otherLines.push(statLine('Account created', createdAt));
+  const lastLogin = formatDate(player.last_login_datetime);
+  if (lastLogin) otherLines.push(statLine('Last login', lastLogin));
   const loadingFrame = compact(player.loading_frame, 80);
   if (loadingFrame) otherLines.push(statLine('Loading frame', loadingFrame));
   fields.push({ name: 'Other', value: codeBlock(otherLines), inline: false });
@@ -173,11 +200,10 @@ export function buildPlayerProfileMessage(
   const timestamp = Number.isFinite(refreshedAt.getTime()) ? refreshedAt.toISOString() : undefined;
   const embed: APIEmbed = {
     color: accent,
-    author: { name: 'PaladinsCat Player Profile' },
     title: heading,
     url: `${webUrl}/players/${playerId}`,
     fields,
-    thumbnail: { url: playerAvatarUrl(player.avatar_url, webUrl) },
+    thumbnail: { url: playerAvatarUrl(player.avatar_url, player.avatar_id, webUrl) },
     footer: { text: 'PaladinsCat' },
     timestamp,
   };

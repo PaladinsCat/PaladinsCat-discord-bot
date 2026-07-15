@@ -71,6 +71,7 @@ export interface PlayerSearchResult {
 export interface PlayerProfileResponse {
   player: Record<string, unknown> & { id: string; name: string };
   profileRefresh?: Record<string, unknown>;
+  globalStats?: Record<string, unknown> | null;
   queueRatings?: Array<Record<string, unknown>>;
   championRatings?: Array<Record<string, unknown>>;
 }

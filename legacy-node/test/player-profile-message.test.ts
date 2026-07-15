@@ -11,13 +11,15 @@ test('player profile message uses a compact, Discord-safe profile layout', () =>
       title: '<font color="#ff00ff">Champion *of* Tides</font>', wins: 5506, losses: 3830,
       hours_played: 2920, kbm_tier: 26, kbm_rank: 12, kbm_points: 1234, kbm_wins: 24, kbm_losses: 14,
       controller_tier: 0, avg_dpm: 5234.6, avg_hpm: null, avg_mpm: 455.2,
-      avatar_url: 'https://cdn.example/avatar.png', last_updated: '2026-07-14T00:00:00Z',
+      avatar_id: 23226, avatar_url: 'https://cdn.example/avatar.png', last_updated: '2026-07-14T00:00:00Z',
+      created_datetime: '2018-11-25T00:00:00Z', last_login_datetime: '2026-07-14T00:00:00Z',
     },
     profileRefresh: { refreshed_at: '2026-07-14T00:00:00Z' },
     championRatings: [
       { champion_name: 'Androxus', mu: 1820, matches_played: 100 },
       { champion_name: 'Ash', mu: 1700, matches_played: 90 },
     ],
+    globalStats: { kills: 16869, deaths: 9454, assists: 23460, wins: 964, losses: 779 },
   }, 'https://paladinscat.com');
 
   assert.deepEqual(validateDiscordMessage(payload), []);
@@ -25,12 +27,15 @@ test('player profile message uses a compact, Discord-safe profile layout', () =>
   const embed = payload.embeds?.[0];
   assert.ok(embed);
   assert.equal(embed.url, 'https://paladinscat.com/players/42');
-  assert.equal(embed.thumbnail?.url, 'https://cdn.example/avatar.png');
+  assert.equal(embed.thumbnail?.url, 'https://raw.githubusercontent.com/EthanHicks1/PaladinsArtAssets/master/avatars/23226.gif');
   assert.match(embed.title ?? '', /Name\\_with/);
   assert.ok((embed.title ?? '').includes('Champion \\*of\\* Tides'));
   assert.ok(embed.fields?.some((field) => field.name === 'General' && field.value.includes('Account level')));
   assert.ok(embed.fields?.some((field) => field.name === 'Ranked KBM' && field.value.includes('Grandmaster #12')));
   assert.ok(embed.fields?.some((field) => field.name === 'Other' && field.value.includes('Platform')));
+  assert.ok(embed.fields?.some((field) => field.name === 'Other' && field.value.includes('Global KDA')));
+  assert.ok(embed.fields?.some((field) => field.name === 'Other' && field.value.includes('Account created')));
+  assert.ok(embed.fields?.some((field) => field.name === 'Other' && field.value.includes('Last login')));
   assert.ok(!embed.fields?.some((field) => field.name === 'Recent form'));
   assert.ok(embed.fields?.some((field) => field.name === 'Top champions'));
   const preview = renderDiscordPreview(payload);
