@@ -112,6 +112,8 @@ export class PaladinsCatApi {
       kbm_tier: numeric(profile.kbm_tier),
       kbm_rank: numeric(profile.kbm_rank),
       queue_elo: numeric(rating?.mu),
+      cheater: Boolean(profile.cheater),
+      sus_count: numeric(profile.sus_count) ?? 0,
     };
   }
 

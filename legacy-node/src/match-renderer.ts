@@ -7,7 +7,7 @@ import { AssetCatalog } from './asset-catalog.js';
 const WIDTH = 1280;
 const HEIGHT = 720;
 const SCALE = 1.6;
-const TEMPLATE_VERSION = 10;
+const TEMPLATE_VERSION = 11;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
@@ -92,6 +92,7 @@ export class MatchRenderer {
   readonly templateVersion = TEMPLATE_VERSION;
   readonly theme: MatchImageTheme;
   private readonly css: string;
+  private readonly cheaterPatternUrl: string;
 
   constructor(
     private readonly assets: AssetCatalog,
@@ -106,6 +107,9 @@ export class MatchRenderer {
     // depend on an external font request, so the runtime image supplies the same
     // font through fontconfig and keeps every prototype rule otherwise unchanged.
     this.css = match[1].replace(/@import\s+url\(['"]https:\/\/fonts\.googleapis\.com\/[^'"]+['"]\);?/g, '');
+    const cheaterPatternPath = path.join(path.dirname(templatePath), 'cheater-police-line.svg');
+    if (!fs.existsSync(cheaterPatternPath)) throw new Error(`Cheater police-line asset was not found at ${cheaterPatternPath}.`);
+    this.cheaterPatternUrl = `data:image/svg+xml,${encodeURIComponent(fs.readFileSync(cheaterPatternPath, 'utf8'))}`;
     this.chromiumPath = options.chromiumPath ?? defaultChromiumPath();
   }
 
@@ -147,7 +151,7 @@ export class MatchRenderer {
   private document(record: MatchRecord) {
     const map = assetUrl(this.assets.mapImage(record.match.map));
     const background = map ? `#scoreboard::before{background-image:url('${map}')!important}` : '';
-    return `<!doctype html><html><head><meta charset="utf-8"/><style>${this.css}\n${background}\nbody{min-height:720px;padding:0;background:transparent}.scoreboard{transform:none}.scoreboard-canvas{width:1280px;height:720px}.viewport{width:1280px;max-width:none}.prototype-note{display:none}</style></head><body data-theme="${this.theme}"><main class="viewport"><div class="scoreboard-canvas"><section class="scoreboard" id="scoreboard" aria-label="Paladins match scoreboard">${this.hero(record)}${this.columns()}<div class="players" id="team-one">${this.teamRows(record, 1)}</div>${this.summary(record, 1)}<div class="players" id="team-two">${this.teamRows(record, 2)}</div>${this.summary(record, 2)}</section></div></main></body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8"/><style>${this.css}\n${background}\nbody{--cheater-pattern:url("${this.cheaterPatternUrl}");min-height:720px;padding:0;background:transparent}.scoreboard{transform:none}.scoreboard-canvas{width:1280px;height:720px}.viewport{width:1280px;max-width:none}.prototype-note,.color-lab{display:none}</style></head><body data-theme="${this.theme}"><main class="viewport"><div class="scoreboard-canvas"><section class="scoreboard" id="scoreboard" aria-label="Paladins match scoreboard">${this.hero(record)}${this.columns()}<div class="players" id="team-one">${this.teamRows(record, 1)}</div>${this.summary(record, 1)}<div class="players" id="team-two">${this.teamRows(record, 2)}</div>${this.summary(record, 2)}</section></div></main></body></html>`;
   }
 
   private columns() {
@@ -194,7 +198,12 @@ export class MatchRenderer {
       const talentIcon = talent ? this.assets.talentIcon(talent.champion_name || player.champion_name, talent.talent_name) : null;
       const peak = (key: keyof Metrics, requireValue = false) => values[key] === max(key) && (!requireValue || values[key] > 0) ? ' peak' : '';
       const level = Number(player.final_match_level ?? 0) || Number(player.account_level ?? 0);
-      return `<div class="player-row grid-row"><div class="champion-wrap"><img class="champion-icon" src="${assetUrl(this.assets.championIcon(player.champion_name))}" alt="${xml(player.champion_name)}"/>${party(player) ? `<span class="party-badge" title="Party ${party(player)}">${party(player)}</span>` : ''}</div><div class="rank"><img src="${assetUrl(this.assets.rankIcon(tier(player)))}" alt="${xml(TIER_NAMES[tier(player)] ?? 'Unranked')}"/></div><div class="level">${number(level)}</div><div class="player"><div class="player-name">${xml(player.player_name || 'PRIVATE')}</div><div class="player-sub">PID ${xml(player.player_id || 0)}</div></div><div class="player-elo">${player.queue_elo ? number(player.queue_elo) : '—'}</div><img class="talent-icon" src="${assetUrl(talentIcon)}" alt="${xml(talent?.talent_name ?? '')}"/><div class="metric credits${peak('credits')}"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${number(values.credits)}</div><div class="metric kda">${player.kills} / ${player.deaths} / ${player.assists}</div><div class="metric obj${peak('objective')}">${number(values.objective)}</div><div class="metric damage${peak('damage')}">${number(values.damage)}</div><div class="metric taken${peak('taken')}">${number(values.taken)}</div><div class="metric shield${peak('shielding', true)}">${number(values.shielding)}</div><div class="metric heal${peak('healing', true)}">${number(values.healing)}</div></div>`;
+      const cheater = Boolean(player.cheater);
+      const suspicious = !cheater && Number(player.sus_count ?? 0) > 0;
+      const moderationTag = cheater
+        ? '<span class="player-status-tag cheater">CHEATER</span>'
+        : suspicious ? '<span class="player-status-tag suspicious">SUS</span>' : '';
+      return `<div class="player-row grid-row${cheater ? ' cheater-row' : ''}"><div class="champion-wrap"><img class="champion-icon" src="${assetUrl(this.assets.championIcon(player.champion_name))}" alt="${xml(player.champion_name)}"/>${party(player) ? `<span class="party-badge" title="Party ${party(player)}">${party(player)}</span>` : ''}</div><div class="rank"><img src="${assetUrl(this.assets.rankIcon(tier(player)))}" alt="${xml(TIER_NAMES[tier(player)] ?? 'Unranked')}"/></div><div class="level">${number(level)}</div><div class="player"><div class="player-name"><span class="player-name-text">${xml(player.player_name || 'PRIVATE')}</span>${moderationTag}</div><div class="player-sub">PID ${xml(player.player_id || 0)}</div></div><div class="player-elo">${player.queue_elo ? number(player.queue_elo) : '—'}</div><img class="talent-icon" src="${assetUrl(talentIcon)}" alt="${xml(talent?.talent_name ?? '')}"/><div class="metric credits${peak('credits')}"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${number(values.credits)}</div><div class="metric kda">${player.kills} / ${player.deaths} / ${player.assists}</div><div class="metric obj${peak('objective')}">${number(values.objective)}</div><div class="metric damage${peak('damage')}">${number(values.damage)}</div><div class="metric taken${peak('taken')}">${number(values.taken)}</div><div class="metric shield${peak('shielding', true)}">${number(values.shielding)}</div><div class="metric heal${peak('healing', true)}">${number(values.healing)}</div></div>`;
     }).join('');
   }
 

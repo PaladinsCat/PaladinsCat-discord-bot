@@ -81,7 +81,7 @@ test('match rendering hydrates profile display fields and talent facts', async (
       ? { players: [{ player_id: '1', talents: [{ talent_id: 99, talent_name: 'Godslayer', champion_name: 'Androxus' }] }] }
       : url.includes('/matches/123')
         ? { matches: [{ match: { match_id: '123', queue_id: 486 }, players: [{ player_id: '1', final_match_level: 999, account_level: 999, league_tier: 0 }] }] }
-        : { player: { id: '1', name: 'Player', level: 1158, kbm_tier: 13, kbm_rank: 2 }, queueRatings: [{ queue_id: 486, mu: 1600 }] };
+        : { player: { id: '1', name: 'Player', level: 1158, kbm_tier: 13, kbm_rank: 2, cheater: true, sus_count: 4 }, queueRatings: [{ queue_id: 486, mu: 1600 }] };
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch;
   const api = new PaladinsCatApi('http://backend:3005', 1000, { localOnly: true, fetchImpl });
@@ -91,6 +91,8 @@ test('match rendering hydrates profile display fields and talent facts', async (
   assert.equal(record.players[0]?.final_match_level, 1158);
   assert.equal(record.players[0]?.tier, 13);
   assert.equal(record.players[0]?.queue_elo, 1600);
+  assert.equal(record.players[0]?.cheater, true);
+  assert.equal(record.players[0]?.sus_count, 4);
   assert.equal(record.facts?.[0]?.talents[0]?.talent_name, 'Godslayer');
   assert.deepEqual(urls, [
     'http://backend:3005/matches/123?refresh=false',

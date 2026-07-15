@@ -95,6 +95,32 @@ test('renders an unknown Siege score as a question mark', () => {
   assert.doesNotMatch(markup, /team-one-score">null<\/span>/);
 });
 
+test('renders moderation tags and the full-row police pattern for confirmed cheaters', () => {
+  const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
+  const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
+  const basePlayer = {
+    player_id: '1', player_name: 'Flagged Player', champion_id: 2205, champion_name: 'Androxus',
+    kills: 10, deaths: 2, assists: 8, damage_done_physical: 65000, damage_taken: 45000,
+    damage_mitigated: 0, healing: 0, gold_earned: 3000, final_match_level: 100, tier: 15,
+    win_status: 'Winner', task_force: 1, league_tier: 15, source: 'direct', private_slot: 0,
+  };
+  const record: MatchRecord = {
+    match: { match_id: '1280794399', entry_datetime: '2026-07-15T01:20:00Z', queue_id: 486,
+      duration_seconds: 900, region: 'NA', map: 'Ranked Ascension Peak', team1_score: 1,
+      team2_score: 0, winning_task_force: 1, broken: false, recovered: true, private: false },
+    players: [
+      { ...basePlayer, cheater: true },
+      { ...basePlayer, player_id: '2', player_name: 'Sus Player', sus_count: 3 },
+    ],
+  };
+
+  const html = (renderer as unknown as { document(value: MatchRecord): string }).document(record);
+  assert.match(html, /body\{--cheater-pattern:url\("data:image\/svg\+xml,/);
+  assert.match(html, /class="player-row grid-row cheater-row"/);
+  assert.match(html, /class="player-status-tag cheater">CHEATER<\/span>/);
+  assert.match(html, /class="player-status-tag suspicious">SUS<\/span>/);
+});
+
 test('maps other live queues to human-readable game modes without exposing IDs', () => {
   const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
   const renderer = new MatchRenderer(new AssetCatalog(assetRoot));

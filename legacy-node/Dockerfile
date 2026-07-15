@@ -16,6 +16,7 @@ COPY --from=builder /app/package.json /app/package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
 COPY dev/prototypes/match-result-scoreboard.html ./templates/match-result-scoreboard.html
+COPY dev/prototypes/cheater-police-line.svg ./templates/cheater-police-line.svg
 RUN chown -R node:node /app
 USER node
 EXPOSE 3020

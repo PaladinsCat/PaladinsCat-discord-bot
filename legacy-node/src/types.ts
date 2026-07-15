@@ -56,6 +56,8 @@ export interface MatchPlayer {
   league_tier: number;
   source: string;
   private_slot?: number;
+  cheater?: boolean;
+  sus_count?: number;
 }
 
 export interface PlayerSearchResult {
