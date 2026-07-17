@@ -7,7 +7,7 @@ import { AssetCatalog } from './asset-catalog.js';
 const WIDTH = 1280;
 const HEIGHT = 720;
 const SCALE = 1.6;
-const TEMPLATE_VERSION = 11;
+const TEMPLATE_VERSION = 12;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
@@ -200,10 +200,13 @@ export class MatchRenderer {
       const level = Number(player.final_match_level ?? 0) || Number(player.account_level ?? 0);
       const cheater = Boolean(player.cheater);
       const suspicious = !cheater && Number(player.sus_count ?? 0) > 0;
+      const verificationBadge = (player.verified ?? player.profile_snapshot?.verified)
+        ? `<img class="verified-player-icon" src="${assetUrl(this.assets.icon('Verified_Player_Support_Icon', '.png'))}" alt="Verified PaladinsCat player"/>`
+        : '';
       const moderationTag = cheater
         ? '<span class="player-status-tag cheater">CHEATER</span>'
         : suspicious ? '<span class="player-status-tag suspicious">SUS</span>' : '';
-      return `<div class="player-row grid-row${cheater ? ' cheater-row' : ''}"><div class="champion-wrap"><img class="champion-icon" src="${assetUrl(this.assets.championIcon(player.champion_name))}" alt="${xml(player.champion_name)}"/>${party(player) ? `<span class="party-badge" title="Party ${party(player)}">${party(player)}</span>` : ''}</div><div class="rank"><img src="${assetUrl(this.assets.rankIcon(tier(player)))}" alt="${xml(TIER_NAMES[tier(player)] ?? 'Unranked')}"/></div><div class="level">${number(level)}</div><div class="player"><div class="player-name"><span class="player-name-text">${xml(player.player_name || 'PRIVATE')}</span>${moderationTag}</div><div class="player-sub">PID ${xml(player.player_id || 0)}</div></div><div class="player-elo">${player.queue_elo ? number(player.queue_elo) : '—'}</div><img class="talent-icon" src="${assetUrl(talentIcon)}" alt="${xml(talent?.talent_name ?? '')}"/><div class="metric credits${peak('credits')}"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${number(values.credits)}</div><div class="metric kda">${player.kills} / ${player.deaths} / ${player.assists}</div><div class="metric obj${peak('objective')}">${number(values.objective)}</div><div class="metric damage${peak('damage')}">${number(values.damage)}</div><div class="metric taken${peak('taken')}">${number(values.taken)}</div><div class="metric shield${peak('shielding', true)}">${number(values.shielding)}</div><div class="metric heal${peak('healing', true)}">${number(values.healing)}</div></div>`;
+      return `<div class="player-row grid-row${cheater ? ' cheater-row' : ''}"><div class="champion-wrap"><img class="champion-icon" src="${assetUrl(this.assets.championIcon(player.champion_name))}" alt="${xml(player.champion_name)}"/>${party(player) ? `<span class="party-badge" title="Party ${party(player)}">${party(player)}</span>` : ''}</div><div class="rank"><img src="${assetUrl(this.assets.rankIcon(tier(player)))}" alt="${xml(TIER_NAMES[tier(player)] ?? 'Unranked')}"/></div><div class="level">${number(level)}</div><div class="player"><div class="player-name"><span class="player-name-text">${xml(player.player_name || 'PRIVATE')}</span>${verificationBadge}${moderationTag}</div><div class="player-sub">PID ${xml(player.player_id || 0)}</div></div><div class="player-elo">${player.queue_elo ? number(player.queue_elo) : '—'}</div><img class="talent-icon" src="${assetUrl(talentIcon)}" alt="${xml(talent?.talent_name ?? '')}"/><div class="metric credits${peak('credits')}"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${number(values.credits)}</div><div class="metric kda">${player.kills} / ${player.deaths} / ${player.assists}</div><div class="metric obj${peak('objective')}">${number(values.objective)}</div><div class="metric damage${peak('damage')}">${number(values.damage)}</div><div class="metric taken${peak('taken')}">${number(values.taken)}</div><div class="metric shield${peak('shielding', true)}">${number(values.shielding)}</div><div class="metric heal${peak('healing', true)}">${number(values.healing)}</div></div>`;
     }).join('');
   }
 

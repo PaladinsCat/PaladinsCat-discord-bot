@@ -60,11 +60,14 @@ export class AssetCatalog {
     return files.find((file) => normalized(path.parse(file).name) === wanted) ?? null;
   }
 
-  icon(name: string): string | null {
+  icon(name: string, preferredExtension?: string): string | null {
     const directory = path.join(this.root, 'icons');
     if (!fs.existsSync(directory)) return null;
     const wanted = normalized(name);
-    const file = fs.readdirSync(directory).find((entry) => normalized(path.parse(entry).name) === wanted);
+    const matches = fs.readdirSync(directory).filter((entry) => normalized(path.parse(entry).name) === wanted);
+    const preferred = preferredExtension?.toLowerCase();
+    const file = (preferred ? matches.find((entry) => path.extname(entry).toLowerCase() === preferred) : null)
+      ?? matches[0];
     return file ? path.join(directory, file) : null;
   }
 

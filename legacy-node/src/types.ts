@@ -58,6 +58,10 @@ export interface MatchPlayer {
   private_slot?: number;
   cheater?: boolean;
   sus_count?: number;
+  verified?: boolean;
+  profile_snapshot?: {
+    verified?: boolean;
+  } | null;
 }
 
 export interface PlayerSearchResult {

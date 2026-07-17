@@ -110,7 +110,7 @@ test('renders moderation tags and the full-row police pattern for confirmed chea
       team2_score: 0, winning_task_force: 1, broken: false, recovered: true, private: false },
     players: [
       { ...basePlayer, cheater: true },
-      { ...basePlayer, player_id: '2', player_name: 'Sus Player', sus_count: 3 },
+      { ...basePlayer, player_id: '2', player_name: 'Sus Player', sus_count: 3, verified: true },
     ],
   };
 
@@ -119,6 +119,8 @@ test('renders moderation tags and the full-row police pattern for confirmed chea
   assert.match(html, /class="player-row grid-row cheater-row"/);
   assert.match(html, /class="player-status-tag cheater">CHEATER<\/span>/);
   assert.match(html, /class="player-status-tag suspicious">SUS<\/span>/);
+  assert.match(html, /class="verified-player-icon" src="data:image\/png;base64,/);
+  assert.match(html, /alt="Verified PaladinsCat player"/);
 });
 
 test('maps other live queues to human-readable game modes without exposing IDs', () => {

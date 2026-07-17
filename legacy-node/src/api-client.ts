@@ -87,7 +87,10 @@ export class PaladinsCatApi {
         const profile = await this.get<PlayerProfileResponse>(this.readPath(`/players/${player.player_id}?include=ratings`));
         return this.hydrateMatchPlayer(player, profile, match.match.queue_id);
       } catch {
-        return player;
+        return {
+          ...player,
+          verified: Boolean(player.verified ?? player.profile_snapshot?.verified),
+        };
       }
     }));
     return { ...match, players: profiles, facts: facts?.players ?? [] };
@@ -114,6 +117,7 @@ export class PaladinsCatApi {
       queue_elo: numeric(rating?.mu),
       cheater: Boolean(profile.cheater),
       sus_count: numeric(profile.sus_count) ?? 0,
+      verified: Boolean(profile.verified ?? player.verified ?? player.profile_snapshot?.verified),
     };
   }
 

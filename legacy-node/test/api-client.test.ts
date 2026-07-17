@@ -81,7 +81,7 @@ test('match rendering hydrates profile display fields and talent facts', async (
       ? { players: [{ player_id: '1', talents: [{ talent_id: 99, talent_name: 'Godslayer', champion_name: 'Androxus' }] }] }
       : url.includes('/matches/123')
         ? { matches: [{ match: { match_id: '123', queue_id: 486 }, players: [{ player_id: '1', final_match_level: 999, account_level: 999, league_tier: 0 }] }] }
-        : { player: { id: '1', name: 'Player', level: 1158, kbm_tier: 13, kbm_rank: 2, cheater: true, sus_count: 4 }, queueRatings: [{ queue_id: 486, mu: 1600 }] };
+        : { player: { id: '1', name: 'Player', level: 1158, kbm_tier: 13, kbm_rank: 2, cheater: true, sus_count: 4, verified: true }, queueRatings: [{ queue_id: 486, mu: 1600 }] };
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch;
   const api = new PaladinsCatApi('http://backend:3005', 1000, { localOnly: true, fetchImpl });
@@ -93,10 +93,34 @@ test('match rendering hydrates profile display fields and talent facts', async (
   assert.equal(record.players[0]?.queue_elo, 1600);
   assert.equal(record.players[0]?.cheater, true);
   assert.equal(record.players[0]?.sus_count, 4);
+  assert.equal(record.players[0]?.verified, true);
   assert.equal(record.facts?.[0]?.talents[0]?.talent_name, 'Godslayer');
   assert.deepEqual(urls, [
     'http://backend:3005/matches/123?refresh=false',
     'http://backend:3005/matches/fact/123',
     'http://backend:3005/players/1?include=ratings&refresh=false',
   ]);
+});
+
+test('match verification survives a database profile lookup failure', async () => {
+  const fetchImpl = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/matches/fact/123')) {
+      return new Response(JSON.stringify({ players: [] }), { status: 200 });
+    }
+    if (url.includes('/matches/123')) {
+      return new Response(JSON.stringify({
+        matches: [{
+          match: { match_id: '123', queue_id: 486 },
+          players: [{ player_id: '1', profile_snapshot: { verified: true } }],
+        }],
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 });
+  }) as typeof fetch;
+  const api = new PaladinsCatApi('http://backend:3005', 1000, { localOnly: true, fetchImpl });
+
+  const record = await api.match('123');
+
+  assert.equal(record.players[0]?.verified, true);
 });
