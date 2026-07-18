@@ -12,12 +12,12 @@ RUN apk add --no-cache chromium fontconfig font-inter ttf-dejavu
 ENV PALADINSCAT_CHROMIUM_PATH=/usr/bin/chromium-browser \
     HOME=/tmp \
     XDG_CACHE_HOME=/tmp
-COPY --from=builder /app/package.json /app/package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
-COPY --from=builder /app/dist ./dist
-COPY dev/prototypes/match-result-scoreboard.html ./templates/match-result-scoreboard.html
-COPY dev/prototypes/cheater-police-line.svg ./templates/cheater-police-line.svg
-RUN chown -R node:node /app
+RUN chown node:node /app
 USER node
+COPY --chown=node:node --from=builder /app/package.json /app/package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --chown=node:node --from=builder /app/dist ./dist
+COPY --chown=node:node dev/prototypes/match-result-scoreboard.html ./templates/match-result-scoreboard.html
+COPY --chown=node:node dev/prototypes/cheater-police-line.svg ./templates/cheater-police-line.svg
 EXPOSE 3020
 CMD ["node", "dist/src/index.js"]
