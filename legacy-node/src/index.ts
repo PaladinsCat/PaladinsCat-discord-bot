@@ -9,7 +9,8 @@ import { startHealthServer } from './health.js';
 
 const config = loadConfig();
 const api = new PaladinsCatApi(config.apiUrl, 12000, { localOnly: config.localOnly });
-const renders = new RenderService(new MatchRenderer(new AssetCatalog(config.assetRoot)), {
+const renderer = new MatchRenderer(new AssetCatalog(config.assetRoot));
+const renders = new RenderService(renderer, {
   concurrency: config.renderConcurrency,
   queueLimit: config.renderQueueLimit,
   timeoutMs: config.renderTimeoutMs,
@@ -19,6 +20,9 @@ const renders = new RenderService(new MatchRenderer(new AssetCatalog(config.asse
 let discordState = config.mode === 'dummy' ? 'dummy' : 'starting';
 const health = startHealthServer(config.healthPort, renders, api, config.webUrl, () => ({ mode: config.mode, discord: discordState }));
 let client: Client | null = null;
+void renders.warm()
+  .then(() => console.log('[bot] Chromium renderer warmed'))
+  .catch((error) => console.warn(`[bot] Chromium warm-up failed: ${error instanceof Error ? error.message : error}`));
 
 if (config.mode === 'dummy') {
   console.log(`[bot] dummy mode; health listening on ${config.healthPort}`);
@@ -52,12 +56,16 @@ if (config.mode === 'dummy') {
 
 }
 
+let stopping = false;
 const stop = () => {
+  if (stopping) return;
+  stopping = true;
   discordState = 'stopping';
   client?.destroy();
   health.closeAllConnections();
-  health.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 1500);
+  const healthClosed = new Promise<void>((resolve) => health.close(() => resolve()));
+  void Promise.allSettled([healthClosed, renders.close()]).then(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref();
 };
 process.once('SIGTERM', stop);
 process.once('SIGINT', stop);

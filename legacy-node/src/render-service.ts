@@ -16,17 +16,22 @@ export class RenderService {
   }
 
   match(record: MatchRecord) {
-    const key = `match:${record.match.match_id}:summary:v${this.renderer.templateVersion}`;
+    return this.matchById(String(record.match.match_id), async () => record);
+  }
+
+  matchById(matchId: string, load: () => Promise<MatchRecord>) {
+    const key = `match:${matchId}:summary:v${this.renderer.templateVersion}`;
     const cached = this.cache.get(key);
     if (cached) return Promise.resolve(cached);
     return this.queue.add(key, async () => {
-      const secondCheck = this.cache.get(key);
-      if (secondCheck) return secondCheck;
+      const record = await load();
       const rendered = await this.renderer.render(record);
       this.cache.set(key, rendered);
       return rendered;
     });
   }
 
+  warm() { return this.renderer.warm(); }
+  close() { return this.renderer.close(); }
   snapshot() { return { queue: this.queue.snapshot(), cache: this.cache.snapshot() }; }
 }

@@ -10,7 +10,10 @@ test('deduplicates work with the same key', async () => {
   assert.equal(await first, 7);
   assert.equal(await second, 7);
   assert.equal(runs, 1);
-  assert.equal(queue.snapshot().deduplicated, 1);
+  const snapshot = queue.snapshot();
+  assert.equal(snapshot.deduplicated, 1);
+  assert.ok(snapshot.durationMs.last >= 15);
+  assert.ok(snapshot.durationMs.p95 >= 15);
 });
 
 test('rejects new work when the waiting queue is full', async () => {

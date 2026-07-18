@@ -60,6 +60,12 @@ export interface MatchPlayer {
   sus_count?: number;
   verified?: boolean;
   profile_snapshot?: {
+    level?: number | null;
+    kbm_tier?: number | null;
+    kbm_rank?: number | null;
+    queue_elo?: number | null;
+    cheater?: boolean;
+    sus_count?: number | null;
     verified?: boolean;
   } | null;
 }

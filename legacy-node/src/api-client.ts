@@ -76,7 +76,11 @@ export class PaladinsCatApi {
 
   async playerLoadouts(input: string): Promise<Record<string, unknown>> {
     const resolved = await this.resolvePlayer(input);
-    return this.get(this.readPath(`/players/${resolved.id}/loadouts`));
+    return this.playerLoadoutsById(resolved.id);
+  }
+
+  async playerLoadoutsById(playerId: string): Promise<Record<string, unknown>> {
+    return this.get(this.readPath(`/players/${encodeURIComponent(playerId)}/loadouts`));
   }
 
   async liveMatch(input: string): Promise<Record<string, unknown>> {
@@ -85,48 +89,42 @@ export class PaladinsCatApi {
   }
 
   async match(id: string): Promise<MatchRecord> {
+    const matchPath = this.localOnly
+      ? `/matches/batch?ids=${encodeURIComponent(id)}`
+      : `/matches/${encodeURIComponent(id)}`;
     const [payload, facts] = await Promise.all([
-      this.get<{ matches: MatchRecord[] }>(this.readPath(`/matches/${encodeURIComponent(id)}`)),
+      this.get<{ matches: MatchRecord[] }>(matchPath),
       this.get<{ players?: MatchFactPlayer[] }>(`/matches/fact/${encodeURIComponent(id)}`).catch(() => null),
     ]);
     const match = payload.matches?.[0];
     if (!match) throw new PaladinsCatApiError(`Match ${id} was not found`, 404);
-    const profiles = await Promise.all(match.players.map(async (player) => {
-      try {
-        const profile = await this.get<PlayerProfileResponse>(this.readPath(`/players/${player.player_id}?include=ratings`));
-        return this.hydrateMatchPlayer(player, profile, match.match.queue_id);
-      } catch {
-        return {
-          ...player,
-          verified: Boolean(player.verified ?? player.profile_snapshot?.verified),
-        };
-      }
-    }));
-    return { ...match, players: profiles, facts: facts?.players ?? [] };
+    return {
+      ...match,
+      players: match.players.map((player) => this.hydrateMatchPlayer(player)),
+      facts: facts?.players ?? [],
+    };
   }
 
-  private hydrateMatchPlayer(player: MatchPlayer, response: PlayerProfileResponse, queueId: number): MatchPlayer {
-    const profile = response.player ?? {};
-    const queueRatings = response.queueRatings ?? [];
-    const rating = queueRatings.find((row) => Number(row.queue_id) === queueId)
-      ?? queueRatings.find((row) => Number(row.queue_id) === 486)
-      ?? queueRatings[0];
+  private hydrateMatchPlayer(player: MatchPlayer): MatchPlayer {
+    // The authoritative match read model already joins the current database
+    // profile, ranked rating, moderation and verification state into this
+    // snapshot. Reading ten individual player endpoints here added an N+1
+    // request fan-out to every image without improving the displayed data.
+    const snapshot = player.profile_snapshot ?? {};
     const numeric = (value: unknown): number | undefined => {
       const parsed = Number(value);
       return Number.isFinite(parsed) ? parsed : undefined;
     };
     return {
       ...player,
-      // Match payload levels are capped at 999. Prefer the refreshed profile's
-      // XP-derived level whenever it is available.
-      final_match_level: numeric(profile.level) || numeric(player.final_match_level) || numeric(player.account_level) || 0,
-      tier: numeric(profile.kbm_tier) ?? numeric(player.tier) ?? numeric(player.league_tier) ?? 0,
-      kbm_tier: numeric(profile.kbm_tier),
-      kbm_rank: numeric(profile.kbm_rank),
-      queue_elo: numeric(rating?.mu),
-      cheater: Boolean(profile.cheater),
-      sus_count: numeric(profile.sus_count) ?? 0,
-      verified: Boolean(profile.verified ?? player.verified ?? player.profile_snapshot?.verified),
+      final_match_level: numeric(snapshot.level) || numeric(player.final_match_level) || numeric(player.account_level) || 0,
+      tier: numeric(snapshot.kbm_tier) ?? numeric(player.tier) ?? numeric(player.league_tier) ?? 0,
+      kbm_tier: numeric(snapshot.kbm_tier) ?? numeric(player.kbm_tier),
+      kbm_rank: numeric(snapshot.kbm_rank) ?? numeric(player.kbm_rank),
+      queue_elo: numeric(snapshot.queue_elo) ?? numeric(player.queue_elo),
+      cheater: Boolean(snapshot.cheater ?? player.cheater),
+      sus_count: numeric(snapshot.sus_count) ?? numeric(player.sus_count) ?? 0,
+      verified: Boolean(snapshot.verified ?? player.verified),
     };
   }
 

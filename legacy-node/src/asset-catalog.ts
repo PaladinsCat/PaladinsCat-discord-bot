@@ -9,19 +9,31 @@ export class AssetCatalog {
   private championFiles: string[] | null = null;
   private mapFiles: string[] | null = null;
   private rankFiles: string[] | null = null;
+  private iconFiles: string[] | null = null;
+  private readonly championIcons = new Map<string, string | null>();
+  private readonly talentIcons = new Map<string, string | null>();
+  private readonly mapImages = new Map<string, string | null>();
+  private readonly rankIcons = new Map<number, string | null>();
+  private readonly icons = new Map<string, string | null>();
 
   constructor(private readonly root: string) {}
 
   championIcon(championName: string): string | null {
+    const key = normalized(championName);
+    if (this.championIcons.has(key)) return this.championIcons.get(key)!;
     const files = this.championFiles ??= this.loadChampionFiles();
     const wanted = normalized(`Champion ${championName} Icon`);
-    return files.find((file) => normalized(path.parse(file).name) === wanted)
+    const result = files.find((file) => normalized(path.parse(file).name) === wanted)
       ?? files.find((file) => normalized(path.parse(file).name).includes(normalized(championName)) && normalized(file).includes('icon'))
       ?? files.find((file) => normalized(path.parse(file).name) === normalized('Champion Generic Icon'))
       ?? null;
+    this.championIcons.set(key, result);
+    return result;
   }
 
   talentIcon(championName: string, talentName: string): string | null {
+    const key = `${normalized(championName)}:${normalized(talentName)}`;
+    if (this.talentIcons.has(key)) return this.talentIcons.get(key)!;
     const files = this.championFiles ??= this.loadChampionFiles();
     // Seris's published asset keeps its historical Soul Collector name.
     const assetName = championName === 'Seris' && talentName === 'Resuscitate'
@@ -29,11 +41,13 @@ export class AssetCatalog {
       : `${championName} ${talentName}`;
     const wanted = normalized(`Talent ${assetName}`);
     const matches = files.filter((file) => normalized(path.parse(file).name) === wanted);
-    // Sharp decodes the published talent AVIFs with an opaque black canvas on
-    // Alpine/libvips. The matching PNGs preserve the intended transparency.
-    return matches.find((file) => path.extname(file).toLowerCase() === '.png')
+    // Prefer the matching PNG so both browser and historical renderer paths
+    // preserve the intended transparent talent background.
+    const result = matches.find((file) => path.extname(file).toLowerCase() === '.png')
       ?? matches[0]
       ?? null;
+    this.talentIcons.set(key, result);
+    return result;
   }
 
   mapImage(mapName: string): string | null {
@@ -42,33 +56,44 @@ export class AssetCatalog {
       .replace(/^(?:(?:ranked|live|wip)\s+)+/i, '')
       .replace(/\bv\d+\b/ig, '')
       .trim());
-    return files.find((file) => normalized(path.parse(file).name) === normalized(`Ranked ${wanted}`))
+    if (this.mapImages.has(wanted)) return this.mapImages.get(wanted)!;
+    const result = files.find((file) => normalized(path.parse(file).name) === normalized(`Ranked ${wanted}`))
       ?? files.find((file) => normalized(path.parse(file).name).includes(wanted) && normalized(file).includes('ranked'))
       ?? files.find((file) => normalized(path.parse(file).name).includes(wanted))
       ?? null;
+    this.mapImages.set(wanted, result);
+    return result;
   }
 
   rankIcon(tier: number): string | null {
+    if (this.rankIcons.has(tier)) return this.rankIcons.get(tier)!;
     const files = this.rankFiles ??= this.loadFiles('rank-tiers', true);
-    if (tier <= 0) return files.find((file) => normalized(file).includes('rankiconqualifying')) ?? null;
-    if (tier >= 27) return files.find((file) => normalized(file).includes('rankicongrandmaster')) ?? null;
-    if (tier === 26) return files.find((file) => normalized(file).includes('rankiconmaster')) ?? null;
-    const groups = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'];
-    const group = Math.floor((tier - 1) / 5);
-    const division = 5 - ((tier - 1) % 5);
-    const wanted = normalized(`RankIcon ${groups[group] ?? 'Bronze'} ${division}`);
-    return files.find((file) => normalized(path.parse(file).name) === wanted) ?? null;
+    let result: string | null;
+    if (tier <= 0) result = files.find((file) => normalized(file).includes('rankiconqualifying')) ?? null;
+    else if (tier >= 27) result = files.find((file) => normalized(file).includes('rankicongrandmaster')) ?? null;
+    else if (tier === 26) result = files.find((file) => normalized(file).includes('rankiconmaster')) ?? null;
+    else {
+      const groups = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'];
+      const group = Math.floor((tier - 1) / 5);
+      const division = 5 - ((tier - 1) % 5);
+      const wanted = normalized(`RankIcon ${groups[group] ?? 'Bronze'} ${division}`);
+      result = files.find((file) => normalized(path.parse(file).name) === wanted) ?? null;
+    }
+    this.rankIcons.set(tier, result);
+    return result;
   }
 
   icon(name: string, preferredExtension?: string): string | null {
-    const directory = path.join(this.root, 'icons');
-    if (!fs.existsSync(directory)) return null;
+    const key = `${normalized(name)}:${preferredExtension?.toLowerCase() ?? ''}`;
+    if (this.icons.has(key)) return this.icons.get(key)!;
+    const files = this.iconFiles ??= this.loadFiles('icons');
     const wanted = normalized(name);
-    const matches = fs.readdirSync(directory).filter((entry) => normalized(path.parse(entry).name) === wanted);
+    const matches = files.filter((file) => normalized(path.parse(file).name) === wanted);
     const preferred = preferredExtension?.toLowerCase();
-    const file = (preferred ? matches.find((entry) => path.extname(entry).toLowerCase() === preferred) : null)
+    const result = (preferred ? matches.find((file) => path.extname(file).toLowerCase() === preferred) : null)
       ?? matches[0];
-    return file ? path.join(directory, file) : null;
+    this.icons.set(key, result ?? null);
+    return result ?? null;
   }
 
   private loadChampionFiles() {

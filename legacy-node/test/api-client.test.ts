@@ -6,7 +6,7 @@ function recordingFetch(urls: string[]): typeof fetch {
   return (async (input: string | URL | Request) => {
     const url = String(input);
     urls.push(url);
-    const body = url.includes('/matches/123')
+    const body = url.includes('/matches/batch?ids=123') || url.includes('/matches/123')
       ? { matches: [{ match: { match_id: '123' }, players: [] }] }
       : url.includes('/players/123?')
         ? { player: { id: '123', name: 'Database Player' } }
@@ -36,7 +36,7 @@ test('local-only bot reads suppress backend Hi-Rez fallbacks', async () => {
     'http://backend:3005/players/123?include=ratings&refresh=false',
     'http://backend:3005/players/123/matches?limit=10&refresh=false',
     'http://backend:3005/players/123/loadouts?refresh=false',
-    'http://backend:3005/matches/123?refresh=false',
+    'http://backend:3005/matches/batch?ids=123',
     'http://backend:3005/matches/fact/123',
   ]);
 });
@@ -86,16 +86,16 @@ test('Discord player reads use the dedicated five-minute refresh path', async ()
   ]);
 });
 
-test('match rendering hydrates profile display fields and talent facts', async () => {
+test('match rendering hydrates profile display fields from the joined snapshot without N+1 profile reads', async () => {
   const urls: string[] = [];
   const fetchImpl = (async (input: string | URL | Request) => {
     const url = String(input);
     urls.push(url);
     const body = url.includes('/matches/fact/123')
       ? { players: [{ player_id: '1', talents: [{ talent_id: 99, talent_name: 'Godslayer', champion_name: 'Androxus' }] }] }
-      : url.includes('/matches/123')
-        ? { matches: [{ match: { match_id: '123', queue_id: 486 }, players: [{ player_id: '1', final_match_level: 999, account_level: 999, league_tier: 0 }] }] }
-        : { player: { id: '1', name: 'Player', level: 1158, kbm_tier: 13, kbm_rank: 2, cheater: true, sus_count: 4, verified: true }, queueRatings: [{ queue_id: 486, mu: 1600 }] };
+      : url.includes('/matches/batch?ids=123')
+        ? { matches: [{ match: { match_id: '123', queue_id: 486 }, players: [{ player_id: '1', final_match_level: 999, account_level: 999, league_tier: 0, profile_snapshot: { level: 1158, kbm_tier: 13, kbm_rank: 2, queue_elo: 1600, cheater: true, sus_count: 4, verified: true } }] }] }
+        : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch;
   const api = new PaladinsCatApi('http://backend:3005', 1000, { localOnly: true, fetchImpl });
@@ -110,19 +110,18 @@ test('match rendering hydrates profile display fields and talent facts', async (
   assert.equal(record.players[0]?.verified, true);
   assert.equal(record.facts?.[0]?.talents[0]?.talent_name, 'Godslayer');
   assert.deepEqual(urls, [
-    'http://backend:3005/matches/123?refresh=false',
+    'http://backend:3005/matches/batch?ids=123',
     'http://backend:3005/matches/fact/123',
-    'http://backend:3005/players/1?include=ratings&refresh=false',
   ]);
 });
 
-test('match verification survives a database profile lookup failure', async () => {
+test('match verification is read from the authoritative profile snapshot', async () => {
   const fetchImpl = (async (input: string | URL | Request) => {
     const url = String(input);
     if (url.includes('/matches/fact/123')) {
       return new Response(JSON.stringify({ players: [] }), { status: 200 });
     }
-    if (url.includes('/matches/123')) {
+    if (url.includes('/matches/batch?ids=123')) {
       return new Response(JSON.stringify({
         matches: [{
           match: { match_id: '123', queue_id: 486 },

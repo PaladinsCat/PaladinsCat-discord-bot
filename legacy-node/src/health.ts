@@ -29,7 +29,7 @@ export function startHealthServer(port: number, renders: RenderService, api: Pal
     const imageMatch = url.pathname.match(/^\/matches\/(\d{6,20})\/image$/);
     if (request.method === 'GET' && imageMatch?.[1]) {
       try {
-        const image = await renders.match(await api.match(imageMatch[1]));
+        const image = await renders.matchById(imageMatch[1], () => api.match(imageMatch[1]!));
         response.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'private, max-age=60' });
         response.end(image);
       } catch (error) {

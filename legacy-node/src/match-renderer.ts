@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import puppeteer from 'puppeteer-core';
+import puppeteer, { type Browser } from 'puppeteer-core';
 import type { MatchPlayer, MatchRecord } from './types.js';
 import { AssetCatalog } from './asset-catalog.js';
 
@@ -93,6 +93,7 @@ export class MatchRenderer {
   readonly theme: MatchImageTheme;
   private readonly css: string;
   private readonly cheaterPatternUrl: string;
+  private browserPromise: Promise<Browser> | null = null;
 
   constructor(
     private readonly assets: AssetCatalog,
@@ -115,8 +116,24 @@ export class MatchRenderer {
 
   private readonly chromiumPath: string;
 
+  async warm(): Promise<void> {
+    await this.browser();
+  }
+
+  async close(): Promise<void> {
+    const pending = this.browserPromise;
+    this.browserPromise = null;
+    if (!pending) return;
+    try {
+      const browser = await pending;
+      await browser.close();
+    } catch {
+      // A failed or already-disconnected browser has no remaining resources.
+    }
+  }
+
   async render(record: MatchRecord): Promise<Buffer> {
-    const browser = await this.launchBrowser();
+    const browser = await this.browser();
     const page = await browser.newPage();
     try {
       await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: SCALE });
@@ -133,19 +150,28 @@ export class MatchRenderer {
       });
       const board = await page.$('#scoreboard');
       if (!board) throw new Error('Scoreboard markup did not render.');
-      return Buffer.from(await board.screenshot({ type: 'png' }));
+      return Buffer.from(await board.screenshot({ type: 'png', optimizeForSpeed: true }));
     } finally {
-      await page.close();
-      await browser.close();
+      await page.close().catch(() => undefined);
     }
   }
 
-  private launchBrowser() {
-    return puppeteer.launch({
+  private browser(): Promise<Browser> {
+    if (this.browserPromise) return this.browserPromise;
+    const pending = puppeteer.launch({
       executablePath: this.chromiumPath,
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--font-render-hinting=medium', '--allow-file-access-from-files'],
     });
+    this.browserPromise = pending;
+    void pending.then((browser) => {
+      browser.once('disconnected', () => {
+        if (this.browserPromise === pending) this.browserPromise = null;
+      });
+    }).catch(() => {
+      if (this.browserPromise === pending) this.browserPromise = null;
+    });
+    return pending;
   }
 
   private document(record: MatchRecord) {

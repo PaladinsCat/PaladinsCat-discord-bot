@@ -11,7 +11,7 @@ const schema = z.object({
   PALADINSCAT_RENDER_CONCURRENCY: z.coerce.number().int().min(1).max(2).default(1),
   PALADINSCAT_RENDER_QUEUE_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
   PALADINSCAT_RENDER_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(20000),
-  PALADINSCAT_RENDER_CACHE_BYTES: z.coerce.number().int().min(0).max(64 * 1024 * 1024).default(16 * 1024 * 1024),
+  PALADINSCAT_RENDER_CACHE_BYTES: z.coerce.number().int().min(0).max(64 * 1024 * 1024).default(32 * 1024 * 1024),
   PALADINSCAT_RENDER_CACHE_TTL_MS: z.coerce.number().int().min(1000).max(3600000).default(600000),
   DISCORD_TOKEN: z.string().optional(),
   DISCORD_APPLICATION_ID: z.string().optional(),

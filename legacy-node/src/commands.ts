@@ -133,8 +133,7 @@ export class CommandHandler {
     this.imageCooldowns.set(interaction.user.id, now + 10000);
     const id = interaction.options.getString('id', true);
     if (!/^\d{6,20}$/.test(id)) throw new Error('Enter a valid numeric match ID.');
-    const record = await this.api.match(id);
-    const buffer = await this.renders.match(record);
+    const buffer = await this.renders.matchById(id, () => this.api.match(id));
     const attachment = new AttachmentBuilder(buffer, { name: `paladinscat-match-${id}.png`, description: `Paladins match ${id}` });
     return interaction.editReply({ content: `${this.webUrl}/matches/${id}`, files: [attachment] });
   }
@@ -157,7 +156,7 @@ export class CommandHandler {
   private async loadouts(interaction: ChatInputCommandInteraction) {
     const input = interaction.options.getString('player', true);
     const player = await this.api.resolvePlayer(input);
-    const payload = await this.api.playerLoadouts(input) as any;
+    const payload = await this.api.playerLoadoutsById(player.id) as any;
     const rows = Array.isArray(payload.loadouts) ? payload.loadouts : [];
     const lines = rows.slice(0, 15).map((row: any) => `• **${row.champion_name ?? 'Champion'}** · ${row.loadout_name ?? 'Unnamed'}`);
     return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle(`${player.name} · Loadouts`).setURL(`${this.webUrl}/players/${player.id}/loadouts`).setDescription(lines.join('\n') || 'No saved loadouts found.')] });
@@ -183,7 +182,7 @@ export class CommandHandler {
 
   private async random(interaction: ChatInputCommandInteraction) {
     const role = interaction.options.getString('role');
-    const champions = (await this.api.champions()).filter((champion) => !role || String(champion.roles ?? '').toLocaleLowerCase().replace(/\s/g, '').includes(role));
+    const champions = (await this.championsForAutocomplete()).filter((champion) => !role || String(champion.roles ?? '').toLocaleLowerCase().replace(/\s/g, '').includes(role));
     const selected = champions[Math.floor(Math.random() * champions.length)];
     if (!selected) throw new Error('No champion matched that class.');
     return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle(selected.name).setURL(`${this.webUrl}/champions/${encodeURIComponent(selected.name.toLocaleLowerCase())}`).setDescription(`${selected.roles ?? 'Champion'} · ${selected.title ?? ''}`)] });
@@ -196,8 +195,8 @@ export class CommandHandler {
     const state = this.renders.snapshot();
     return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle('PaladinsCat status').addFields(
       { name: 'API', value: `${(api as any).status ?? 'online'} · ${latency}ms`, inline: true },
-      { name: 'Render queue', value: `${state.queue.active} active · ${state.queue.queued} queued`, inline: true },
-      { name: 'Render cache', value: `${state.cache.entries} images · ${(state.cache.bytes / 1048576).toFixed(1)} MiB`, inline: true },
+      { name: 'Render queue', value: `${state.queue.active} active · ${state.queue.queued} queued · ${state.queue.durationMs.p95}ms p95`, inline: true },
+      { name: 'Render cache', value: `${state.cache.entries} images · ${(state.cache.bytes / 1048576).toFixed(1)} MiB · ${state.cache.hits} hits`, inline: true },
     )] });
   }
 

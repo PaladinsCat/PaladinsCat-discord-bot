@@ -34,6 +34,7 @@ test('renders the dark-default lossless 2048x1152 PNG from shared frontend asset
   const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
   assert.equal(renderer.theme, 'dark');
   const output = await renderer.render(record);
+  await renderer.close();
   const metadata = await sharp(output).metadata();
   assert.equal(metadata.format, 'png');
   assert.equal(metadata.width, 2048);
@@ -180,6 +181,7 @@ test('keeps the prototype light theme available to renderer consumers', { skip: 
     })),
   };
   const output = await renderer.render(record);
+  await renderer.close();
   assert.equal(renderer.theme, 'light');
   assert.equal((await sharp(output).metadata()).format, 'png');
 });

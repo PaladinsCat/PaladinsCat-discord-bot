@@ -6,6 +6,7 @@ export interface QueueSnapshot {
   completed: number;
   failed: number;
   deduplicated: number;
+  durationMs: { last: number; average: number; p95: number; max: number };
 }
 
 type Waiting<T> = {
@@ -22,6 +23,7 @@ export class BoundedWorkQueue<T> {
   private completed = 0;
   private failed = 0;
   private deduplicated = 0;
+  private readonly durations: number[] = [];
 
   constructor(
     private readonly concurrency: number,
@@ -47,21 +49,44 @@ export class BoundedWorkQueue<T> {
   }
 
   snapshot(): QueueSnapshot {
-    return { active: this.active, queued: this.waiting.length, completed: this.completed, failed: this.failed, deduplicated: this.deduplicated };
+    const sorted = [...this.durations].sort((left, right) => left - right);
+    const total = this.durations.reduce((sum, duration) => sum + duration, 0);
+    return {
+      active: this.active,
+      queued: this.waiting.length,
+      completed: this.completed,
+      failed: this.failed,
+      deduplicated: this.deduplicated,
+      durationMs: {
+        last: this.durations.at(-1) ?? 0,
+        average: this.durations.length ? Math.round(total / this.durations.length) : 0,
+        p95: sorted.length ? sorted[Math.ceil(sorted.length * 0.95) - 1]! : 0,
+        max: sorted.at(-1) ?? 0,
+      },
+    };
   }
 
   private drain() {
     while (this.active < this.concurrency && this.waiting.length > 0) {
       const item = this.waiting.shift()!;
       this.active += 1;
+      const startedAt = performance.now();
       let timer: NodeJS.Timeout;
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`Render exceeded ${this.timeoutMs}ms`)), this.timeoutMs);
         timer.unref();
       });
       Promise.race([item.work(), timeout])
-        .then((value) => { this.completed += 1; item.resolve(value); })
-        .catch((error) => { this.failed += 1; item.reject(error); })
+        .then((value) => {
+          this.recordDuration(startedAt);
+          this.completed += 1;
+          item.resolve(value);
+        })
+        .catch((error) => {
+          this.recordDuration(startedAt);
+          this.failed += 1;
+          item.reject(error);
+        })
         .finally(() => {
           clearTimeout(timer);
           this.active -= 1;
@@ -69,5 +94,10 @@ export class BoundedWorkQueue<T> {
           this.drain();
         });
     }
+  }
+
+  private recordDuration(startedAt: number) {
+    this.durations.push(Math.round(performance.now() - startedAt));
+    if (this.durations.length > 100) this.durations.shift();
   }
 }

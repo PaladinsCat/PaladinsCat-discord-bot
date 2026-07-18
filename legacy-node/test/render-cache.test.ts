@@ -11,4 +11,13 @@ test('evicts the least recently used buffers by byte budget', () => {
   assert.equal(cache.get('b'), undefined);
   assert.equal(cache.get('a')?.toString(), 'aaa');
   assert.equal(cache.get('c')?.toString(), 'ccc');
+  assert.deepEqual(cache.snapshot(), {
+    entries: 2,
+    bytes: 6,
+    maxBytes: 6,
+    hits: 3,
+    misses: 1,
+    evictions: 1,
+    expirations: 0,
+  });
 });
