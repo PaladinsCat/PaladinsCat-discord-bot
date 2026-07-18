@@ -72,6 +72,20 @@ test('normal mode preserves database-first backend fallback behavior', async () 
   ]);
 });
 
+test('Discord player reads use the dedicated five-minute refresh path', async () => {
+  const urls: string[] = [];
+  const api = new PaladinsCatApi('http://backend:3005', 1000, {
+    localOnly: true,
+    fetchImpl: recordingFetch(urls),
+  });
+
+  await api.discordPlayer('New Player', true);
+
+  assert.deepEqual(urls, [
+    'http://backend:3005/players/discord?player=New+Player&history=true',
+  ]);
+});
+
 test('match rendering hydrates profile display fields and talent facts', async () => {
   const urls: string[] = [];
   const fetchImpl = (async (input: string | URL | Request) => {

@@ -56,6 +56,15 @@ export class PaladinsCatApi {
     return this.get(this.readPath(`/players/${encodeURIComponent(playerId)}?include=ratings`));
   }
 
+  async discordPlayer(input: string, includeHistory = false): Promise<PlayerProfileResponse & { history?: Array<Record<string, unknown>> }> {
+    const query = new URLSearchParams({ player: input });
+    if (includeHistory) query.set('history', 'true');
+    // This is intentionally the only bot read that is allowed to ask the
+    // backend for Hi-Rez data. The endpoint owns the durable five-minute
+    // profile/name lookup guard and the web's history-cache TTL.
+    return this.get(`/players/discord?${query.toString()}`);
+  }
+
   async playerHistory(input: string, limit = 10): Promise<Array<Record<string, unknown>>> {
     const resolved = await this.resolvePlayer(input);
     return this.playerHistoryById(resolved.id, limit);

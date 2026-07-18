@@ -122,8 +122,7 @@ export class CommandHandler {
   }
 
   private async player(interaction: ChatInputCommandInteraction) {
-    const resolved = await this.api.resolvePlayer(interaction.options.getString('player', true));
-    const response = await this.api.playerById(resolved.id);
+    const response = await this.api.discordPlayer(interaction.options.getString('player', true));
     return interaction.editReply(buildPlayerProfileMessage(response, this.webUrl));
   }
 
@@ -142,8 +141,9 @@ export class CommandHandler {
 
   private async history(interaction: ChatInputCommandInteraction) {
     const input = interaction.options.getString('player', true);
-    const player = await this.api.resolvePlayer(input);
-    const rows = await this.api.playerHistory(input, 10);
+    const response = await this.api.discordPlayer(input, true);
+    const player = response.player;
+    const rows = response.history ?? [];
     const lines = rows.slice(0, 10).map((row: any) => `${row.win_status === 'Winner' ? '✅' : '❌'} **${row.champion_name ?? 'Unknown'}** · ${row.kills ?? 0}/${row.deaths ?? 0}/${row.assists ?? 0} · [${row.match_id}](${this.webUrl}/matches/${row.match_id})`);
     return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle(`${player.name} · Recent matches`).setURL(`${this.webUrl}/players/${player.id}`).setDescription(lines.join('\n') || 'No recent matches found.')] });
   }
