@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import puppeteer, { type Browser } from 'puppeteer-core';
+import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 import type { MatchPlayer, MatchRecord } from './types.js';
 import { AssetCatalog } from './asset-catalog.js';
 
@@ -94,6 +94,7 @@ export class MatchRenderer {
   private readonly css: string;
   private readonly cheaterPatternUrl: string;
   private browserPromise: Promise<Browser> | null = null;
+  private readonly idlePages: Page[] = [];
 
   constructor(
     private readonly assets: AssetCatalog,
@@ -117,12 +118,14 @@ export class MatchRenderer {
   private readonly chromiumPath: string;
 
   async warm(): Promise<void> {
-    await this.browser();
+    const page = await this.acquirePage();
+    await this.releasePage(page, true);
   }
 
   async close(): Promise<void> {
     const pending = this.browserPromise;
     this.browserPromise = null;
+    this.idlePages.length = 0;
     if (!pending) return;
     try {
       const browser = await pending;
@@ -133,10 +136,9 @@ export class MatchRenderer {
   }
 
   async render(record: MatchRecord): Promise<Buffer> {
-    const browser = await this.browser();
-    const page = await browser.newPage();
+    const page = await this.acquirePage();
+    let reusable = false;
     try {
-      await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: SCALE });
       // The source prototype has an external font import. Waiting for the load
       // event lets a network-restricted render container hang on that request.
       await page.setContent(this.document(record), { waitUntil: 'domcontentloaded' });
@@ -150,10 +152,29 @@ export class MatchRenderer {
       });
       const board = await page.$('#scoreboard');
       if (!board) throw new Error('Scoreboard markup did not render.');
-      return Buffer.from(await board.screenshot({ type: 'png', optimizeForSpeed: true }));
+      const image = Buffer.from(await board.screenshot({ type: 'png', optimizeForSpeed: true }));
+      reusable = true;
+      return image;
     } finally {
-      await page.close().catch(() => undefined);
+      await this.releasePage(page, reusable);
     }
+  }
+
+  private async acquirePage(): Promise<Page> {
+    let page = this.idlePages.pop();
+    while (page?.isClosed()) page = this.idlePages.pop();
+    if (page) return page;
+    page = await (await this.browser()).newPage();
+    await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: SCALE });
+    return page;
+  }
+
+  private async releasePage(page: Page, reusable: boolean): Promise<void> {
+    if (reusable && !page.isClosed() && this.browserPromise) {
+      this.idlePages.push(page);
+      return;
+    }
+    await page.close().catch(() => undefined);
   }
 
   private browser(): Promise<Browser> {
@@ -166,7 +187,10 @@ export class MatchRenderer {
     this.browserPromise = pending;
     void pending.then((browser) => {
       browser.once('disconnected', () => {
-        if (this.browserPromise === pending) this.browserPromise = null;
+        if (this.browserPromise === pending) {
+          this.browserPromise = null;
+          this.idlePages.length = 0;
+        }
       });
     }).catch(() => {
       if (this.browserPromise === pending) this.browserPromise = null;
