@@ -20,7 +20,7 @@ function recordingFetch(urls: string[]): typeof fetch {
   }) as typeof fetch;
 }
 
-test('local-only bot reads suppress backend Hi-Rez fallbacks', async () => {
+test('database-first bot reads keep an existing match on the fast local path', async () => {
   const urls: string[] = [];
   const api = new PaladinsCatApi('http://backend:3005', 1000, {
     localOnly: true,
@@ -69,6 +69,49 @@ test('normal mode preserves database-first backend fallback behavior', async () 
     'http://backend:3005/players/123?include=ratings',
     'http://backend:3005/matches/123',
     'http://backend:3005/matches/fact/123',
+  ]);
+});
+
+test('a database miss enters durable requested-match ingestion and retries facts after persistence', async () => {
+  const urls: string[] = [];
+  let factReads = 0;
+  const fetchImpl = (async (input: string | URL | Request) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.includes('/matches/batch?ids=456')) {
+      return new Response(JSON.stringify({ matches: [], count: 0, notFound: [456] }), { status: 200 });
+    }
+    if (url.includes('/matches/fact/456')) {
+      factReads += 1;
+      if (factReads === 1) return new Response(JSON.stringify({ error: 'Match not found' }), { status: 404 });
+      return new Response(JSON.stringify({ players: [{ player_id: '1', talents: [{ talent_id: 9, talent_name: 'Persisted Talent' }] }] }), { status: 200 });
+    }
+    if (url.endsWith('/matches/456')) {
+      return new Response(JSON.stringify({
+        matches: [{
+          match: { match_id: '456', queue_id: 424 },
+          players: [{ player_id: '1', profile_snapshot: { level: 42 } }],
+        }],
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ error: 'unexpected request' }), { status: 500 });
+  }) as typeof fetch;
+  const api = new PaladinsCatApi('http://backend:3005', 1000, {
+    localOnly: true,
+    matchTimeoutMs: 125000,
+    fetchImpl,
+  });
+
+  const record = await api.match('456');
+
+  assert.equal(record.match.match_id, '456');
+  assert.equal(record.players[0]?.final_match_level, 42);
+  assert.equal(record.facts?.[0]?.talents[0]?.talent_name, 'Persisted Talent');
+  assert.deepEqual(urls, [
+    'http://backend:3005/matches/batch?ids=456',
+    'http://backend:3005/matches/fact/456',
+    'http://backend:3005/matches/456',
+    'http://backend:3005/matches/fact/456',
   ]);
 });
 

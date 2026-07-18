@@ -47,3 +47,42 @@ test('checks the final image cache before loading match data', async () => {
   assert.equal(loads, 1);
   assert.equal(renders, 1);
 });
+
+test('bounds and deduplicates slow match acquisition separately from the render timeout', async () => {
+  let renders = 0;
+  let loads = 0;
+  const renderer = {
+    templateVersion: 99,
+    render: async () => { renders += 1; return Buffer.from('image'); },
+    warm: async () => undefined,
+    close: async () => undefined,
+  } as unknown as MatchRenderer;
+  const service = new RenderService(renderer, {
+    concurrency: 1,
+    queueLimit: 2,
+    timeoutMs: 10,
+    lookupConcurrency: 1,
+    lookupQueueLimit: 2,
+    lookupTimeoutMs: 100,
+    cacheBytes: 1024,
+    cacheTtlMs: 1000,
+  });
+  const load = async () => {
+    loads += 1;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    return record('slow');
+  };
+
+  const [first, second] = await Promise.all([
+    service.matchById('slow', load),
+    service.matchById('slow', load),
+  ]);
+
+  assert.equal(first.toString(), 'image');
+  assert.equal(second.toString(), 'image');
+  assert.equal(loads, 1);
+  assert.equal(renders, 1);
+  assert.equal(service.snapshot().deduplicated, 1);
+  assert.ok(service.snapshot().lookup.durationMs.last >= 25);
+  assert.ok(service.snapshot().queue.durationMs.last < 10);
+});

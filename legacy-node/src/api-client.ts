@@ -9,14 +9,16 @@ export class PaladinsCatApiError extends Error {
 export class PaladinsCatApi {
   private readonly localOnly: boolean;
   private readonly fetchImpl: typeof fetch;
+  private readonly matchTimeoutMs: number;
 
   constructor(
     private readonly baseUrl: string,
     private readonly timeoutMs = 12000,
-    options: { localOnly?: boolean; fetchImpl?: typeof fetch } = {},
+    options: { localOnly?: boolean; fetchImpl?: typeof fetch; matchTimeoutMs?: number } = {},
   ) {
     this.localOnly = options.localOnly ?? false;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.matchTimeoutMs = options.matchTimeoutMs ?? Math.max(timeoutMs, 125000);
   }
 
   private readPath(path: string): string {
@@ -25,10 +27,10 @@ export class PaladinsCatApi {
     return `${path}${separator}refresh=false`;
   }
 
-  private async get<T>(path: string): Promise<T> {
+  private async get<T>(path: string, timeoutMs = this.timeoutMs): Promise<T> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       headers: { Accept: 'application/json', 'User-Agent': 'PaladinsCatDiscordBot/0.1' },
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) throw new PaladinsCatApiError(`PaladinsCat API returned ${response.status}`, response.status);
     return response.json() as Promise<T>;
@@ -89,13 +91,34 @@ export class PaladinsCatApi {
   }
 
   async match(id: string): Promise<MatchRecord> {
-    const matchPath = this.localOnly
-      ? `/matches/batch?ids=${encodeURIComponent(id)}`
-      : `/matches/${encodeURIComponent(id)}`;
-    const [payload, facts] = await Promise.all([
-      this.get<{ matches: MatchRecord[] }>(matchPath),
-      this.get<{ players?: MatchFactPlayer[] }>(`/matches/fact/${encodeURIComponent(id)}`).catch(() => null),
-    ]);
+    const encodedId = encodeURIComponent(id);
+    const readFacts = () => this.get<{ players?: MatchFactPlayer[] }>(`/matches/fact/${encodedId}`).catch(() => null);
+    let payload: { matches: MatchRecord[] };
+    let facts: { players?: MatchFactPlayer[] } | null;
+
+    if (this.localOnly) {
+      // Keep the common path database-only and cheap. On a true miss, the
+      // direct endpoint owns requested-match ingestion, waits for durable
+      // completion, and returns the newly persisted read model.
+      [payload, facts] = await Promise.all([
+        this.get<{ matches: MatchRecord[] }>(`/matches/batch?ids=${encodedId}`),
+        readFacts(),
+      ]);
+      if (!payload.matches?.[0]) {
+        payload = await this.get<{ matches: MatchRecord[] }>(`/matches/${encodedId}`, this.matchTimeoutMs);
+        // The speculative facts read normally returned 404 before ingestion.
+        // Retry only after the completion boundary so the first image includes
+        // the same talents/items facts that subsequent web reads receive.
+        facts = await readFacts();
+      }
+    } else {
+      [payload, facts] = await Promise.all([
+        this.get<{ matches: MatchRecord[] }>(`/matches/${encodedId}`, this.matchTimeoutMs),
+        readFacts(),
+      ]);
+      if (!facts && payload.matches?.[0]) facts = await readFacts();
+    }
+
     const match = payload.matches?.[0];
     if (!match) throw new PaladinsCatApiError(`Match ${id} was not found`, 404);
     return {

@@ -195,6 +195,7 @@ export class CommandHandler {
     const state = this.renders.snapshot();
     return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle('PaladinsCat status').addFields(
       { name: 'API', value: `${(api as any).status ?? 'online'} · ${latency}ms`, inline: true },
+      { name: 'Match lookup', value: `${state.lookup.active} active · ${state.lookup.queued} queued · ${state.lookup.durationMs.p95}ms p95`, inline: true },
       { name: 'Render queue', value: `${state.queue.active} active · ${state.queue.queued} queued · ${state.queue.durationMs.p95}ms p95`, inline: true },
       { name: 'Render cache', value: `${state.cache.entries} images · ${(state.cache.bytes / 1048576).toFixed(1)} MiB · ${state.cache.hits} hits`, inline: true },
     )] });

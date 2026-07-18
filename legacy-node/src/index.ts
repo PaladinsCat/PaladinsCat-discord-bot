@@ -8,12 +8,18 @@ import { commandData, CommandHandler } from './commands.js';
 import { startHealthServer } from './health.js';
 
 const config = loadConfig();
-const api = new PaladinsCatApi(config.apiUrl, 12000, { localOnly: config.localOnly });
+const api = new PaladinsCatApi(config.apiUrl, 12000, {
+  localOnly: config.localOnly,
+  matchTimeoutMs: config.matchLookupTimeoutMs,
+});
 const renderer = new MatchRenderer(new AssetCatalog(config.assetRoot));
 const renders = new RenderService(renderer, {
   concurrency: config.renderConcurrency,
   queueLimit: config.renderQueueLimit,
   timeoutMs: config.renderTimeoutMs,
+  lookupConcurrency: config.matchLookupConcurrency,
+  lookupQueueLimit: config.matchLookupQueueLimit,
+  lookupTimeoutMs: config.matchLookupTimeoutMs,
   cacheBytes: config.renderCacheBytes,
   cacheTtlMs: config.renderCacheTtlMs,
 });

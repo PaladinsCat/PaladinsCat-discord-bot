@@ -29,6 +29,7 @@ export class BoundedWorkQueue<T> {
     private readonly concurrency: number,
     private readonly maxQueued: number,
     private readonly timeoutMs: number,
+    private readonly workLabel = 'Render',
   ) {}
 
   add(key: string, work: () => Promise<T>): Promise<T> {
@@ -73,7 +74,7 @@ export class BoundedWorkQueue<T> {
       const startedAt = performance.now();
       let timer: NodeJS.Timeout;
       const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Render exceeded ${this.timeoutMs}ms`)), this.timeoutMs);
+        timer = setTimeout(() => reject(new Error(`${this.workLabel} exceeded ${this.timeoutMs}ms`)), this.timeoutMs);
         timer.unref();
       });
       Promise.race([item.work(), timeout])
