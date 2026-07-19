@@ -73,6 +73,8 @@ function globalKda(stats: unknown): string | null {
   const deaths = number(values.deaths);
   const assists = number(values.assists);
   if (kills == null || deaths == null || assists == null) return null;
+  const games = (number(values.wins) ?? 0) + (number(values.losses) ?? 0);
+  if (kills + deaths + assists === 0 && games === 0) return null;
   return ((kills + assists / 2) / Math.max(deaths, 1)).toFixed(2);
 }
 

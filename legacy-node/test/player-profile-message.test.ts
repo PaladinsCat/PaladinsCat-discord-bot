@@ -32,6 +32,7 @@ test('player profile message uses a compact, Discord-safe profile layout', () =>
   assert.ok(general.indexOf('Total XP') < general.indexOf('Total matches'));
   assert.ok(general.includes('Casual deserted'));
   assert.ok(general.indexOf('Win rate') < general.indexOf('Global KDA'));
+  assert.ok(general.includes('Global KDA    : 3.03'));
   assert.ok(embed.fields?.some((field) => field.name === 'Ranked KBM' && field.value.includes('Grandmaster #12')));
   assert.ok(embed.fields?.some((field) => field.name === 'Other' && field.value.includes('Platform')));
   assert.ok(embed.fields?.some((field) => field.name === 'Other' && field.value.includes('Account created')));
@@ -43,6 +44,22 @@ test('player profile message uses a compact, Discord-safe profile layout', () =>
   assert.match(preview, /Mentions disabled/);
   assert.match(preview, /Exact Discord payload/);
   assert.match(preview, /discord-code/);
+});
+
+test('player profile does not report missing all-zero career totals as a real KDA', () => {
+  const missing = buildPlayerProfileMessage({
+    player: { id: '42', name: 'Missing totals', wins: 10, losses: 5 },
+    globalStats: { wins: 0, losses: 0, kills: 0, deaths: 0, assists: 0 },
+  }, 'https://paladinscat.com');
+  const missingGeneral = missing.embeds?.[0]?.fields?.find((field) => field.name === 'General')?.value ?? '';
+  assert.doesNotMatch(missingGeneral, /Global KDA/);
+
+  const legitimateZero = buildPlayerProfileMessage({
+    player: { id: '43', name: 'Zero KDA', wins: 1, losses: 0 },
+    globalStats: { wins: 1, losses: 0, kills: 0, deaths: 1, assists: 0 },
+  }, 'https://paladinscat.com');
+  const zeroGeneral = legitimateZero.embeds?.[0]?.fields?.find((field) => field.name === 'General')?.value ?? '';
+  assert.match(zeroGeneral, /Global KDA\s+: 0\.00/);
 });
 
 test('player profile message uses the local avatar when Hi-Rez has no image link', () => {
