@@ -4,11 +4,20 @@ import path from 'node:path';
 import test from 'node:test';
 import sharp from 'sharp';
 import { AssetCatalog } from '../src/asset-catalog.js';
-import { MatchRenderer } from '../src/match-renderer.js';
+import { MatchRenderer, matchPlayerDisplayTier } from '../src/match-renderer.js';
 import type { MatchRecord } from '../src/types.js';
 
 const chromiumPath = process.env.PALADINSCAT_CHROMIUM_PATH;
 const requiresChromium = !chromiumPath || !fs.existsSync(chromiumPath);
+
+test('promotes only top-100 Master players to the Grandmaster display tier', () => {
+  assert.equal(matchPlayerDisplayTier({ kbm_tier: 26, kbm_rank: 1 }), 27);
+  assert.equal(matchPlayerDisplayTier({ kbm_tier: 26, kbm_rank: 100 }), 27);
+  assert.equal(matchPlayerDisplayTier({ kbm_tier: 26, kbm_rank: 101 }), 26);
+  assert.equal(matchPlayerDisplayTier({ kbm_tier: 26 }), 26);
+  assert.equal(matchPlayerDisplayTier({ kbm_tier: 25, kbm_rank: 1 }), 25);
+  assert.equal(matchPlayerDisplayTier({ kbm_tier: 26, profile_snapshot: { kbm_rank: 1 } }), 27);
+});
 
 test('renders the dark-default lossless 2048x1152 PNG from shared frontend assets', { skip: requiresChromium && 'requires PALADINSCAT_CHROMIUM_PATH for the CSS-native browser renderer' }, async () => {
   const players = Array.from({ length: 10 }, (_, index) => ({

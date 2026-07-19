@@ -147,6 +147,7 @@ test('match rendering hydrates profile display fields from the joined snapshot w
 
   assert.equal(record.players[0]?.final_match_level, 1158);
   assert.equal(record.players[0]?.tier, 13);
+  assert.equal(record.players[0]?.kbm_rank, 2);
   assert.equal(record.players[0]?.queue_elo, 1600);
   assert.equal(record.players[0]?.cheater, true);
   assert.equal(record.players[0]?.sus_count, 4);

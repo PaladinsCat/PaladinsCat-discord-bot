@@ -7,7 +7,7 @@ import { AssetCatalog } from './asset-catalog.js';
 const WIDTH = 1280;
 const HEIGHT = 720;
 const SCALE = 1.6;
-const TEMPLATE_VERSION = 12;
+const TEMPLATE_VERSION = 13;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
@@ -50,7 +50,19 @@ function utcTimestamp(value: string) {
   return `${datePart} · ${timePart} UTC`;
 }
 function damage(player: MatchPlayer) { return Number(player.damage_done_physical || player.damage_done_in_hand || 0); }
-function tier(player: MatchPlayer) { const value = Number(player.kbm_tier ?? player.tier ?? player.league_tier ?? 0); return Number.isFinite(value) ? Math.max(0, Math.min(27, Math.floor(value))) : 0; }
+type TierSource = Partial<Pick<MatchPlayer, 'kbm_tier' | 'tier' | 'league_tier' | 'kbm_rank' | 'profile_snapshot'>>;
+
+function baseTier(player: TierSource) {
+  const value = Number(player.kbm_tier ?? player.tier ?? player.league_tier ?? 0);
+  return Number.isFinite(value) ? Math.max(0, Math.min(27, Math.floor(value))) : 0;
+}
+
+/** Match the web scoreboard's display rule for the synthetic Grandmaster tier. */
+export function matchPlayerDisplayTier(player: TierSource) {
+  const value = baseTier(player);
+  const rank = Number(player.kbm_rank ?? player.profile_snapshot?.kbm_rank ?? 0);
+  return value === 26 && Number.isFinite(rank) && rank >= 1 && rank <= 100 ? 27 : value;
+}
 function party(player: MatchPlayer) { const value = Number(player.party ?? player.party_number ?? player.party_id ?? 0); return Number.isFinite(value) && value > 0 ? Math.floor(value) : null; }
 const assetDataUrls = new Map<string, string>();
 
@@ -243,6 +255,7 @@ export class MatchRenderer {
     const max = (key: keyof Metrics) => Math.max(0, ...metrics.map((values) => values[key]));
     return players.map((player, index) => {
       const values = metrics[index]!;
+      const playerTier = matchPlayerDisplayTier(player);
       const fact = facts.get(String(player.player_id));
       const talent = fact?.talents?.[0];
       const talentIcon = talent ? this.assets.talentIcon(talent.champion_name || player.champion_name, talent.talent_name) : null;
@@ -256,7 +269,7 @@ export class MatchRenderer {
       const moderationTag = cheater
         ? '<span class="player-status-tag cheater">CHEATER</span>'
         : suspicious ? '<span class="player-status-tag suspicious">SUS</span>' : '';
-      return `<div class="player-row grid-row${cheater ? ' cheater-row' : ''}"><div class="champion-wrap"><img class="champion-icon" src="${assetUrl(this.assets.championIcon(player.champion_name))}" alt="${xml(player.champion_name)}"/>${party(player) ? `<span class="party-badge" title="Party ${party(player)}">${party(player)}</span>` : ''}</div><div class="rank"><img src="${assetUrl(this.assets.rankIcon(tier(player)))}" alt="${xml(TIER_NAMES[tier(player)] ?? 'Unranked')}"/></div><div class="level">${number(level)}</div><div class="player"><div class="player-name"><span class="player-name-text">${xml(player.player_name || 'PRIVATE')}</span>${verificationBadge}${moderationTag}</div><div class="player-sub">PID ${xml(player.player_id || 0)}</div></div><div class="player-elo">${player.queue_elo ? number(player.queue_elo) : '—'}</div><img class="talent-icon" src="${assetUrl(talentIcon)}" alt="${xml(talent?.talent_name ?? '')}"/><div class="metric credits${peak('credits')}"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${number(values.credits)}</div><div class="metric kda">${player.kills} / ${player.deaths} / ${player.assists}</div><div class="metric obj${peak('objective')}">${number(values.objective)}</div><div class="metric damage${peak('damage')}">${number(values.damage)}</div><div class="metric taken${peak('taken')}">${number(values.taken)}</div><div class="metric shield${peak('shielding', true)}">${number(values.shielding)}</div><div class="metric heal${peak('healing', true)}">${number(values.healing)}</div></div>`;
+      return `<div class="player-row grid-row${cheater ? ' cheater-row' : ''}"><div class="champion-wrap"><img class="champion-icon" src="${assetUrl(this.assets.championIcon(player.champion_name))}" alt="${xml(player.champion_name)}"/>${party(player) ? `<span class="party-badge" title="Party ${party(player)}">${party(player)}</span>` : ''}</div><div class="rank"><img src="${assetUrl(this.assets.rankIcon(playerTier))}" alt="${xml(TIER_NAMES[playerTier] ?? 'Unranked')}"/></div><div class="level">${number(level)}</div><div class="player"><div class="player-name"><span class="player-name-text">${xml(player.player_name || 'PRIVATE')}</span>${verificationBadge}${moderationTag}</div><div class="player-sub">PID ${xml(player.player_id || 0)}</div></div><div class="player-elo">${player.queue_elo ? number(player.queue_elo) : '—'}</div><img class="talent-icon" src="${assetUrl(talentIcon)}" alt="${xml(talent?.talent_name ?? '')}"/><div class="metric credits${peak('credits')}"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${number(values.credits)}</div><div class="metric kda">${player.kills} / ${player.deaths} / ${player.assists}</div><div class="metric obj${peak('objective')}">${number(values.objective)}</div><div class="metric damage${peak('damage')}">${number(values.damage)}</div><div class="metric taken${peak('taken')}">${number(values.taken)}</div><div class="metric shield${peak('shielding', true)}">${number(values.shielding)}</div><div class="metric heal${peak('healing', true)}">${number(values.healing)}</div></div>`;
     }).join('');
   }
 
@@ -278,7 +291,7 @@ export class MatchRenderer {
   }
 
   private averageTier(players: MatchPlayer[]) {
-    const tiers = players.map(tier).filter((value) => value >= 0);
+    const tiers = players.map(baseTier).filter((value) => value >= 0);
     return tiers.length ? Math.floor(tiers.reduce((sum, value) => sum + value, 0) / tiers.length) : 0;
   }
 }
