@@ -57,6 +57,32 @@ test('resolves WIP map names to the shared ranked map art', () => {
   assert.match(assets.mapImage('WIP Serpent Beach V2') ?? '', /Ranked_Serpent_Beach/i);
 });
 
+test("embeds Io's canonical talent artwork when the API name differs from the asset name", () => {
+  const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
+  const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
+  const record: MatchRecord = {
+    match: { match_id: '1280893915', entry_datetime: '2026-07-20T03:03:00Z', queue_id: 424,
+      duration_seconds: 508, region: 'NA', map: 'Splitstone Quarry', team1_score: 0,
+      team2_score: 4, winning_task_force: 2, broken: false, recovered: true, private: false },
+    players: [{
+      player_id: '735721787', player_name: 'xSirris', champion_id: 2517, champion_name: 'Io',
+      kills: 2, deaths: 2, assists: 8, damage_done_physical: 11341, damage_taken: 20458,
+      damage_mitigated: 0, healing: 51191, gold_earned: 2850, objective_assists: 116,
+      final_match_level: 326, tier: 0, win_status: 'Winner', task_force: 2,
+      league_tier: 0, source: 'direct', private_slot: 0,
+    }],
+    facts: [{
+      player_id: '735721787',
+      talents: [{ talent_id: 24674, talent_name: "Goddess' Blessing", champion_name: 'Io' }],
+    }],
+  };
+
+  const html = (renderer as unknown as { document(value: MatchRecord): string }).document(record);
+  const markup = html.slice(html.indexOf('</style>'));
+  assert.match(markup, /class="talent-icon" src="data:image\/png;base64,[^"]+" alt="Goddess&#39; Blessing"/);
+  assert.doesNotMatch(markup, /class="talent-icon" src="" alt="Goddess&#39; Blessing"/);
+});
+
 test('shows the approved casual hero while preserving ranked metadata coordinates', () => {
   const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
   const renderer = new MatchRenderer(new AssetCatalog(assetRoot));

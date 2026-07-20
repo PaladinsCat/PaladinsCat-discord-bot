@@ -15,6 +15,7 @@ export class AssetCatalog {
   private readonly mapImages = new Map<string, string | null>();
   private readonly rankIcons = new Map<number, string | null>();
   private readonly icons = new Map<string, string | null>();
+  private talentReferenceIcons: Map<number, string> | null = null;
 
   constructor(private readonly root: string) {}
 
@@ -31,9 +32,14 @@ export class AssetCatalog {
     return result;
   }
 
-  talentIcon(championName: string, talentName: string): string | null {
-    const key = `${normalized(championName)}:${normalized(talentName)}`;
+  talentIcon(talentId: number | null | undefined, championName: string, talentName: string): string | null {
+    const key = `${Number(talentId) || 0}:${normalized(championName)}:${normalized(talentName)}`;
     if (this.talentIcons.has(key)) return this.talentIcons.get(key)!;
+    const referenced = this.talentReferenceIcon(talentId);
+    if (referenced) {
+      this.talentIcons.set(key, referenced);
+      return referenced;
+    }
     const files = this.championFiles ??= this.loadChampionFiles();
     // Seris's published asset keeps its historical Soul Collector name.
     const assetName = championName === 'Seris' && talentName === 'Resuscitate'
@@ -47,6 +53,34 @@ export class AssetCatalog {
       ?? matches[0]
       ?? null;
     this.talentIcons.set(key, result);
+    return result;
+  }
+
+  private talentReferenceIcon(talentId: number | null | undefined): string | null {
+    const id = Number(talentId);
+    if (!Number.isInteger(id) || id <= 0) return null;
+    if (!this.talentReferenceIcons) this.talentReferenceIcons = this.loadTalentReferenceIcons();
+    return this.talentReferenceIcons.get(id) ?? null;
+  }
+
+  private loadTalentReferenceIcons(): Map<number, string> {
+    const result = new Map<number, string>();
+    const referencePath = path.resolve(this.root, '../data/paladins-talent-reference.json');
+    if (!fs.existsSync(referencePath)) return result;
+    try {
+      const rows = JSON.parse(fs.readFileSync(referencePath, 'utf8')) as Array<{ id?: unknown; iconUrl?: unknown }>;
+      for (const row of rows) {
+        const id = Number(row.id);
+        const iconUrl = typeof row.iconUrl === 'string' ? row.iconUrl : '';
+        if (!Number.isInteger(id) || id <= 0 || !iconUrl.startsWith('/images/')) continue;
+        const canonical = path.resolve(this.root, iconUrl.slice('/images/'.length));
+        const png = canonical.replace(/\.[^.]+$/, '.png');
+        if (fs.existsSync(png)) result.set(id, png);
+        else if (fs.existsSync(canonical)) result.set(id, canonical);
+      }
+    } catch (error) {
+      console.warn(`[asset-catalog] Failed to load talent reference ${referencePath}: ${error}`);
+    }
     return result;
   }
 

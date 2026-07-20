@@ -258,7 +258,7 @@ export class MatchRenderer {
       const playerTier = matchPlayerDisplayTier(player);
       const fact = facts.get(String(player.player_id));
       const talent = fact?.talents?.[0];
-      const talentIcon = talent ? this.assets.talentIcon(talent.champion_name || player.champion_name, talent.talent_name) : null;
+      const talentIcon = talent ? this.assets.talentIcon(talent.talent_id, talent.champion_name || player.champion_name, talent.talent_name) : null;
       const peak = (key: keyof Metrics, requireValue = false) => values[key] === max(key) && (!requireValue || values[key] > 0) ? ' peak' : '';
       const level = Number(player.final_match_level ?? 0) || Number(player.account_level ?? 0);
       const cheater = Boolean(player.cheater);

@@ -3,6 +3,8 @@ WORKDIR /app
 COPY src/discord-bot/package.json src/discord-bot/package-lock.json ./
 RUN npm ci
 COPY src/discord-bot/ .
+COPY --chown=node:node src/frontend/public/data/paladins-talent-reference.json ./data/paladins-talent-reference.json
+COPY --chown=node:node src/frontend/public/images/champions/Talent*.png ./assets/champions/
 RUN npm run build
 
 FROM node:22-alpine AS runtime
@@ -17,6 +19,7 @@ USER node
 COPY --chown=node:node --from=builder /app/package.json /app/package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --chown=node:node --from=builder /app/dist ./dist
+COPY --chown=node:node --from=builder /app/data/paladins-talent-reference.json ./data/paladins-talent-reference.json
 COPY --chown=node:node dev/prototypes/match-result-scoreboard.html ./templates/match-result-scoreboard.html
 COPY --chown=node:node dev/prototypes/cheater-police-line.svg ./templates/cheater-police-line.svg
 EXPOSE 3020

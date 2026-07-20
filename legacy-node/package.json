@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "npm run test:assets",
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "test": "tsx --test test/*.test.ts",
+    "test:assets": "tsx --test test/asset-catalog.test.ts",
     "render:sample": "tsx scripts/render-sample.ts"
   },
   "dependencies": {
