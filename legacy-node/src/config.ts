@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 const schema = z.object({
   PALADINSCAT_BOT_MODE: z.enum(['dummy', 'real']).default('dummy'),
-  PALADINSCAT_API_URL: z.string().url().default('http://localhost:3304'),
+  PALADINSCAT_API_URL: z.string().url().default('https://paladinscat.com/api'),
   PALADINSCAT_WEB_URL: z.string().url().default('http://localhost:3000'),
   PALADINSCAT_BOT_LOCAL_ONLY: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   PALADINSCAT_ASSET_ROOT: z.string().default('../frontend/public/images'),
