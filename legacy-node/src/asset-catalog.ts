@@ -94,9 +94,11 @@ export class AssetCatalog {
     if (!fs.existsSync(referencePath)) return result;
     try {
       const rows = JSON.parse(fs.readFileSync(referencePath, 'utf8')) as Array<Record<string, unknown>>;
+      const canonicalDescriptions = this.loadChampionCardDescriptions();
       for (const row of rows) {
         const id = Number(row.id);
         const iconUrl = typeof row.iconUrl === 'string' ? row.iconUrl : '';
+        const name = String(row.name ?? `Card ${id}`);
         if (!Number.isInteger(id) || id <= 0) continue;
         const canonical = iconUrl.startsWith('/images/')
           ? path.resolve(this.root, iconUrl.slice('/images/'.length))
@@ -107,8 +109,8 @@ export class AssetCatalog {
           : canonical && fs.existsSync(canonical) ? canonical : null;
         result.set(id, {
           id,
-          name: String(row.name ?? `Card ${id}`),
-          description: String(row.description ?? ''),
+          name,
+          description: canonicalDescriptions.get(normalized(name)) ?? String(row.description ?? ''),
           shortDescription: String(row.shortDescription ?? ''),
           championId: Number(row.championId ?? 0),
           iconPath,
@@ -118,6 +120,34 @@ export class AssetCatalog {
       console.warn(`[asset-catalog] Failed to load card reference ${referencePath}: ${error}`);
     }
     return result;
+  }
+
+  private loadChampionCardDescriptions(): Map<string, string> {
+    const descriptions = new Map<string, string>();
+    const ambiguous = new Set<string>();
+    const championDataPath = path.resolve(this.root, '../data/champion-data.json');
+    if (!fs.existsSync(championDataPath)) return descriptions;
+    try {
+      const champions = JSON.parse(fs.readFileSync(championDataPath, 'utf8')) as Record<string, { loadouts?: Array<{ name?: unknown; description?: unknown }> }>;
+      for (const champion of Object.values(champions)) {
+        for (const card of champion.loadouts ?? []) {
+          const name = typeof card.name === 'string' ? card.name : '';
+          const description = typeof card.description === 'string' ? card.description.trim() : '';
+          const key = normalized(name);
+          if (!key || !description || ambiguous.has(key)) continue;
+          const existing = descriptions.get(key);
+          if (existing && existing !== description) {
+            descriptions.delete(key);
+            ambiguous.add(key);
+          } else {
+            descriptions.set(key, description);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`[asset-catalog] Failed to load champion card descriptions ${championDataPath}: ${error}`);
+    }
+    return descriptions;
   }
 
   talentIcon(talentId: number | null | undefined, championName: string, talentName: string): string | null {

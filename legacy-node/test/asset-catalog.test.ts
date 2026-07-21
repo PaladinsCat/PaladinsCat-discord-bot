@@ -59,6 +59,7 @@ test('resolves loadout card metadata and champion banner from shared frontend as
 
   assert.equal(card?.name, 'Sprint');
   assert.match(card?.iconPath ?? '', /Card_Sprint\.png$/);
+  assert.equal(assets.loadoutCard(23369)?.description, 'Generate {15|15}% Wrath after hitting an enemy with Pyre Strike.');
   assert.match(assets.championBanner('Androxus') ?? '', /Banner_Androxus\.png$/);
 });
 

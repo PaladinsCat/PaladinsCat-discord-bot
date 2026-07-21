@@ -15,6 +15,10 @@ test('scales Paladins card tokens cumulatively for the selected level', () => {
     scaleCardDescription('[Weapon] Increase Ammo by {1|1}.', 5),
     'Increase Ammo by 5.',
   );
+  assert.equal(
+    scaleCardDescription('[Shield] Increase Shield Health by {2,000|-200}.', 4),
+    'Increase Shield Health by 1,400.',
+  );
 });
 
 test('loadout canvas reuses scoreboard glass, dimming, typography and badge geometry', () => {
@@ -35,6 +39,9 @@ test('loadout canvas reuses scoreboard glass, dimming, typography and badge geom
   assert.match(html, /filter:saturate\(1\.15\);opacity:\.7/);
   assert.match(html, /background:rgba\(5,9,15,\.58\)/);
   assert.match(html, /backdrop-filter:blur\(7px\)/);
+  assert.match(html, /height:238px/);
+  assert.match(html, /font-size:14px;line-height:1\.25;font-weight:700/);
   assert.match(html, /left:13\.2%;top:92\.7%/);
-  assert.match(html, /transform:translate\(-50%,-50%\)/);
+  assert.match(html, /transform:translate\(-47%,-44%\)/);
+  assert.doesNotMatch(html, /Card points|paladinscat\.com/);
 });

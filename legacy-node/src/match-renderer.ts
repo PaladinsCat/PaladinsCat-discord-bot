@@ -6,9 +6,10 @@ import { AssetCatalog } from './asset-catalog.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
-const SCALE = 1.6;
+const MATCH_SCALE = 1.6;
+const LOADOUT_SCALE = 1;
 const TEMPLATE_VERSION = 13;
-const LOADOUT_TEMPLATE_VERSION = 3;
+const LOADOUT_TEMPLATE_VERSION = 5;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
@@ -44,9 +45,9 @@ export function scaleCardDescription(description: string, level: number): string
   const safeLevel = Math.max(1, Math.min(5, Math.floor(Number(level) || 1)));
   return description
     .replace(/^\s*\[[^\]]+]\s*/, '')
-    .replace(/\{(?:scale=)?(-?\d+(?:\.\d+)?)\|(-?\d+(?:\.\d+)?)}/gi, (_match, baseText: string, stepText: string) => {
-      const value = Number(baseText) + Number(stepText) * (safeLevel - 1);
-      return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+    .replace(/\{(?:scale=)?(-?[\d,]+(?:\.\d+)?)\|(-?[\d,]+(?:\.\d+)?)}/gi, (_match, baseText: string, stepText: string) => {
+      const value = Number(baseText.replaceAll(',', '')) + Number(stepText.replaceAll(',', '')) * (safeLevel - 1);
+      return Number(value.toFixed(2)).toLocaleString('en-US');
     })
     .replace(/\s+/g, ' ')
     .trim();
@@ -132,7 +133,7 @@ export class MatchRenderer {
   private readonly css: string;
   private readonly cheaterPatternUrl: string;
   private browserPromise: Promise<Browser> | null = null;
-  private readonly idlePages: Page[] = [];
+  private readonly idlePages = new Map<number, Page[]>();
 
   constructor(
     private readonly assets: AssetCatalog,
@@ -156,14 +157,20 @@ export class MatchRenderer {
   private readonly chromiumPath: string;
 
   async warm(): Promise<void> {
-    const page = await this.acquirePage();
-    await this.releasePage(page, true);
+    const [matchPage, loadoutPage] = await Promise.all([
+      this.acquirePage(MATCH_SCALE),
+      this.acquirePage(LOADOUT_SCALE),
+    ]);
+    await Promise.all([
+      this.releasePage(matchPage, MATCH_SCALE, true),
+      this.releasePage(loadoutPage, LOADOUT_SCALE, true),
+    ]);
   }
 
   async close(): Promise<void> {
     const pending = this.browserPromise;
     this.browserPromise = null;
-    this.idlePages.length = 0;
+    this.idlePages.clear();
     if (!pending) return;
     try {
       const browser = await pending;
@@ -174,15 +181,15 @@ export class MatchRenderer {
   }
 
   async render(record: MatchRecord): Promise<Buffer> {
-    return this.renderElement(this.document(record), '#scoreboard', 'Scoreboard markup did not render.');
+    return this.renderElement(this.document(record), '#scoreboard', 'Scoreboard markup did not render.', MATCH_SCALE);
   }
 
   async renderLoadout(record: LoadoutRenderRecord): Promise<Buffer> {
-    return this.renderElement(this.loadoutDocument(record), '#loadout', 'Loadout markup did not render.');
+    return this.renderElement(this.loadoutDocument(record), '#loadout', 'Loadout markup did not render.', LOADOUT_SCALE);
   }
 
-  private async renderElement(documentHtml: string, selector: string, missingMessage: string): Promise<Buffer> {
-    const page = await this.acquirePage();
+  private async renderElement(documentHtml: string, selector: string, missingMessage: string, scale: number): Promise<Buffer> {
+    const page = await this.acquirePage(scale);
     let reusable = false;
     try {
       // The source prototype has an external font import. Waiting for the load
@@ -202,22 +209,25 @@ export class MatchRenderer {
       reusable = true;
       return image;
     } finally {
-      await this.releasePage(page, reusable);
+      await this.releasePage(page, scale, reusable);
     }
   }
 
-  private async acquirePage(): Promise<Page> {
-    let page = this.idlePages.pop();
-    while (page?.isClosed()) page = this.idlePages.pop();
+  private async acquirePage(scale: number): Promise<Page> {
+    const pool = this.idlePages.get(scale) ?? [];
+    let page = pool.pop();
+    while (page?.isClosed()) page = pool.pop();
     if (page) return page;
     page = await (await this.browser()).newPage();
-    await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: SCALE });
+    await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: scale });
     return page;
   }
 
-  private async releasePage(page: Page, reusable: boolean): Promise<void> {
+  private async releasePage(page: Page, scale: number, reusable: boolean): Promise<void> {
     if (reusable && !page.isClosed() && this.browserPromise) {
-      this.idlePages.push(page);
+      const pool = this.idlePages.get(scale) ?? [];
+      pool.push(page);
+      this.idlePages.set(scale, pool);
       return;
     }
     await page.close().catch(() => undefined);
@@ -235,7 +245,7 @@ export class MatchRenderer {
       browser.once('disconnected', () => {
         if (this.browserPromise === pending) {
           this.browserPromise = null;
-          this.idlePages.length = 0;
+          this.idlePages.clear();
         }
       });
     }).catch(() => {
@@ -254,6 +264,7 @@ export class MatchRenderer {
     const { player, loadout } = record;
     const championBanner = assetUrl(this.assets.championBanner(loadout.champion_name));
     const championIcon = assetUrl(this.assets.championIcon(loadout.champion_name));
+    const brandIcon = assetUrl(this.assets.icon('paladinscat'));
     const cards = loadout.card_ids.slice(0, 5).map((cardId, index) => {
       const level = Math.max(1, Math.min(5, Math.floor(Number(loadout.card_levels[index]) || 1)));
       const card = this.assets.loadoutCard(Number(cardId));
@@ -265,33 +276,31 @@ export class MatchRenderer {
         <img class="card-art" src="${artwork}" alt=""/>
         <img class="card-frame" src="${assetUrl(frame?.iconPath ?? null)}" alt=""/>
         <h2>${xml(name)}</h2>
-        <p class="card-description${description.length > 115 ? ' long' : ''}">${xml(description)}</p>
+        <p class="card-description">${xml(description)}</p>
         <span class="level-badge">${level}</span>
       </article>`;
     }).join('');
-    const totalPoints = loadout.card_levels.slice(0, 5).reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
     const background = championBanner ? `url('${championBanner}')` : championIcon ? `url('${championIcon}')` : 'none';
     return `<!doctype html><html><head><meta charset="utf-8"><style>${this.css}
       *{box-sizing:border-box}html,body{margin:0;width:1280px;height:720px;min-height:720px;overflow:hidden;padding:0;background:transparent;color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
       #loadout{position:relative;width:1280px;height:720px;overflow:hidden;border:1px solid rgba(111,130,153,.35);border-radius:20px;background:var(--bg)}
       #loadout::before{content:"";position:absolute;inset:0;background-image:${background};background-size:cover;background-position:center 24%;filter:saturate(1.15);opacity:.7;pointer-events:none}
       #loadout>*{z-index:1}
-      .loadout-header{position:relative;height:310px;padding:28px 38px;display:flex;align-items:flex-start;justify-content:space-between;background:rgba(5,9,15,.58);border-bottom:1px solid rgba(72,211,190,.22)}
+      .loadout-header{position:relative;height:238px;padding:28px 38px;display:flex;align-items:flex-start;background:rgba(5,9,15,.58);border-bottom:1px solid rgba(72,211,190,.22)}
       .loadout-header::before{content:"";position:absolute;inset:0;pointer-events:none;-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);-webkit-mask-image:linear-gradient(90deg,#000,transparent 20%,transparent 80%,#000);mask-image:linear-gradient(90deg,#000,transparent 20%,transparent 80%,#000)}
-      .loadout-header>*{position:relative;z-index:1}.loadout-identity{min-width:0}.brand-line{justify-content:flex-start}.brand-line img{border-radius:0}.loadout-status{color:#bff7ee;border-color:rgba(55,214,192,.34);background:rgba(15,118,110,.25)}
-      h1{margin:15px 0 0;max-width:700px;overflow:hidden;color:var(--text);font-size:50px;line-height:.96;font-weight:760;letter-spacing:-.02em;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 3px 5px rgba(0,0,0,.45)}
-      .loadout-context{margin-top:13px}.loadout-context .deck{color:#d3dbe5}
-      .points{margin-top:3px;text-align:right}.points strong{display:block;color:var(--teal);font-size:41px;line-height:1;font-weight:820;letter-spacing:-.05em;text-shadow:0 0 12px rgba(55,214,192,.38);font-variant-numeric:tabular-nums}.points .meta-label{display:block;margin-top:5px}
-      .cards{position:relative;z-index:2;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;padding:17px 44px 23px;align-items:start;background:color-mix(in srgb,var(--bg) 80%,transparent);border-bottom:1px solid var(--line)}
+      .loadout-header>*{position:relative;z-index:1}.loadout-identity{min-width:0}.brand-line{display:flex;align-items:center;gap:12px;justify-content:flex-start}.brand-name{display:inline-flex;align-items:center;gap:11px;font-size:25px;line-height:1;font-weight:820;letter-spacing:-.025em}.brand-name img{width:32px;height:32px;border-radius:0;object-fit:contain}.loadout-status{height:23px;padding:0 9px;color:#bff7ee;border-color:rgba(55,214,192,.34);background:rgba(15,118,110,.25);font-size:10px}
+      h1{margin:10px 0 0;padding-bottom:4px;max-width:760px;overflow:hidden;color:var(--text);font-size:54px;line-height:1.08;font-weight:760;letter-spacing:-.02em;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 3px 5px rgba(0,0,0,.45)}
+      .loadout-context{display:flex;align-items:center;gap:10px;margin-top:8px;color:#d3dce7;font-size:15px;line-height:1.1;font-weight:760;letter-spacing:.11em}.loadout-context .deck{color:#d3dce7}
+      .loadout-context span+span::before{margin-right:9px}
+      .cards{position:relative;z-index:2;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;padding:0 16px 18px;align-items:start;background:color-mix(in srgb,var(--bg) 80%,transparent);border-bottom:1px solid var(--line)}
       .cards::before{content:"";position:absolute;inset:0;pointer-events:none;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}.cards>*{position:relative;z-index:1}
       .loadout-card{position:relative;width:100%;aspect-ratio:316/480;filter:drop-shadow(0 3px 5px rgba(0,0,0,.45))}
       .card-art{position:absolute;z-index:1;left:6.5%;top:8.7%;width:87%;height:44%;object-fit:cover;background:#071014}
       .card-frame{position:absolute;z-index:2;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none}
-      .loadout-card h2{position:absolute;z-index:3;left:9%;top:51.2%;width:82%;height:6.8%;margin:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;line-height:1;text-align:center;text-shadow:0 2px 2px #111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .card-description{position:absolute;z-index:3;left:10%;top:59.5%;width:80%;height:29%;margin:0;display:flex;align-items:flex-start;justify-content:center;color:#303943;font-size:12px;line-height:1.23;text-align:center;overflow:hidden}.card-description.long{font-size:10.5px;line-height:1.2}
-      .level-badge{position:absolute;z-index:3;left:13.2%;top:92.7%;width:20%;aspect-ratio:1;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;padding:0 0 1px;color:#f7fbff;font-size:25px;line-height:1;font-weight:820;font-variant-numeric:tabular-nums;text-align:center;text-shadow:0 2px 3px #10151d}
-      #loadout>.brand{position:absolute;z-index:3;right:43px;bottom:10px;color:var(--muted);font-size:8.5px;font-weight:760;letter-spacing:.12em;text-transform:uppercase}
-    </style></head><body data-theme="${this.theme}"><main id="loadout"><header class="loadout-header"><div class="loadout-identity"><div class="brand-line"><span class="brand-name"><img src="${championIcon}" alt="">PaladinsCat</span><div class="status-tags"><span class="status-tag loadout-status">Loadout</span></div></div><h1>${xml(player.name)}</h1><div class="match-context loadout-context"><span>${xml(loadout.champion_name)}</span><span class="deck">${xml(loadout.loadout_name || 'Unnamed Loadout')}</span></div></div><div class="points"><strong>${number(totalPoints)}</strong><span class="meta-label">Card points</span></div></header><section class="cards">${cards}</section><div class="brand">paladinscat.com</div></main></body></html>`;
+      .loadout-card h2{position:absolute;z-index:3;left:9%;top:51.2%;width:82%;height:6.8%;margin:0;padding:0 5px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;line-height:1;text-align:center;text-shadow:0 2px 2px #111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .card-description{position:absolute;z-index:3;left:9.5%;top:59.5%;width:81%;height:29%;margin:0;padding:4px 9px 0;display:flex;align-items:flex-start;justify-content:center;color:#303943;font-size:14px;line-height:1.25;font-weight:700;text-align:center;overflow:hidden}
+      .level-badge{position:absolute;z-index:3;left:13.2%;top:92.7%;width:20%;aspect-ratio:1;transform:translate(-47%,-44%);display:flex;align-items:center;justify-content:center;padding:0;color:#f7fbff;font-size:27px;line-height:1;font-weight:820;font-variant-numeric:tabular-nums;text-align:center;text-shadow:0 2px 3px #10151d}
+    </style></head><body data-theme="${this.theme}"><main id="loadout"><header class="loadout-header"><div class="loadout-identity"><div class="brand-line"><span class="brand-name"><img src="${brandIcon}" alt="">PaladinsCat</span><div class="status-tags"><span class="status-tag loadout-status">Loadout</span></div></div><h1>${xml(player.name)}</h1><div class="match-context loadout-context"><span>${xml(loadout.champion_name)}</span><span class="deck">${xml(loadout.loadout_name || 'Unnamed Loadout')}</span></div></div></header><section class="cards">${cards}</section></main></body></html>`;
   }
 
   private columns() {
