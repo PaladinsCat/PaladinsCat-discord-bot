@@ -61,3 +61,15 @@ test('resolves loadout card metadata and champion banner from shared frontend as
   assert.match(card?.iconPath ?? '', /Card_Sprint\.png$/);
   assert.match(assets.championBanner('Androxus') ?? '', /Banner_Androxus\.png$/);
 });
+
+test('resolves the shared Common through Legendary loadout frames for levels one through five', () => {
+  const assets = new AssetCatalog(assetRoot);
+  const expected = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
+
+  expected.forEach((rarity, index) => {
+    const level = index + 1;
+    const frame = assets.loadoutFrame(level);
+    assert.equal(frame?.rarity, rarity);
+    assert.match(frame?.iconPath ?? '', new RegExp(`Card_Frame_Level_${level}_${rarity}\\.png$`));
+  });
+});

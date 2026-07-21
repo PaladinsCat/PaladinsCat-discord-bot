@@ -138,3 +138,9 @@ export interface LoadoutCardAsset {
   championId: number;
   iconPath: string | null;
 }
+
+export interface LoadoutFrameAsset {
+  level: number;
+  rarity: string;
+  iconPath: string;
+}

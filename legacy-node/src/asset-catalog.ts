@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { LoadoutCardAsset } from './types.js';
+import type { LoadoutCardAsset, LoadoutFrameAsset } from './types.js';
 
 function normalized(value: string) {
   return value.normalize('NFKD').toLocaleLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -19,6 +19,7 @@ export class AssetCatalog {
   private readonly icons = new Map<string, string | null>();
   private talentReferenceIcons: Map<number, string> | null = null;
   private cardReference: Map<number, LoadoutCardAsset> | null = null;
+  private loadoutFrameReference: Map<number, LoadoutFrameAsset> | null = null;
 
   constructor(private readonly root: string) {}
 
@@ -51,6 +52,40 @@ export class AssetCatalog {
   loadoutCard(cardId: number): LoadoutCardAsset | null {
     if (!this.cardReference) this.cardReference = this.loadCardReference();
     return this.cardReference.get(cardId) ?? null;
+  }
+
+  loadoutFrame(level: number): LoadoutFrameAsset | null {
+    if (!this.loadoutFrameReference) this.loadoutFrameReference = this.loadLoadoutFrameReference();
+    const safeLevel = Math.max(1, Math.min(5, Math.floor(Number(level) || 1)));
+    return this.loadoutFrameReference.get(safeLevel) ?? null;
+  }
+
+  private loadLoadoutFrameReference(): Map<number, LoadoutFrameAsset> {
+    const result = new Map<number, LoadoutFrameAsset>();
+    const referencePath = path.resolve(this.root, '../data/paladins-loadout-frame-reference.json');
+    if (!fs.existsSync(referencePath)) return result;
+    try {
+      const rows = JSON.parse(fs.readFileSync(referencePath, 'utf8')) as Array<Record<string, unknown>>;
+      for (const row of rows) {
+        const level = Number(row.level);
+        const pngUrl = typeof row.pngUrl === 'string' ? row.pngUrl : '';
+        const iconUrl = typeof row.iconUrl === 'string' ? row.iconUrl : '';
+        if (!Number.isInteger(level) || level < 1 || level > 5) continue;
+        const resolvePublicImage = (url: string) => url.startsWith('/images/')
+          ? path.resolve(this.root, url.slice('/images/'.length))
+          : null;
+        const pngPath = resolvePublicImage(pngUrl);
+        const iconPath = resolvePublicImage(iconUrl);
+        const localPath = pngPath && fs.existsSync(pngPath)
+          ? pngPath
+          : iconPath && fs.existsSync(iconPath) ? iconPath : null;
+        if (!localPath) continue;
+        result.set(level, { level, rarity: String(row.rarity ?? `Level ${level}`), iconPath: localPath });
+      }
+    } catch (error) {
+      console.warn(`[asset-catalog] Failed to load loadout frame reference ${referencePath}: ${error}`);
+    }
+    return result;
   }
 
   private loadCardReference(): Map<number, LoadoutCardAsset> {

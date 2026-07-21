@@ -8,7 +8,7 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 const SCALE = 1.6;
 const TEMPLATE_VERSION = 13;
-const LOADOUT_TEMPLATE_VERSION = 1;
+const LOADOUT_TEMPLATE_VERSION = 2;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
@@ -260,10 +260,13 @@ export class MatchRenderer {
       const name = card?.name ?? `Card ${cardId}`;
       const description = scaleCardDescription(card?.description || card?.shortDescription || 'Card details unavailable.', level);
       const artwork = assetUrl(card?.iconPath ?? null);
-      return `<article class="loadout-card level-${level}">
-        <div class="card-art" style="--art:url('${artwork}')"><span class="level-badge">${level}</span></div>
-        <div class="card-copy"><h2>${xml(name)}</h2><p>${xml(description)}</p></div>
-        <div class="level-track" aria-label="Level ${level}">${Array.from({ length: 5 }, (_, point) => `<i class="${point < level ? 'active' : ''}"></i>`).join('')}</div>
+      const frame = this.assets.loadoutFrame(level);
+      return `<article class="loadout-card level-${level}" aria-label="${xml(name)}, level ${level} ${xml(frame?.rarity ?? '')}">
+        <img class="card-art" src="${artwork}" alt=""/>
+        <img class="card-frame" src="${assetUrl(frame?.iconPath ?? null)}" alt=""/>
+        <h2>${xml(name)}</h2>
+        <p class="card-description${description.length > 115 ? ' long' : ''}">${xml(description)}</p>
+        <span class="level-badge">${level}</span>
       </article>`;
     }).join('');
     const totalPoints = loadout.card_levels.slice(0, 5).reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
@@ -273,17 +276,18 @@ export class MatchRenderer {
       #loadout{position:relative;width:1280px;height:720px;overflow:hidden;background:#071014}
       #loadout::before{content:"";position:absolute;inset:0;background-image:linear-gradient(90deg,rgba(2,9,12,.98) 0%,rgba(2,9,12,.78) 28%,rgba(2,9,12,.12) 66%,rgba(2,9,12,.62) 100%),linear-gradient(0deg,#071014 0%,rgba(7,16,20,.1) 62%,rgba(7,16,20,.45) 100%),${background};background-size:cover;background-position:center 24%;filter:saturate(1.12)}
       #loadout::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 76% 4%,rgba(45,212,163,.24),transparent 34%),linear-gradient(135deg,rgba(45,212,163,.1),transparent 45%);pointer-events:none}
-      .top{position:relative;z-index:1;height:222px;padding:34px 46px;display:flex;align-items:flex-start;justify-content:space-between}
+      .top{position:relative;z-index:1;height:310px;padding:34px 46px;display:flex;align-items:flex-start;justify-content:space-between}
       .eyebrow{display:flex;align-items:center;gap:10px;color:#79e4c3;text-transform:uppercase;letter-spacing:.22em;font-weight:800;font-size:14px}.eyebrow img{width:27px;height:27px;object-fit:contain;border-radius:50%}
       h1{margin:10px 0 0;font-size:50px;line-height:.96;max-width:640px;letter-spacing:-.045em;text-shadow:0 3px 18px rgba(0,0,0,.65)}
       .champion{display:block;margin-top:10px;color:#d2e3df;font-size:21px;font-weight:650;letter-spacing:.03em}.deck{color:#fff}
       .points{margin-top:4px;text-align:right}.points strong{display:block;font-size:42px;letter-spacing:-.05em}.points span{color:#a9bbb7;text-transform:uppercase;letter-spacing:.18em;font-size:12px;font-weight:800}
-      .cards{position:relative;z-index:2;display:grid;grid-template-columns:repeat(5,1fr);gap:14px;padding:0 38px}
-      .loadout-card{height:452px;border:1px solid rgba(146,184,175,.42);border-radius:15px;overflow:hidden;background:linear-gradient(180deg,rgba(17,31,35,.96),rgba(8,17,20,.99));box-shadow:0 18px 36px rgba(0,0,0,.4),inset 0 0 0 1px rgba(255,255,255,.035);display:flex;flex-direction:column}
-      .card-art{position:relative;height:242px;flex:none;background-image:linear-gradient(0deg,#111f23 0%,transparent 38%),var(--art);background-position:center;background-size:cover}
-      .level-badge{position:absolute;right:12px;bottom:9px;width:46px;height:46px;border-radius:50%;display:grid;place-items:center;background:#111c24;border:3px solid #71e1be;color:white;font-size:24px;font-weight:900;box-shadow:0 4px 14px rgba(0,0,0,.55)}
-      .card-copy{padding:13px 14px 8px;flex:1}.card-copy h2{margin:0 0 8px;font-size:19px;line-height:1.08;color:#fff}.card-copy p{margin:0;color:#c0cfcc;font-size:14px;line-height:1.34}
-      .level-track{height:28px;padding:6px 14px 11px;display:grid;grid-template-columns:repeat(5,1fr);gap:4px}.level-track i{height:5px;border-radius:4px;background:#31413f}.level-track i.active{background:#2dd4a3;box-shadow:0 0 8px rgba(45,212,163,.55)}
+      .cards{position:relative;z-index:2;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;padding:0 44px;align-items:start}
+      .loadout-card{position:relative;width:100%;aspect-ratio:316/480;filter:drop-shadow(0 15px 18px rgba(0,0,0,.48))}
+      .card-art{position:absolute;z-index:1;left:6.5%;top:8.7%;width:87%;height:44%;object-fit:cover;background:#071014}
+      .card-frame{position:absolute;z-index:2;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none}
+      .loadout-card h2{position:absolute;z-index:3;left:9%;top:51.2%;width:82%;height:6.8%;margin:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;line-height:1;text-align:center;text-shadow:0 2px 2px #111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .card-description{position:absolute;z-index:3;left:10%;top:59.5%;width:80%;height:29%;margin:0;display:flex;align-items:flex-start;justify-content:center;color:#303943;font-size:12px;line-height:1.23;text-align:center;overflow:hidden}.card-description.long{font-size:10.5px;line-height:1.2}
+      .level-badge{position:absolute;z-index:3;left:5.2%;bottom:2.2%;width:20%;aspect-ratio:1;display:grid;place-items:center;color:#f7fbff;font-size:25px;line-height:1;font-weight:900;text-shadow:0 2px 3px #10151d}
       .brand{position:absolute;z-index:3;right:43px;bottom:12px;color:#849792;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
     </style></head><body><main id="loadout"><header class="top"><div><div class="eyebrow"><img src="${championIcon}" alt="">PaladinsCat loadout</div><h1>${xml(player.name)}</h1><span class="champion">${xml(loadout.champion_name)} <span aria-hidden="true">·</span> <span class="deck">${xml(loadout.loadout_name || 'Unnamed Loadout')}</span></span></div><div class="points"><strong>${number(totalPoints)}</strong><span>card points</span></div></header><section class="cards">${cards}</section><div class="brand">paladinscat.com</div></main></body></html>`;
   }
