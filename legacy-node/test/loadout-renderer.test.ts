@@ -43,7 +43,7 @@ test('loadout canvas reuses scoreboard glass, dimming, typography and badge geom
   assert.match(html, /\.brand-name\{[^}]*font-weight:800/);
   assert.match(html, /h1\{[^}]*font-weight:720/);
   assert.match(html, /\.loadout-context\{[^}]*font-weight:740/);
-  assert.match(html, /\.loadout-card h2\{[^}]*font-weight:700/);
+  assert.match(html, /\.loadout-card h2\{[^}]*transform:translateY\(-1px\)[^}]*font-weight:500/);
   assert.match(html, /font-size:14px;line-height:1\.25;font-weight:700/);
   assert.match(html, /\.level-badge\{[^}]*font-weight:680/);
   assert.match(html, /left:13\.2%;top:92\.7%/);
