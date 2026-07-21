@@ -129,6 +129,20 @@ test('Discord player reads use the dedicated five-minute refresh path', async ()
   ]);
 });
 
+test('current match uses the enriched live-lobby projection', async () => {
+  const urls: string[] = [];
+  const api = new PaladinsCatApi('http://backend:3005', 1000, {
+    localOnly: true,
+    fetchImpl: recordingFetch(urls),
+  });
+
+  await api.liveMatch('123');
+
+  assert.deepEqual(urls, [
+    'http://backend:3005/live/players/123',
+  ]);
+});
+
 test('match rendering hydrates profile display fields from the joined snapshot without N+1 profile reads', async () => {
   const urls: string[] = [];
   const fetchImpl = (async (input: string | URL | Request) => {

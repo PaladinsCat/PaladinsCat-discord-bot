@@ -116,7 +116,7 @@ export class PaladinsCatApi {
 
   async liveMatch(input: string): Promise<Record<string, unknown>> {
     const resolved = await this.resolvePlayer(input);
-    return this.get(`/matches/live/${resolved.id}`);
+    return this.get(`/live/players/${resolved.id}`);
   }
 
   async match(id: string): Promise<MatchRecord> {

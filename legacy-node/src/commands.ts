@@ -209,7 +209,7 @@ export class CommandHandler {
   private async current(interaction: ChatInputCommandInteraction) {
     const input = interaction.options.getString('player', true);
     const result = await this.api.liveMatch(input);
-    return interaction.editReply(buildCurrentPayload(result));
+    return interaction.editReply(buildCurrentPayload(result, this.webUrl));
   }
 
   private async loadout(interaction: ChatInputCommandInteraction) {

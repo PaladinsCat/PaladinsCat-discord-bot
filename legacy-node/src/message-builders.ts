@@ -15,11 +15,6 @@ function simpleEmbed(title: string, description: string, url?: string): DiscordM
   return embedPayload(embed);
 }
 
-function jsonEmbed(title: string, json: unknown): DiscordMessagePayload {
-  const text = JSON.stringify(json, null, 2).slice(0, 3500);
-  return simpleEmbed(title, `\`\`\`json\n${text}\n\`\`\``);
-}
-
 export function buildHelpPayload(): DiscordMessagePayload {
   const embed: APIEmbed = {
     color: accent,
@@ -63,8 +58,90 @@ export function buildHistoryPayload(
   });
 }
 
-export function buildCurrentPayload(result: Record<string, unknown>): DiscordMessagePayload {
-  return jsonEmbed('Current match', result);
+const QUEUE_LABELS: Record<number, string> = {
+  1: 'Casual Queue', 2: 'KBM', 4: '1v1', 8: 'Team Queue', 16: 'Open', 32: 'Doomspire',
+  424: 'Casual Siege', 428: 'Ranked Siege (Controller)', 437: 'Casual Payload',
+  451: 'PvE Survival', 452: 'Casual Onslaught', 469: 'Casual Team Deathmatch',
+  474: 'Casual Battlegrounds Solo', 475: 'Casual Battlegrounds Duo',
+  476: 'Casual Battlegrounds Quad', 486: 'Ranked Siege',
+};
+const TIER_NAMES = [
+  'Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I',
+  'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I',
+  'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I',
+  'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I',
+  'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster',
+];
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function cleanDiscordText(value: unknown, fallback: string): string {
+  const text = String(value ?? '').trim() || fallback;
+  return text.replace(/([\\`*_{}\[\]()#+\-.!|>~])/g, '\\$1');
+}
+
+function currentPlayerLine(player: Record<string, unknown>, sourcePlayerId: string, webUrl: string): string {
+  const playerId = String(player.player_id ?? '');
+  const playerName = cleanDiscordText(player.player_name, 'Private Account');
+  const champion = cleanDiscordText(player.champion_name, 'Unknown champion');
+  const tierNumber = Number(player.kbm_tier ?? player.live_tier ?? player.tier ?? 0);
+  const tier = TIER_NAMES[Number.isInteger(tierNumber) ? tierNumber : 0] ?? 'Unranked';
+  const name = /^\d+$/.test(playerId) && Number(playerId) > 0
+    ? `[${playerName}](${webUrl}/players/${encodeURIComponent(playerId)})`
+    : playerName;
+  const marker = playerId === sourcePlayerId ? '▸ ' : '';
+  return `${marker}**${champion}** · ${name}${tier === 'Unranked' ? '' : ` · ${tier}`}`;
+}
+
+export function buildCurrentPayload(result: Record<string, unknown>, webUrl: string): DiscordMessagePayload {
+  const match = record(result.match);
+  const players = Array.isArray(result.players) ? result.players.map(record) : [];
+  const playerId = String(result.player_id ?? match.source_player_id ?? '');
+
+  if (result.pending === true) {
+    return embedPayload({
+      color: 0xf0b232,
+      title: 'Live lobby loading',
+      description: 'The player is in a match, but the lobby snapshot is still being assembled. Try `/current` again shortly.',
+      footer: { text: 'PaladinsCat refreshes pending live lobbies automatically.' },
+    });
+  }
+
+  if (!match.match_id) {
+    return embedPayload({
+      color: 0x77808d,
+      title: 'Not in a live match',
+      description: 'No active Paladins match was found for this player.',
+      footer: { text: 'Live status is cached briefly to protect the Paladins API.' },
+    });
+  }
+
+  const matchId = String(match.match_id);
+  const queueId = Number(match.queue_id ?? 0);
+  const queue = QUEUE_LABELS[queueId] ?? (queueId > 0 ? `Queue #${queueId}` : 'Unknown queue');
+  const map = cleanDiscordText(String(match.map ?? '').replace(/^(?:(?:live|ranked|wip)\s+)+/i, ''), 'Unknown map');
+  const region = cleanDiscordText(match.region, 'Unknown region');
+  const detectedAt = String(match.detected_at ?? '');
+  const team = (taskForce: number) => players
+    .filter((player) => Number(player.task_force) === taskForce)
+    .map((player) => currentPlayerLine(player, playerId, webUrl))
+    .join('\n') || 'Lobby details unavailable.';
+  const embed: APIEmbed = {
+    color: accent,
+    title: `${map} · Live match`,
+    description: `**${queue}** · ${region}\nMatch ID \`${matchId}\``,
+    fields: [
+      { name: 'Team 1', value: team(1), inline: true },
+      { name: 'Team 2', value: team(2), inline: true },
+    ],
+    footer: { text: '▸ marks the requested player · Live lobby snapshot' },
+  };
+  if (!Number.isNaN(Date.parse(detectedAt))) embed.timestamp = new Date(detectedAt).toISOString();
+  return embedPayload(embed);
 }
 
 export function buildLoadoutsPayload(

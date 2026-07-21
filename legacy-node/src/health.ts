@@ -57,7 +57,7 @@ function handlePreviewCommand(
       const fetch = api.liveMatch(params.player ?? '');
       return (async () => {
         const result = await fetch;
-        return buildCurrentPayload(result);
+        return buildCurrentPayload(result, webUrl);
       })();
     }
     case 'loadout': {
