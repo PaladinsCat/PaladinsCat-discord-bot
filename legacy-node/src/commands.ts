@@ -1,18 +1,41 @@
+import { randomUUID } from 'node:crypto';
 import {
+  ActionRowBuilder,
   AttachmentBuilder,
   AutocompleteInteraction,
   ChatInputCommandInteraction,
-  EmbedBuilder,
   SlashCommandStringOption,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuInteraction,
 } from 'discord.js';
 import { PaladinsCatApi, PaladinsCatApiError } from './api-client.js';
 import { buildPlayerProfileMessage } from './player-profile-message.js';
+import {
+  buildChampionPayload,
+  buildCurrentPayload,
+  buildHelpPayload,
+  buildHistoryPayload,
+  buildLeaderboardPayload,
+  buildLoadoutSelectionPayload,
+  buildNoLoadoutsPayload,
+  buildRandomPayload,
+  buildStatusPayload,
+} from './message-builders.js';
+import { findPlayerChampionLoadouts } from './loadout-service.js';
 import { RenderService } from './render-service.js';
 import { QueueFullError } from './render-queue.js';
-import type { Champion } from './types.js';
+import type { Champion, PlayerLoadout, PlayerSearchResult } from './types.js';
 
-const accent = 0x2dd4a3;
+const LOADOUT_SESSION_TTL_MS = 5 * 60 * 1000;
+const IMAGE_COOLDOWN_MS = 10 * 1000;
+
+type LoadoutSession = {
+  userId: string;
+  player: PlayerSearchResult;
+  loadouts: PlayerLoadout[];
+  expiresAt: number;
+};
 const championOption = (option: SlashCommandStringOption) => option
   .setName('champion')
   .setDescription('Champion name')
@@ -59,8 +82,9 @@ export const commandData = [
     .addStringOption((option) => option.setName('player').setDescription('Player name or ID').setRequired(true)),
   new SlashCommandBuilder().setName('current').setDescription('Check a player’s current live match')
     .addStringOption((option) => option.setName('player').setDescription('Player name or ID').setRequired(true)),
-  new SlashCommandBuilder().setName('loadouts').setDescription('List a player’s saved loadouts')
-    .addStringOption((option) => option.setName('player').setDescription('Player name or ID').setRequired(true)),
+  new SlashCommandBuilder().setName('loadout').setDescription('Render one of a player’s saved champion loadouts')
+    .addStringOption((option) => option.setName('player').setDescription('Player name or ID').setRequired(true))
+    .addStringOption(championOption),
   new SlashCommandBuilder().setName('champion').setDescription('Show champion ranked statistics')
     .addStringOption(championOption),
   new SlashCommandBuilder().setName('leaderboard').setDescription('Show the ranked leaderboard'),
@@ -74,6 +98,7 @@ export const commandData = [
 
 export class CommandHandler {
   private readonly imageCooldowns = new Map<string, number>();
+  private readonly loadoutSessions = new Map<string, LoadoutSession>();
   private championCache: { values: Champion[]; expiresAt: number } | null = null;
 
   constructor(private readonly api: PaladinsCatApi, private readonly renders: RenderService, private readonly webUrl: string) {}
@@ -100,14 +125,14 @@ export class CommandHandler {
 
   async handle(interaction: ChatInputCommandInteraction) {
     try {
-      if (interaction.commandName === 'help') return interaction.reply({ embeds: [this.helpEmbed()], ephemeral: true });
+      if (interaction.commandName === 'help') return interaction.reply({ ...buildHelpPayload(), ephemeral: true });
       await interaction.deferReply();
       switch (interaction.commandName) {
         case 'player': return this.player(interaction);
         case 'match': return this.match(interaction);
         case 'history': return this.history(interaction);
         case 'current': return this.current(interaction);
-        case 'loadouts': return this.loadouts(interaction);
+        case 'loadout': return this.loadout(interaction);
         case 'champion': return this.champion(interaction);
         case 'leaderboard': return this.leaderboard(interaction);
         case 'random': return this.random(interaction);
@@ -121,16 +146,52 @@ export class CommandHandler {
     }
   }
 
+  async handleComponent(interaction: StringSelectMenuInteraction): Promise<void> {
+    if (!interaction.customId.startsWith('loadout:')) return;
+    try {
+      this.pruneLoadoutSessions();
+      const token = interaction.customId.slice('loadout:'.length);
+      const session = this.loadoutSessions.get(token);
+      if (!session || session.expiresAt <= Date.now()) {
+        this.loadoutSessions.delete(token);
+        await interaction.reply({ content: 'This loadout menu expired. Run `/loadout` again.', ephemeral: true });
+        return;
+      }
+      if (session.userId !== interaction.user.id) {
+        await interaction.reply({ content: 'Only the player who opened this menu can choose its loadout.', ephemeral: true });
+        return;
+      }
+      const selectedId = interaction.values[0];
+      const loadout = session.loadouts.find((row) => String(row.id) === selectedId);
+      if (!loadout) {
+        await interaction.reply({ content: 'That saved loadout is no longer available. Run `/loadout` again.', ephemeral: true });
+        return;
+      }
+
+      this.claimImageCooldown(interaction.user.id);
+      this.loadoutSessions.delete(token);
+      await interaction.deferUpdate();
+      const buffer = await this.renders.loadout({ player: session.player, loadout });
+      const safeChampion = normalized(loadout.champion_name) || 'champion';
+      const attachment = new AttachmentBuilder(buffer, {
+        name: `paladinscat-loadout-${safeChampion}-${loadout.id}.png`,
+        description: `${session.player.name}'s ${loadout.champion_name} loadout ${loadout.loadout_name}`,
+      });
+      await interaction.editReply({ content: '', embeds: [], components: [], files: [attachment] });
+    } catch (error) {
+      const message = this.errorMessage(error);
+      if (interaction.deferred || interaction.replied) await interaction.editReply({ content: message, components: [] });
+      else await interaction.reply({ content: message, ephemeral: true });
+    }
+  }
+
   private async player(interaction: ChatInputCommandInteraction) {
     const response = await this.api.discordPlayer(interaction.options.getString('player', true));
     return interaction.editReply(buildPlayerProfileMessage(response, this.webUrl));
   }
 
   private async match(interaction: ChatInputCommandInteraction) {
-    const now = Date.now();
-    const previous = this.imageCooldowns.get(interaction.user.id) ?? 0;
-    if (previous > now) throw new Error(`Image cooldown: try again in ${Math.ceil((previous - now) / 1000)}s.`);
-    this.imageCooldowns.set(interaction.user.id, now + 10000);
+    this.claimImageCooldown(interaction.user.id);
     const id = interaction.options.getString('id', true);
     if (!/^\d{6,20}$/.test(id)) throw new Error('Enter a valid numeric match ID.');
     const buffer = await this.renders.matchById(id, () => this.api.match(id));
@@ -140,44 +201,66 @@ export class CommandHandler {
 
   private async history(interaction: ChatInputCommandInteraction) {
     const input = interaction.options.getString('player', true);
-    const response = await this.api.discordPlayer(input, true);
-    const player = response.player;
-    const rows = response.history ?? [];
-    const lines = rows.slice(0, 10).map((row: any) => `${row.win_status === 'Winner' ? '✅' : '❌'} **${row.champion_name ?? 'Unknown'}** · ${row.kills ?? 0}/${row.deaths ?? 0}/${row.assists ?? 0} · [${row.match_id}](${this.webUrl}/matches/${row.match_id})`);
-    return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle(`${player.name} · Recent matches`).setURL(`${this.webUrl}/players/${player.id}`).setDescription(lines.join('\n') || 'No recent matches found.')] });
+    const player = await this.api.resolvePlayer(input);
+    const rows = await this.api.playerHistoryById(player.id, 10);
+    return interaction.editReply(buildHistoryPayload(player.name, rows, this.webUrl));
   }
 
   private async current(interaction: ChatInputCommandInteraction) {
     const input = interaction.options.getString('player', true);
     const result = await this.api.liveMatch(input);
-    return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle('Current match').setDescription(`\`\`\`json\n${JSON.stringify(result, null, 2).slice(0, 3500)}\n\`\`\``)] });
+    return interaction.editReply(buildCurrentPayload(result));
   }
 
-  private async loadouts(interaction: ChatInputCommandInteraction) {
-    const input = interaction.options.getString('player', true);
-    const player = await this.api.resolvePlayer(input);
-    const payload = await this.api.playerLoadoutsById(player.id) as any;
-    const rows = Array.isArray(payload.loadouts) ? payload.loadouts : [];
-    const lines = rows.slice(0, 15).map((row: any) => `• **${row.champion_name ?? 'Champion'}** · ${row.loadout_name ?? 'Unnamed'}`);
-    return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle(`${player.name} · Loadouts`).setURL(`${this.webUrl}/players/${player.id}/loadouts`).setDescription(lines.join('\n') || 'No saved loadouts found.')] });
+  private async loadout(interaction: ChatInputCommandInteraction) {
+    const result = await findPlayerChampionLoadouts(
+      this.api,
+      interaction.options.getString('player', true),
+      interaction.options.getString('champion', true),
+    );
+    if (result.loadouts.length === 0) {
+      return interaction.editReply(buildNoLoadoutsPayload(result.player.name, result.championName, result.refreshError));
+    }
+
+    this.pruneLoadoutSessions();
+    const token = randomUUID();
+    this.loadoutSessions.set(token, {
+      userId: interaction.user.id,
+      player: result.player,
+      loadouts: result.loadouts.slice(0, 25),
+      expiresAt: Date.now() + LOADOUT_SESSION_TTL_MS,
+    });
+    const select = new StringSelectMenuBuilder()
+      .setCustomId(`loadout:${token}`)
+      .setPlaceholder(`Choose a ${result.championName} loadout`)
+      .addOptions(result.loadouts.slice(0, 25).map((loadout) => ({
+        label: (loadout.loadout_name || 'Unnamed Loadout').slice(0, 100),
+        description: `${loadout.card_levels.reduce((sum, level) => sum + Number(level || 0), 0)} card points`.slice(0, 100),
+        value: String(loadout.id),
+      })));
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+    return interaction.editReply({
+      ...buildLoadoutSelectionPayload(
+        result.player.name,
+        result.championName,
+        result.loadouts,
+        this.webUrl,
+        result.player.id,
+        result.refreshed,
+      ),
+      components: [row],
+    });
   }
 
   private async champion(interaction: ChatInputCommandInteraction) {
     const name = interaction.options.getString('champion', true);
     const result: any = await this.api.champion(name.toLocaleLowerCase());
-    const champion = result.champion ?? {};
-    const stats = result.stats ?? {};
-    return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle(champion.name ?? name).setURL(`${this.webUrl}/champions/${encodeURIComponent(String(champion.name ?? name).toLocaleLowerCase())}`).setDescription(champion.title ?? '').addFields(
-      { name: 'Class', value: champion.roles ?? 'Unknown', inline: true },
-      { name: 'Win rate', value: stats.win_rate == null ? '—' : `${Number(stats.win_rate).toFixed(1)}%`, inline: true },
-      { name: 'Ranked matches', value: Number(stats.total_matches ?? 0).toLocaleString(), inline: true },
-    )] });
+    return interaction.editReply(buildChampionPayload(result, this.webUrl));
   }
 
   private async leaderboard(interaction: ChatInputCommandInteraction) {
     const rows = await this.api.rankedLeaderboard(10);
-    const lines = rows.map((row: any, index) => `**${index + 1}.** [${row.name}](${this.webUrl}/players/${row.player_id}) · ${Number(row.points ?? 0).toLocaleString()} TP`);
-    return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle('Ranked leaderboard').setURL(`${this.webUrl}/players/leaderboard`).setDescription(lines.join('\n') || 'No ranked players found.')] });
+    return interaction.editReply(buildLeaderboardPayload(rows, this.webUrl));
   }
 
   private async random(interaction: ChatInputCommandInteraction) {
@@ -185,7 +268,7 @@ export class CommandHandler {
     const champions = (await this.championsForAutocomplete()).filter((champion) => !role || String(champion.roles ?? '').toLocaleLowerCase().replace(/\s/g, '').includes(role));
     const selected = champions[Math.floor(Math.random() * champions.length)];
     if (!selected) throw new Error('No champion matched that class.');
-    return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle(selected.name).setURL(`${this.webUrl}/champions/${encodeURIComponent(selected.name.toLocaleLowerCase())}`).setDescription(`${selected.roles ?? 'Champion'} · ${selected.title ?? ''}`)] });
+    return interaction.editReply(buildRandomPayload(selected, this.webUrl, role ?? undefined));
   }
 
   private async status(interaction: ChatInputCommandInteraction) {
@@ -193,21 +276,15 @@ export class CommandHandler {
     const api = await this.api.status();
     const latency = Math.round(performance.now() - start);
     const state = this.renders.snapshot();
-    return interaction.editReply({ embeds: [new EmbedBuilder().setColor(accent).setTitle('PaladinsCat status').addFields(
-      { name: 'API', value: `${(api as any).status ?? 'online'} · ${latency}ms`, inline: true },
-      { name: 'Match lookup', value: `${state.lookup.active} active · ${state.lookup.queued} queued · ${state.lookup.durationMs.p95}ms p95`, inline: true },
-      { name: 'Render queue', value: `${state.queue.active} active · ${state.queue.queued} queued · ${state.queue.durationMs.p95}ms p95`, inline: true },
-      { name: 'Render cache', value: `${state.cache.entries} images · ${(state.cache.bytes / 1048576).toFixed(1)} MiB · ${state.cache.hits} hits`, inline: true },
-    )] });
-  }
-
-  private helpEmbed() {
-    return new EmbedBuilder().setColor(accent).setTitle('PaladinsCat commands').setDescription([
-      '`/player` profile, rank, record and performance', '`/match` optimized match-result image',
-      '`/history` recent matches', '`/current` current live match', '`/loadouts` saved decks',
-      '`/champion` champion ranked statistics', '`/leaderboard` top ranked players',
-      '`/random` random champion by optional class', '`/status` API and renderer health',
-    ].join('\n'));
+    const renderState = {
+      active: state.queue.active,
+      queued: state.queue.queued,
+      durationMs: state.queue.durationMs,
+      entries: state.cache.entries,
+      bytes: state.cache.bytes,
+      hits: state.cache.hits,
+    };
+    return interaction.editReply(buildStatusPayload(api, latency, renderState));
   }
 
   private async championsForAutocomplete(): Promise<Champion[]> {
@@ -222,6 +299,20 @@ export class CommandHandler {
     } catch (error) {
       if (this.championCache) return this.championCache.values;
       throw error;
+    }
+  }
+
+  private claimImageCooldown(userId: string): void {
+    const now = Date.now();
+    const previous = this.imageCooldowns.get(userId) ?? 0;
+    if (previous > now) throw new Error(`Image cooldown: try again in ${Math.ceil((previous - now) / 1000)}s.`);
+    this.imageCooldowns.set(userId, now + IMAGE_COOLDOWN_MS);
+  }
+
+  private pruneLoadoutSessions(): void {
+    const now = Date.now();
+    for (const [token, session] of this.loadoutSessions) {
+      if (session.expiresAt <= now) this.loadoutSessions.delete(token);
     }
   }
 

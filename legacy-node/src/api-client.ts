@@ -1,7 +1,7 @@
-import type { Champion, MatchFactPlayer, MatchPlayer, MatchRecord, PlayerProfileResponse, PlayerSearchResult } from './types.js';
+import type { Champion, MatchFactPlayer, MatchPlayer, MatchRecord, PlayerLoadout, PlayerLoadoutsResponse, PlayerProfileResponse, PlayerSearchResult } from './types.js';
 
 export class PaladinsCatApiError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(message: string, public readonly status: number, public readonly code?: string, public readonly details?: unknown) {
     super(message);
   }
 }
@@ -27,13 +27,31 @@ export class PaladinsCatApi {
     return `${path}${separator}refresh=false`;
   }
 
-  private async get<T>(path: string, timeoutMs = this.timeoutMs): Promise<T> {
+  private async request<T>(path: string, init: RequestInit = {}, timeoutMs = this.timeoutMs): Promise<T> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      ...init,
       headers: { Accept: 'application/json', 'User-Agent': 'PaladinsCatDiscordBot/0.1' },
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!response.ok) throw new PaladinsCatApiError(`PaladinsCat API returned ${response.status}`, response.status);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { error?: { message?: string; code?: string; details?: unknown }; message?: string; code?: string; details?: unknown } | null;
+      const apiError = payload?.error ?? payload;
+      throw new PaladinsCatApiError(
+        apiError?.message || `PaladinsCat API returned ${response.status}`,
+        response.status,
+        apiError?.code,
+        apiError?.details,
+      );
+    }
     return response.json() as Promise<T>;
+  }
+
+  private get<T>(path: string, timeoutMs = this.timeoutMs): Promise<T> {
+    return this.request<T>(path, {}, timeoutMs);
+  }
+
+  private post<T>(path: string, timeoutMs = this.timeoutMs): Promise<T> {
+    return this.request<T>(path, { method: 'POST' }, timeoutMs);
   }
 
   async searchPlayers(name: string, limit = 5): Promise<PlayerSearchResult[]> {
@@ -76,13 +94,24 @@ export class PaladinsCatApi {
     return this.get(this.readPath(`/players/${encodeURIComponent(playerId)}/matches?limit=${limit}`));
   }
 
-  async playerLoadouts(input: string): Promise<Record<string, unknown>> {
+  async playerLoadouts(input: string): Promise<PlayerLoadoutsResponse> {
     const resolved = await this.resolvePlayer(input);
     return this.playerLoadoutsById(resolved.id);
   }
 
-  async playerLoadoutsById(playerId: string): Promise<Record<string, unknown>> {
+  async playerLoadoutsById(playerId: string): Promise<PlayerLoadoutsResponse> {
     return this.get(this.readPath(`/players/${encodeURIComponent(playerId)}/loadouts`));
+  }
+
+  async refreshPlayerLoadoutsById(playerId: string): Promise<PlayerLoadoutsResponse> {
+    return this.post(`/players/${encodeURIComponent(playerId)}/loadouts/refresh`);
+  }
+
+  async playerLoadoutById(playerId: string, loadoutId: string | number): Promise<PlayerLoadout> {
+    const payload = await this.get<{ loadout: PlayerLoadout }>(
+      this.readPath(`/players/${encodeURIComponent(playerId)}/loadouts/decks/${encodeURIComponent(loadoutId)}`),
+    );
+    return payload.loadout;
   }
 
   async liveMatch(input: string): Promise<Record<string, unknown>> {

@@ -2,17 +2,148 @@ import http from 'node:http';
 import { PaladinsCatApi } from './api-client.js';
 import { renderDiscordPreview } from './discord-preview.js';
 import { buildPlayerProfileMessage } from './player-profile-message.js';
+import {
+  buildChampionPayload,
+  buildCurrentPayload,
+  buildHelpPayload,
+  buildHistoryPayload,
+  buildLeaderboardPayload,
+  buildLoadoutSelectionPayload,
+  buildNoLoadoutsPayload,
+  buildRandomPayload,
+  buildStatusPayload,
+} from './message-builders.js';
+import { findPlayerChampionLoadouts } from './loadout-service.js';
 import { RenderService } from './render-service.js';
+
+const COMMANDS = [
+  { name: 'help', desc: 'List bot commands', params: [] },
+  { name: 'player', desc: 'Player profile', params: [{ name: 'player', label: 'Player name or ID', required: true }] },
+  { name: 'match', desc: 'Match result image', params: [{ name: 'id', label: 'Match ID', required: true }] },
+  { name: 'history', desc: 'Recent matches', params: [{ name: 'player', label: 'Player name or ID', required: true }] },
+  { name: 'current', desc: 'Current live match', params: [{ name: 'player', label: 'Player name or ID', required: true }] },
+  { name: 'loadout', desc: 'Choose and render a saved loadout', params: [{ name: 'player', label: 'Player name or ID', required: true }, { name: 'champion', label: 'Champion name', required: true }] },
+  { name: 'champion', desc: 'Champion stats', params: [{ name: 'champion', label: 'Champion name', required: true }] },
+  { name: 'leaderboard', desc: 'Ranked leaderboard', params: [] },
+  { name: 'random', desc: 'Random champion', params: [{ name: 'role', label: 'Class (optional)' }] },
+  { name: 'status', desc: 'API and render status', params: [] },
+];
+
+function handlePreviewCommand(
+  command: string,
+  params: Record<string, string>,
+  api: PaladinsCatApi,
+  renders: RenderService,
+  webUrl: string,
+) {
+  switch (command) {
+    case 'help': return buildHelpPayload();
+    case 'player': {
+      const response = api.discordPlayer(params.player ?? '');
+      return (async () => {
+        const profile = await response;
+        return buildPlayerProfileMessage(profile, webUrl);
+      })();
+    }
+    case 'history': {
+      const fetch = api.resolvePlayer(params.player ?? '');
+      return (async () => {
+        const player = await fetch;
+        const rows = await api.playerHistoryById(player.id, 10);
+        return buildHistoryPayload(player.name, rows, webUrl);
+      })();
+    }
+    case 'current': {
+      const fetch = api.liveMatch(params.player ?? '');
+      return (async () => {
+        const result = await fetch;
+        return buildCurrentPayload(result);
+      })();
+    }
+    case 'loadout': {
+      const find = findPlayerChampionLoadouts(api, params.player ?? '', params.champion ?? '');
+      return (async () => {
+        const result = await find;
+        if (result.loadouts.length === 0) {
+          return buildNoLoadoutsPayload(result.player.name, result.championName, result.refreshError);
+        }
+        return {
+          ...buildLoadoutSelectionPayload(result.player.name, result.championName, result.loadouts, webUrl, result.player.id, result.refreshed),
+          components: [{
+            type: 1 as const,
+            components: [{
+              type: 3 as const,
+              custom_id: `preview-loadout:${result.player.id}`,
+              placeholder: `Choose a ${result.championName} loadout`,
+              options: result.loadouts.slice(0, 25).map((loadout) => ({
+                label: (loadout.loadout_name || 'Unnamed Loadout').slice(0, 100),
+                description: `${loadout.card_levels.reduce((sum, level) => sum + Number(level || 0), 0)} card points`,
+                value: String(loadout.id),
+              })),
+            }],
+          }],
+        };
+      })();
+    }
+    case 'champion': {
+      const fetch = api.champion((params.champion ?? '').toLocaleLowerCase());
+      return (async () => {
+        const result = await fetch;
+        return buildChampionPayload(result, webUrl);
+      })();
+    }
+    case 'leaderboard': {
+      const fetch = api.rankedLeaderboard(10);
+      return (async () => {
+        const rows = await fetch;
+        return buildLeaderboardPayload(rows, webUrl);
+      })();
+    }
+    case 'random': {
+      const fetch = api.champions();
+      return (async () => {
+        const champions = await fetch;
+        const role = params.role;
+        const filtered = champions.filter((c) => !role || String(c.roles ?? '').toLocaleLowerCase().replace(/\s/g, '').includes(role));
+        const selected = filtered[Math.floor(Math.random() * filtered.length)];
+        if (!selected) throw new Error('No champion matched that class.');
+        return buildRandomPayload(selected, webUrl, role);
+      })();
+    }
+    case 'status': {
+      const status = api.status();
+      return (async () => {
+        const start = performance.now();
+        const api = await status;
+        const latency = Math.round(performance.now() - start);
+        const state = renders.snapshot();
+        const renderState = {
+          active: state.queue.active,
+          queued: state.queue.queued,
+          durationMs: state.queue.durationMs,
+          entries: state.cache.entries,
+          bytes: state.cache.bytes,
+          hits: state.cache.hits,
+        };
+        return buildStatusPayload(api, latency, renderState);
+      })();
+    }
+    default: throw new Error(`Unknown command: ${command}`);
+  }
+}
 
 export function startHealthServer(port: number, renders: RenderService, api: PaladinsCatApi, webUrl: string, state: () => Record<string, unknown>) {
   const server = http.createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://renderer.local');
-    if (request.method === 'GET' && url.pathname === '/health') {
+    const url = new URL(request.url ?? '/', 'http://preview.local');
+    const pathname = url.pathname;
+
+    if (request.method === 'GET' && pathname === '/health') {
       response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       response.end(JSON.stringify({ status: 'healthy', ...state(), render: renders.snapshot(), timestamp: new Date().toISOString() }));
       return;
     }
-    const previewMatch = url.pathname.match(/^\/preview\/player\/(\d{1,20})(?:\.json)?$/);
+
+    const previewMatch = pathname.match(/^\/preview\/player\/(\d{1,20})(?:\.json)?$/);
     if (request.method === 'GET' && previewMatch?.[1]) {
       try {
         const profile = await api.playerById(previewMatch[1]);
@@ -26,7 +157,8 @@ export function startHealthServer(port: number, renders: RenderService, api: Pal
       }
       return;
     }
-    const imageMatch = url.pathname.match(/^\/matches\/(\d{6,20})\/image$/);
+
+    const imageMatch = pathname.match(/^\/matches\/(\d{6,20})\/image$/);
     if (request.method === 'GET' && imageMatch?.[1]) {
       try {
         const image = await renders.matchById(imageMatch[1], () => api.match(imageMatch[1]!));
@@ -38,8 +170,213 @@ export function startHealthServer(port: number, renders: RenderService, api: Pal
       }
       return;
     }
+
+    const loadoutImageMatch = pathname.match(/^\/preview\/loadout\/(\d{1,20})\/(\d{1,20})\/image$/);
+    if (request.method === 'GET' && loadoutImageMatch?.[1] && loadoutImageMatch[2]) {
+      try {
+        const [profile, loadout] = await Promise.all([
+          api.playerById(loadoutImageMatch[1]),
+          api.playerLoadoutById(loadoutImageMatch[1], Number(loadoutImageMatch[2])),
+        ]);
+        const image = await renders.loadout({ player: profile.player, loadout });
+        response.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'private, max-age=60' });
+        response.end(image);
+      } catch (error) {
+        response.writeHead(502, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        response.end(JSON.stringify({ error: error instanceof Error ? error.message : 'Could not render this loadout.' }));
+      }
+      return;
+    }
+
+    if (pathname === '/preview' || pathname === '/') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      response.end(renderPlaygroundHTML());
+      return;
+    }
+
+    if (pathname === '/preview/commands') {
+      response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      response.end(JSON.stringify({ commands: COMMANDS }));
+      return;
+    }
+
+    const cmdMatch = pathname.match(/^\/preview\/cmd\/(.*?)(?:\.json)?$/);
+    if (request.method === 'GET' && cmdMatch && cmdMatch[1]) {
+      const cmd = cmdMatch[1];
+      const wantsJson = pathname.endsWith('.json') || url.searchParams.get('format') === 'json';
+      const params: Record<string, string> = {};
+      for (const [key, value] of url.searchParams.entries()) {
+        if (key !== 'format') params[key] = value;
+      }
+      try {
+        const result = handlePreviewCommand(cmd, params, api, renders, webUrl);
+        const payload = await (result as Promise<any>);
+        response.writeHead(200, { 'content-type': wantsJson ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        response.end(wantsJson ? JSON.stringify(payload) : renderDiscordPreview(payload));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        response.writeHead(502, { 'content-type': wantsJson ? 'application/json' : 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        response.end(wantsJson
+          ? JSON.stringify({ error: message })
+          : renderDiscordPreview({ content: `Error: ${message}`, allowedMentions: { parse: [] } }));
+      }
+      return;
+    }
+
     response.writeHead(404).end();
   });
   server.listen(port, '0.0.0.0');
   return server;
+}
+
+function renderPlaygroundHTML() {
+  const commandsJson = JSON.stringify(COMMANDS);
+  return [
+    '<!doctype html>',
+    '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+    '<title>PaladinsCat Preview</title><style>',
+    ':root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background:#1e1f22; color:#dbdee1; }',
+    'html, body { margin:0; padding:0; min-height:100%; background:#313338; }',
+    'main { display:flex; flex-direction:column; max-width:960px; margin:auto; min-height:100vh; padding:24px; gap:16px; }',
+    'h1 { font-size:24px; margin:0; }',
+    '.controls { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }',
+    '.controls label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:#949ba4; }',
+    'select, input { background:#1e1f22; color:#dbdee1; border:1px solid #3f4147; border-radius:6px; padding:8px 12px; font-size:14px; outline:none; }',
+    'select:focus, input:focus { border-color:#5865f2; }',
+    'button { background:#5865f2; color:#fff; border:none; border-radius:6px; padding:8px 20px; font-size:14px; cursor:pointer; font-weight:600; }',
+    'button:hover { background:#4752c4; }',
+    'button:disabled { opacity:0.5; cursor:not-allowed; }',
+    '.result { display:flex; flex-direction:column; background:#1e1f22; border-radius:8px; overflow:hidden; }',
+    '.result-header { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; background:#2b2d31; border-bottom:1px solid #3f4147; }',
+    '.result-header h2 { font-size:14px; margin:0; }',
+    '.result-header button { background:#2b2d31; border:1px solid #3f4147; font-size:12px; padding:4px 10px; }',
+    '.result-frame { border:none; width:100%; height:calc(100vh - 180px); background:#1e1f22; }',
+    '.loading { padding:32px; text-align:center; color:#949ba4; }',
+    '.error { padding:16px; color:#ffb4ab; background:#1e1f22; border-radius:8px; }',
+    '.raw-json { flex:1; overflow:auto; display:none; }',
+    '.raw-json pre { background:#1e1f22; padding:12px; border-radius:6px; font-size:12px; overflow:auto; }',
+    '</style></head><body><main>',
+    '<h1>PaladinsCat Discord Preview</h1>',
+    '<div class="controls" id="controls"></div>',
+    '<div class="result" id="result" style="display:none">',
+    '  <div class="result-header">',
+    '    <h2 id="resultTitle">Preview</h2>',
+    '    <div style="display:flex;gap:8px">',
+    '      <button onclick="toggleRaw()">Toggle raw JSON</button>',
+    '      <button onclick="openPreview()" style="background:#5865f2;border-color:#5865f2">Open preview</button>',
+    '    </div>',
+    '  </div>',
+    '  <iframe class="result-frame" id="previewFrame"></iframe>',
+    '  <div class="raw-json" id="rawJson"><pre id="rawJsonContent"></pre></div>',
+    '</div>',
+    '<div id="error" class="error" style="display:none"></div>',
+    '<script>',
+    'var commands = ' + commandsJson + ';',
+    'var currentCommand = "";',
+    'var currentUrl = "";',
+    'var controls = document.getElementById("controls");',
+    'var result = document.getElementById("result");',
+    'var errorEl = document.getElementById("error");',
+    'var frame = document.getElementById("previewFrame");',
+    'var rawJsonDiv = document.getElementById("rawJson");',
+    'var rawJsonContent = document.getElementById("rawJsonContent");',
+    'var resultTitle = document.getElementById("resultTitle");',
+    '',
+    'function renderControls() {',
+    '  var selectLabel = document.createElement("label");',
+    '  selectLabel.innerHTML = "Command";',
+    '  var select = document.createElement("select");',
+    '  select.id = "cmdSelect";',
+    '  commands.forEach(function(c) {',
+    '    var opt = document.createElement("option");',
+    '    opt.value = c.name;',
+    '    opt.textContent = "/" + c.name + " - " + c.desc;',
+    '    select.appendChild(opt);',
+    '  });',
+    '  selectLabel.appendChild(select);',
+    '  controls.appendChild(selectLabel);',
+    '  var paramsContainer = document.createElement("div");',
+    '  paramsContainer.id = "paramsContainer";',
+    '  paramsContainer.style.display = "flex";',
+    '  paramsContainer.style.gap = "12px";',
+    '  paramsContainer.style.flexWrap = "wrap";',
+    '  paramsContainer.style.alignItems = "flex-end";',
+    '  controls.appendChild(paramsContainer);',
+    '  var runLabel = document.createElement("label");',
+    '  runLabel.style.height = "fit-content";',
+    '  var runBtn = document.createElement("button");',
+    '  runBtn.id = "runBtn";',
+    '  runBtn.textContent = "Preview";',
+    '  runBtn.type = "button";',
+    '  runLabel.appendChild(runBtn);',
+    '  controls.appendChild(runLabel);',
+    '  select.onchange = updateParams;',
+    '  runBtn.onclick = runPreview;',
+    '  updateParams();',
+    '}',
+    '',
+    'function updateParams() {',
+    '  var cmd = commands.find(function(c) { return c.name === document.getElementById("cmdSelect").value; });',
+    '  var container = document.getElementById("paramsContainer");',
+    '  container.innerHTML = "";',
+    '  cmd && cmd.params.forEach(function(p) {',
+    '    var label = document.createElement("label");',
+    '    label.innerHTML = p.label;',
+    '    var input = document.createElement("input");',
+    '    input.id = p.name;',
+    '    input.placeholder = p.label;',
+    '    input.required = p.required;',
+    '    input.style.minWidth = "180px";',
+    '    label.appendChild(input);',
+    '    container.appendChild(label);',
+    '  });',
+    '}',
+    '',
+    'async function runPreview() {',
+    '  var cmd = document.getElementById("cmdSelect").value;',
+    '  currentCommand = cmd;',
+    '  errorEl.style.display = "none";',
+    '  result.style.display = "none";',
+    '  var cmdData = commands.find(function(c) { return c.name === cmd; });',
+    '  var params = new URLSearchParams();',
+    '  cmdData && cmdData.params.forEach(function(p) {',
+    '    var value = document.getElementById(p.name)?.value || "";',
+    '    if (value) params.set(p.name, value);',
+    '  });',
+    '  var url = "/preview/cmd/" + cmd + "?" + params.toString();',
+    '  currentUrl = url;',
+    '  frame.src = url;',
+    '  resultTitle.textContent = "/" + cmd;',
+    '  result.style.display = "block";',
+    '  frame.style.display = "block";',
+    '  rawJsonDiv.style.display = "none";',
+    '  rawJsonContent.textContent = "";',
+    '  frame.onload = async function() {',
+    '    try {',
+    '      var resp = await fetch(url + ".json");',
+    '      if (!resp.ok) throw new Error("HTTP " + resp.status);',
+    '      var data = await resp.json();',
+    '      rawJsonContent.textContent = JSON.stringify(data, null, 2);',
+    '    } catch(e) {',
+    '      rawJsonContent.textContent = "Failed to fetch raw JSON: " + e.message;',
+    '    }',
+    '  };',
+    '  frame.onerror = function() {',
+    '    errorEl.style.display = "block";',
+    '    errorEl.textContent = "Failed to load preview.";',
+    '  };',
+    '}',
+    '',
+    'function toggleRaw() {',
+    '  rawJsonDiv.style.display = rawJsonDiv.style.display === "none" ? "block" : "none";',
+    '  frame.style.display = rawJsonDiv.style.display === "block" ? "none" : "block";',
+    '}',
+    '',
+    'function openPreview() {',
+    '  window.open(currentUrl, "_blank");',
+    '}',
+    '',
+    'renderControls();',
+    '</script></main></body></html>',
+  ].join('\n');
 }

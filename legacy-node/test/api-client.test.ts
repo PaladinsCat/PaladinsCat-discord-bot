@@ -181,3 +181,33 @@ test('match verification is read from the authoritative profile snapshot', async
 
   assert.equal(record.players[0]?.verified, true);
 });
+
+test('loadout refresh uses the explicit backend POST without a refresh query parameter', async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ url: String(input), method: String(init?.method ?? 'GET') });
+    return new Response(JSON.stringify({ loadouts: [], freshness: {}, refreshed: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+  const api = new PaladinsCatApi('http://backend:3005', 1000, { localOnly: true, fetchImpl });
+
+  await api.refreshPlayerLoadoutsById('123');
+
+  assert.deepEqual(requests, [{ url: 'http://backend:3005/players/123/loadouts/refresh', method: 'POST' }]);
+});
+
+test('API errors preserve the structured backend cooldown message', async () => {
+  const fetchImpl = (async () => new Response(JSON.stringify({
+    error: { code: 'LOADOUT_REFRESH_COOLDOWN', message: 'Refresh available in 42 seconds.', details: { remaining_seconds: 42 } },
+  }), { status: 429, headers: { 'Content-Type': 'application/json' } })) as typeof fetch;
+  const api = new PaladinsCatApi('http://backend:3005', 1000, { fetchImpl });
+
+  await assert.rejects(
+    () => api.refreshPlayerLoadoutsById('123'),
+    (error: unknown) => error instanceof Error
+      && error.message === 'Refresh available in 42 seconds.'
+      && (error as { code?: string }).code === 'LOADOUT_REFRESH_COOLDOWN',
+  );
+});

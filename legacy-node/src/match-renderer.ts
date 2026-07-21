@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import puppeteer, { type Browser, type Page } from 'puppeteer-core';
-import type { MatchPlayer, MatchRecord } from './types.js';
+import type { LoadoutRenderRecord, MatchPlayer, MatchRecord } from './types.js';
 import { AssetCatalog } from './asset-catalog.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
 const SCALE = 1.6;
 const TEMPLATE_VERSION = 13;
+const LOADOUT_TEMPLATE_VERSION = 1;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
@@ -38,6 +39,18 @@ function number(value: number | undefined) { return Math.round(Number(value ?? 0
 function score(value: number | null | undefined) { return value ?? '?'; }
 function compact(value: number) { return Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(1)}k` : number(value); }
 function duration(seconds: number) { return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`; }
+
+export function scaleCardDescription(description: string, level: number): string {
+  const safeLevel = Math.max(1, Math.min(5, Math.floor(Number(level) || 1)));
+  return description
+    .replace(/^\s*\[[^\]]+]\s*/, '')
+    .replace(/\{(?:scale=)?(-?\d+(?:\.\d+)?)\|(-?\d+(?:\.\d+)?)}/gi, (_match, baseText: string, stepText: string) => {
+      const value = Number(baseText) + Number(stepText) * (safeLevel - 1);
+      return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 function utcTimestamp(value: string) {
   const trimmed = String(value ?? '').trim();
   const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(trimmed)
@@ -87,6 +100,18 @@ function defaultTemplatePath() {
 function defaultChromiumPath() {
   if (process.env.PALADINSCAT_CHROMIUM_PATH) return process.env.PALADINSCAT_CHROMIUM_PATH;
   if (process.platform === 'win32') {
+    const playwrightRoot = process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, 'ms-playwright')
+      : null;
+    if (playwrightRoot && fs.existsSync(playwrightRoot)) {
+      const shells = fs.readdirSync(playwrightRoot)
+        .filter((entry) => entry.startsWith('chromium_headless_shell-'))
+        .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+      for (const shell of shells) {
+        const executable = path.join(playwrightRoot, shell, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe');
+        if (fs.existsSync(executable)) return executable;
+      }
+    }
     const edge = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
     const chrome = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
     return fs.existsSync(edge) ? edge : chrome;
@@ -102,6 +127,7 @@ type Metrics = { credits: number; objective: number; damage: number; taken: numb
  */
 export class MatchRenderer {
   readonly templateVersion = TEMPLATE_VERSION;
+  readonly loadoutTemplateVersion = LOADOUT_TEMPLATE_VERSION;
   readonly theme: MatchImageTheme;
   private readonly css: string;
   private readonly cheaterPatternUrl: string;
@@ -148,12 +174,20 @@ export class MatchRenderer {
   }
 
   async render(record: MatchRecord): Promise<Buffer> {
+    return this.renderElement(this.document(record), '#scoreboard', 'Scoreboard markup did not render.');
+  }
+
+  async renderLoadout(record: LoadoutRenderRecord): Promise<Buffer> {
+    return this.renderElement(this.loadoutDocument(record), '#loadout', 'Loadout markup did not render.');
+  }
+
+  private async renderElement(documentHtml: string, selector: string, missingMessage: string): Promise<Buffer> {
     const page = await this.acquirePage();
     let reusable = false;
     try {
       // The source prototype has an external font import. Waiting for the load
       // event lets a network-restricted render container hang on that request.
-      await page.setContent(this.document(record), { waitUntil: 'domcontentloaded' });
+      await page.setContent(documentHtml, { waitUntil: 'domcontentloaded' });
       await page.evaluate(async () => {
         await document.fonts.ready;
         await Promise.all([...document.images].map(async (image) => {
@@ -162,8 +196,8 @@ export class MatchRenderer {
         }));
         await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       });
-      const board = await page.$('#scoreboard');
-      if (!board) throw new Error('Scoreboard markup did not render.');
+      const board = await page.$(selector);
+      if (!board) throw new Error(missingMessage);
       const image = Buffer.from(await board.screenshot({ type: 'png', optimizeForSpeed: true }));
       reusable = true;
       return image;
@@ -214,6 +248,44 @@ export class MatchRenderer {
     const map = assetUrl(this.assets.mapImage(record.match.map));
     const background = map ? `#scoreboard::before{background-image:url('${map}')!important}` : '';
     return `<!doctype html><html><head><meta charset="utf-8"/><style>${this.css}\n${background}\nbody{--cheater-pattern:url("${this.cheaterPatternUrl}");min-height:720px;padding:0;background:transparent}.scoreboard{transform:none}.scoreboard-canvas{width:1280px;height:720px}.viewport{width:1280px;max-width:none}.prototype-note,.color-lab{display:none}</style></head><body data-theme="${this.theme}"><main class="viewport"><div class="scoreboard-canvas"><section class="scoreboard" id="scoreboard" aria-label="Paladins match scoreboard">${this.hero(record)}${this.columns()}<div class="players" id="team-one">${this.teamRows(record, 1)}</div>${this.summary(record, 1)}<div class="players" id="team-two">${this.teamRows(record, 2)}</div>${this.summary(record, 2)}</section></div></main></body></html>`;
+  }
+
+  private loadoutDocument(record: LoadoutRenderRecord) {
+    const { player, loadout } = record;
+    const championBanner = assetUrl(this.assets.championBanner(loadout.champion_name));
+    const championIcon = assetUrl(this.assets.championIcon(loadout.champion_name));
+    const cards = loadout.card_ids.slice(0, 5).map((cardId, index) => {
+      const level = Math.max(1, Math.min(5, Math.floor(Number(loadout.card_levels[index]) || 1)));
+      const card = this.assets.loadoutCard(Number(cardId));
+      const name = card?.name ?? `Card ${cardId}`;
+      const description = scaleCardDescription(card?.description || card?.shortDescription || 'Card details unavailable.', level);
+      const artwork = assetUrl(card?.iconPath ?? null);
+      return `<article class="loadout-card level-${level}">
+        <div class="card-art" style="--art:url('${artwork}')"><span class="level-badge">${level}</span></div>
+        <div class="card-copy"><h2>${xml(name)}</h2><p>${xml(description)}</p></div>
+        <div class="level-track" aria-label="Level ${level}">${Array.from({ length: 5 }, (_, point) => `<i class="${point < level ? 'active' : ''}"></i>`).join('')}</div>
+      </article>`;
+    }).join('');
+    const totalPoints = loadout.card_levels.slice(0, 5).reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
+    const background = championBanner ? `url('${championBanner}')` : championIcon ? `url('${championIcon}')` : 'none';
+    return `<!doctype html><html><head><meta charset="utf-8"><style>
+      *{box-sizing:border-box}html,body{margin:0;width:1280px;height:720px;overflow:hidden;background:#071014;color:#f4fbfa;font-family:Inter,"Segoe UI",Arial,sans-serif}
+      #loadout{position:relative;width:1280px;height:720px;overflow:hidden;background:#071014}
+      #loadout::before{content:"";position:absolute;inset:0;background-image:linear-gradient(90deg,rgba(2,9,12,.98) 0%,rgba(2,9,12,.78) 28%,rgba(2,9,12,.12) 66%,rgba(2,9,12,.62) 100%),linear-gradient(0deg,#071014 0%,rgba(7,16,20,.1) 62%,rgba(7,16,20,.45) 100%),${background};background-size:cover;background-position:center 24%;filter:saturate(1.12)}
+      #loadout::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 76% 4%,rgba(45,212,163,.24),transparent 34%),linear-gradient(135deg,rgba(45,212,163,.1),transparent 45%);pointer-events:none}
+      .top{position:relative;z-index:1;height:222px;padding:34px 46px;display:flex;align-items:flex-start;justify-content:space-between}
+      .eyebrow{display:flex;align-items:center;gap:10px;color:#79e4c3;text-transform:uppercase;letter-spacing:.22em;font-weight:800;font-size:14px}.eyebrow img{width:27px;height:27px;object-fit:contain;border-radius:50%}
+      h1{margin:10px 0 0;font-size:50px;line-height:.96;max-width:640px;letter-spacing:-.045em;text-shadow:0 3px 18px rgba(0,0,0,.65)}
+      .champion{display:block;margin-top:10px;color:#d2e3df;font-size:21px;font-weight:650;letter-spacing:.03em}.deck{color:#fff}
+      .points{margin-top:4px;text-align:right}.points strong{display:block;font-size:42px;letter-spacing:-.05em}.points span{color:#a9bbb7;text-transform:uppercase;letter-spacing:.18em;font-size:12px;font-weight:800}
+      .cards{position:relative;z-index:2;display:grid;grid-template-columns:repeat(5,1fr);gap:14px;padding:0 38px}
+      .loadout-card{height:452px;border:1px solid rgba(146,184,175,.42);border-radius:15px;overflow:hidden;background:linear-gradient(180deg,rgba(17,31,35,.96),rgba(8,17,20,.99));box-shadow:0 18px 36px rgba(0,0,0,.4),inset 0 0 0 1px rgba(255,255,255,.035);display:flex;flex-direction:column}
+      .card-art{position:relative;height:242px;flex:none;background-image:linear-gradient(0deg,#111f23 0%,transparent 38%),var(--art);background-position:center;background-size:cover}
+      .level-badge{position:absolute;right:12px;bottom:9px;width:46px;height:46px;border-radius:50%;display:grid;place-items:center;background:#111c24;border:3px solid #71e1be;color:white;font-size:24px;font-weight:900;box-shadow:0 4px 14px rgba(0,0,0,.55)}
+      .card-copy{padding:13px 14px 8px;flex:1}.card-copy h2{margin:0 0 8px;font-size:19px;line-height:1.08;color:#fff}.card-copy p{margin:0;color:#c0cfcc;font-size:14px;line-height:1.34}
+      .level-track{height:28px;padding:6px 14px 11px;display:grid;grid-template-columns:repeat(5,1fr);gap:4px}.level-track i{height:5px;border-radius:4px;background:#31413f}.level-track i.active{background:#2dd4a3;box-shadow:0 0 8px rgba(45,212,163,.55)}
+      .brand{position:absolute;z-index:3;right:43px;bottom:12px;color:#849792;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+    </style></head><body><main id="loadout"><header class="top"><div><div class="eyebrow"><img src="${championIcon}" alt="">PaladinsCat loadout</div><h1>${xml(player.name)}</h1><span class="champion">${xml(loadout.champion_name)} <span aria-hidden="true">·</span> <span class="deck">${xml(loadout.loadout_name || 'Unnamed Loadout')}</span></span></div><div class="points"><strong>${number(totalPoints)}</strong><span>card points</span></div></header><section class="cards">${cards}</section><div class="brand">paladinscat.com</div></main></body></html>`;
   }
 
   private columns() {

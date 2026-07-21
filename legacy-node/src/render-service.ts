@@ -1,4 +1,4 @@
-import type { MatchRecord } from './types.js';
+import type { LoadoutRenderRecord, MatchRecord } from './types.js';
 import { MatchRenderer } from './match-renderer.js';
 import { BoundedWorkQueue } from './render-queue.js';
 import { RenderCache } from './render-cache.js';
@@ -35,6 +35,18 @@ export class RenderService {
 
   match(record: MatchRecord) {
     return this.renderRecord(record);
+  }
+
+  loadout(record: LoadoutRenderRecord) {
+    const updatedAt = record.loadout.updated_at || record.loadout.fetched_at || 'unknown';
+    const key = `loadout:${record.player.id}:${record.loadout.id}:${updatedAt}:v${this.renderer.loadoutTemplateVersion}`;
+    const cached = this.cache.get(key);
+    if (cached) return Promise.resolve(cached);
+    return this.queue.add(key, async () => {
+      const rendered = await this.renderer.renderLoadout(record);
+      this.cache.set(key, rendered);
+      return rendered;
+    });
   }
 
   matchById(matchId: string, load: () => Promise<MatchRecord>) {

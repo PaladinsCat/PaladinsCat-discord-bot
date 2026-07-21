@@ -16,6 +16,15 @@ export const DISCORD_MESSAGE_LIMITS = {
 export type DiscordMessagePayload = {
   content?: string;
   embeds?: APIEmbed[];
+  components?: Array<{
+    type: 1;
+    components: Array<{
+      type: 3;
+      custom_id: string;
+      placeholder?: string;
+      options: Array<{ label: string; value: string; description?: string }>;
+    }>;
+  }>;
   // Preview and bot replies are intentionally mention-safe. Any rich text
   // from a player profile must never notify Discord users or roles.
   allowedMentions: { parse: [] };

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { LoadoutCardAsset } from './types.js';
 
 function normalized(value: string) {
   return value.normalize('NFKD').toLocaleLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -11,11 +12,13 @@ export class AssetCatalog {
   private rankFiles: string[] | null = null;
   private iconFiles: string[] | null = null;
   private readonly championIcons = new Map<string, string | null>();
+  private readonly championBanners = new Map<string, string | null>();
   private readonly talentIcons = new Map<string, string | null>();
   private readonly mapImages = new Map<string, string | null>();
   private readonly rankIcons = new Map<number, string | null>();
   private readonly icons = new Map<string, string | null>();
   private talentReferenceIcons: Map<number, string> | null = null;
+  private cardReference: Map<number, LoadoutCardAsset> | null = null;
 
   constructor(private readonly root: string) {}
 
@@ -29,6 +32,56 @@ export class AssetCatalog {
       ?? files.find((file) => normalized(path.parse(file).name) === normalized('Champion Generic Icon'))
       ?? null;
     this.championIcons.set(key, result);
+    return result;
+  }
+
+  championBanner(championName: string): string | null {
+    const key = normalized(championName);
+    if (this.championBanners.has(key)) return this.championBanners.get(key)!;
+    const files = this.championFiles ??= this.loadChampionFiles();
+    const wanted = normalized(`Banner ${championName}`);
+    const matches = files.filter((file) => normalized(path.parse(file).name) === wanted);
+    const result = matches.find((file) => path.extname(file).toLowerCase() === '.png')
+      ?? matches[0]
+      ?? this.championIcon(championName);
+    this.championBanners.set(key, result);
+    return result;
+  }
+
+  loadoutCard(cardId: number): LoadoutCardAsset | null {
+    if (!this.cardReference) this.cardReference = this.loadCardReference();
+    return this.cardReference.get(cardId) ?? null;
+  }
+
+  private loadCardReference(): Map<number, LoadoutCardAsset> {
+    const result = new Map<number, LoadoutCardAsset>();
+    const referencePath = path.resolve(this.root, '../data/paladins-card-reference.json');
+    if (!fs.existsSync(referencePath)) return result;
+    try {
+      const rows = JSON.parse(fs.readFileSync(referencePath, 'utf8')) as Array<Record<string, unknown>>;
+      for (const row of rows) {
+        const id = Number(row.id);
+        const iconUrl = typeof row.iconUrl === 'string' ? row.iconUrl : '';
+        if (!Number.isInteger(id) || id <= 0) continue;
+        const canonical = iconUrl.startsWith('/images/')
+          ? path.resolve(this.root, iconUrl.slice('/images/'.length))
+          : null;
+        const png = canonical?.replace(/\.[^.]+$/, '.png') ?? null;
+        const iconPath = png && fs.existsSync(png)
+          ? png
+          : canonical && fs.existsSync(canonical) ? canonical : null;
+        result.set(id, {
+          id,
+          name: String(row.name ?? `Card ${id}`),
+          description: String(row.description ?? ''),
+          shortDescription: String(row.shortDescription ?? ''),
+          championId: Number(row.championId ?? 0),
+          iconPath,
+        });
+      }
+    } catch (error) {
+      console.warn(`[asset-catalog] Failed to load card reference ${referencePath}: ${error}`);
+    }
     return result;
   }
 

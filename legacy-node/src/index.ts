@@ -55,6 +55,10 @@ if (config.mode === 'dummy') {
       await commands.handleAutocomplete(interaction);
       return;
     }
+    if (interaction.isStringSelectMenu()) {
+      await commands.handleComponent(interaction);
+      return;
+    }
     if (interaction.isChatInputCommand()) await commands.handle(interaction);
   });
   client.on(Events.Error, (error) => console.error('[bot] Discord client error', error));

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { MatchRecord } from '../src/types.js';
+import type { LoadoutRenderRecord, MatchRecord } from '../src/types.js';
 import { RenderService } from '../src/render-service.js';
 import type { MatchRenderer } from '../src/match-renderer.js';
 
@@ -85,4 +85,36 @@ test('bounds and deduplicates slow match acquisition separately from the render 
   assert.equal(service.snapshot().deduplicated, 1);
   assert.ok(service.snapshot().lookup.durationMs.last >= 25);
   assert.ok(service.snapshot().queue.durationMs.last < 10);
+});
+
+test('caches and deduplicates loadout renders in the shared image queue', async () => {
+  let renders = 0;
+  const renderer = {
+    templateVersion: 99,
+    loadoutTemplateVersion: 7,
+    renderLoadout: async () => { renders += 1; return Buffer.from('loadout-image'); },
+    warm: async () => undefined,
+    close: async () => undefined,
+  } as unknown as MatchRenderer;
+  const service = new RenderService(renderer, {
+    concurrency: 1,
+    queueLimit: 2,
+    timeoutMs: 1000,
+    cacheBytes: 1024,
+    cacheTtlMs: 1000,
+  });
+  const loadout: LoadoutRenderRecord = {
+    player: { id: '123', name: 'Player' },
+    loadout: {
+      id: '9', deck_id: '9', deck_key: 'deck', champion_id: 2205, champion_name: 'Androxus',
+      loadout_name: 'Main', card_ids: [1, 2, 3, 4, 5], card_levels: [5, 4, 3, 2, 1],
+      talent_id: null, fetched_at: '2026-07-21T00:00:00Z', updated_at: '2026-07-21T00:00:00Z',
+    },
+  };
+
+  const [first, second] = await Promise.all([service.loadout(loadout), service.loadout(loadout)]);
+  assert.equal(first.toString(), 'loadout-image');
+  assert.equal(second.toString(), 'loadout-image');
+  assert.equal((await service.loadout(loadout)).toString(), 'loadout-image');
+  assert.equal(renders, 1);
 });

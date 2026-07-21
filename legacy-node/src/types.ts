@@ -93,3 +93,48 @@ export interface Champion {
   title?: string;
   roles?: string;
 }
+
+export interface PlayerLoadout {
+  id: string;
+  deck_id: string | null;
+  deck_key: string;
+  champion_id: number;
+  champion_name: string;
+  loadout_name: string;
+  card_ids: number[];
+  card_levels: number[];
+  talent_id: number | null;
+  fetched_at: string;
+  updated_at: string;
+}
+
+export interface PlayerLoadoutFreshness {
+  ttl_seconds: number;
+  refreshed_at: string | null;
+  expires_at: string | null;
+  remaining_seconds: number;
+  expired: boolean;
+  manual_refresh_available_at: string | null;
+  manual_refresh_remaining_seconds: number;
+}
+
+export interface PlayerLoadoutsResponse {
+  loadouts: PlayerLoadout[];
+  freshness: PlayerLoadoutFreshness;
+  refreshed: boolean;
+  refresh_error?: string | null;
+}
+
+export interface LoadoutRenderRecord {
+  player: PlayerSearchResult;
+  loadout: PlayerLoadout;
+}
+
+export interface LoadoutCardAsset {
+  id: number;
+  name: string;
+  description: string;
+  shortDescription: string;
+  championId: number;
+  iconPath: string | null;
+}

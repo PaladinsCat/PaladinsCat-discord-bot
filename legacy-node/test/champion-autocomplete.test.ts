@@ -44,3 +44,12 @@ test('every registered champion option enables Discord autocomplete', () => {
   assert.ok(championOptions.length > 0);
   assert.ok(championOptions.every((option) => 'autocomplete' in option && option.autocomplete === true));
 });
+
+test('registers singular loadout with player and autocompleting champion options', () => {
+  const loadout = commandData.find((command) => command.name === 'loadout');
+  assert.ok(loadout);
+  assert.equal(commandData.some((command) => command.name === 'loadouts'), false);
+  assert.deepEqual(loadout.options?.map((option) => option.name), ['player', 'champion']);
+  const champion = loadout.options?.find((option) => option.name === 'champion');
+  assert.ok(champion && 'autocomplete' in champion && champion.autocomplete === true);
+});

@@ -52,3 +52,12 @@ test('resolves every observed talent to its canonical local artwork', () => {
   assert.deepEqual(unresolved, []);
   assert.deepEqual(mismatched, []);
 });
+
+test('resolves loadout card metadata and champion banner from shared frontend assets', () => {
+  const assets = new AssetCatalog(assetRoot);
+  const card = assets.loadoutCard(11302);
+
+  assert.equal(card?.name, 'Sprint');
+  assert.match(card?.iconPath ?? '', /Card_Sprint\.png$/);
+  assert.match(assets.championBanner('Androxus') ?? '', /Banner_Androxus\.png$/);
+});
