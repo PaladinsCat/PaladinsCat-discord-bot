@@ -9,7 +9,7 @@ const HEIGHT = 720;
 const MATCH_SCALE = 1.6;
 const LOADOUT_SCALE = 1;
 const TEMPLATE_VERSION = 13;
-const LOADOUT_TEMPLATE_VERSION = 6;
+const LOADOUT_TEMPLATE_VERSION = 7;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
@@ -289,19 +289,19 @@ export class MatchRenderer {
       #loadout>*{z-index:1}
       .loadout-header{position:relative;height:238px;padding:28px 38px;display:flex;align-items:flex-start;background:rgba(5,9,15,.58);border-bottom:1px solid rgba(72,211,190,.22)}
       .loadout-header::before{content:"";position:absolute;inset:0;pointer-events:none;-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);-webkit-mask-image:linear-gradient(90deg,#000,transparent 20%,transparent 80%,#000);mask-image:linear-gradient(90deg,#000,transparent 20%,transparent 80%,#000)}
-      .loadout-header>*{position:relative;z-index:1}.loadout-identity{min-width:0}.brand-line{display:flex;align-items:center;gap:12px;justify-content:flex-start}.brand-name{display:inline-flex;align-items:center;gap:11px;font-size:25px;line-height:1;font-weight:820;letter-spacing:-.025em}.brand-name img{width:32px;height:32px;border-radius:0;object-fit:contain}.loadout-status{height:23px;padding:0 9px;color:#bff7ee;border-color:rgba(55,214,192,.34);background:rgba(15,118,110,.25);font-size:10px}
-      h1{margin:10px 0 0;padding-bottom:4px;max-width:760px;overflow:hidden;color:var(--text);font-size:54px;line-height:1.08;font-weight:760;letter-spacing:-.02em;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 3px 5px rgba(0,0,0,.45)}
-      .loadout-context{display:flex;align-items:center;gap:10px;margin-top:8px;color:#d3dce7;font-size:15px;line-height:1.1;font-weight:760;letter-spacing:.11em}.loadout-context .deck{color:#d3dce7}
+      .loadout-header>*{position:relative;z-index:1}.loadout-identity{min-width:0}.brand-line{display:flex;align-items:center;gap:12px;justify-content:flex-start}.brand-name{display:inline-flex;align-items:center;gap:11px;font-size:25px;line-height:1;font-weight:400;letter-spacing:-.025em}.brand-name img{width:32px;height:32px;border-radius:0;object-fit:contain}.loadout-status{height:23px;padding:0 9px;color:#bff7ee;border-color:rgba(55,214,192,.34);background:rgba(15,118,110,.25);font-size:10px;font-weight:400}
+      h1{margin:10px 0 0;padding-bottom:4px;max-width:760px;overflow:hidden;color:var(--text);font-size:54px;line-height:1.08;font-weight:400;letter-spacing:-.02em;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 3px 5px rgba(0,0,0,.45)}
+      .loadout-context{display:flex;align-items:center;gap:10px;margin-top:8px;color:#d3dce7;font-size:15px;line-height:1.1;font-weight:400;letter-spacing:.11em}.loadout-context span{font-weight:400}.loadout-context .deck{color:#d3dce7}
       .loadout-context span+span::before{margin-right:9px}
       .cards{position:relative;z-index:2;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;padding:0 16px 18px;align-items:start;background:color-mix(in srgb,var(--bg) 80%,transparent);border-bottom:1px solid var(--line)}
       .cards::before{content:"";position:absolute;inset:0;pointer-events:none;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}.cards>*{position:relative;z-index:1}
       .loadout-card{position:relative;width:100%;aspect-ratio:316/480;filter:drop-shadow(0 3px 5px rgba(0,0,0,.45))}
       .card-art{position:absolute;z-index:1;left:6.5%;top:8.7%;width:87%;height:44%;object-fit:cover;background:#071014}
       .card-frame{position:absolute;z-index:2;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none}
-      .loadout-card h2{position:absolute;z-index:3;left:9%;top:51.2%;width:82%;height:6.8%;margin:0;padding:0 5px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;line-height:1;text-align:center;text-shadow:0 2px 2px #111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .loadout-card h2{position:absolute;z-index:3;left:9%;top:51.2%;width:82%;height:6.8%;margin:0;padding:0 5px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;line-height:1;font-weight:700;text-align:center;text-shadow:0 2px 2px #111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .loadout-card h2.long-card-name{padding-inline:2px;font-size:14px;letter-spacing:-.015em}
       .card-description{position:absolute;z-index:3;left:9.5%;top:59.5%;width:81%;height:29%;margin:0;padding:4px 9px 0;display:flex;align-items:flex-start;justify-content:center;color:#303943;font-size:14px;line-height:1.25;font-weight:700;text-align:center;overflow:hidden}
-      .level-badge{position:absolute;z-index:3;left:13.2%;top:92.7%;width:20%;aspect-ratio:1;transform:translate(-47%,-44%);display:flex;align-items:center;justify-content:center;padding:0;color:#f7fbff;font-size:27px;line-height:1;font-weight:820;font-variant-numeric:tabular-nums;text-align:center;text-shadow:0 2px 3px #10151d}
+      .level-badge{position:absolute;z-index:3;left:13.2%;top:92.7%;width:20%;aspect-ratio:1;transform:translate(-47%,-44%);display:flex;align-items:center;justify-content:center;padding:0;color:#f7fbff;font-size:27px;line-height:1;font-weight:400;font-variant-numeric:tabular-nums;text-align:center;text-shadow:0 2px 3px #10151d}
     </style></head><body data-theme="${this.theme}"><main id="loadout"><header class="loadout-header"><div class="loadout-identity"><div class="brand-line"><span class="brand-name"><img src="${brandIcon}" alt="">PaladinsCat</span><div class="status-tags"><span class="status-tag loadout-status">Loadout</span></div></div><h1>${xml(player.name)}</h1><div class="match-context loadout-context"><span>${xml(loadout.champion_name)}</span><span class="deck">${xml(loadout.loadout_name || 'Unnamed Loadout')}</span></div></div></header><section class="cards">${cards}</section></main></body></html>`;
   }
 

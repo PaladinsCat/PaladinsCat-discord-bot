@@ -40,7 +40,12 @@ test('loadout canvas reuses scoreboard glass, dimming, typography and badge geom
   assert.match(html, /background:rgba\(5,9,15,\.58\)/);
   assert.match(html, /backdrop-filter:blur\(7px\)/);
   assert.match(html, /height:238px/);
+  assert.match(html, /\.brand-name\{[^}]*font-weight:400/);
+  assert.match(html, /h1\{[^}]*font-weight:400/);
+  assert.match(html, /\.loadout-context\{[^}]*font-weight:400/);
+  assert.match(html, /\.loadout-card h2\{[^}]*font-weight:700/);
   assert.match(html, /font-size:14px;line-height:1\.25;font-weight:700/);
+  assert.match(html, /\.level-badge\{[^}]*font-weight:400/);
   assert.match(html, /left:13\.2%;top:92\.7%/);
   assert.match(html, /transform:translate\(-47%,-44%\)/);
   assert.doesNotMatch(html, /Card points|paladinscat\.com/);
