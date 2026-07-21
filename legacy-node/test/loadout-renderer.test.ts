@@ -45,3 +45,21 @@ test('loadout canvas reuses scoreboard glass, dimming, typography and badge geom
   assert.match(html, /transform:translate\(-47%,-44%\)/);
   assert.doesNotMatch(html, /Card points|paladinscat\.com/);
 });
+
+test('keeps the longest canonical card name inside the title bar', () => {
+  const workspaceAssetRoot = path.resolve(process.cwd(), '../frontend/public/images');
+  const assetRoot = fs.existsSync(workspaceAssetRoot) ? workspaceAssetRoot : path.resolve(process.cwd(), 'assets');
+  const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
+  const record: LoadoutRenderRecord = {
+    player: { id: '1', name: 'Player' },
+    loadout: {
+      id: '1', deck_id: '1', deck_key: 'deck', champion_id: 2533, champion_name: 'Corvus',
+      loadout_name: 'Main', card_ids: [25385, 25385, 25385, 25385, 25385], card_levels: [5, 4, 3, 2, 1],
+      talent_id: null, fetched_at: '2026-07-21T00:00:00Z', updated_at: '2026-07-21T00:00:00Z',
+    },
+  };
+  const html = (renderer as unknown as { loadoutDocument(value: LoadoutRenderRecord): string }).loadoutDocument(record);
+
+  assert.match(html, /class="long-card-name">Unexpected Complications<\/h2>/);
+  assert.match(html, /h2\.long-card-name\{padding-inline:2px;font-size:14px/);
+});

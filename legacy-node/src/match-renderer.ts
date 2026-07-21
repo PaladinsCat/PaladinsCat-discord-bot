@@ -9,7 +9,7 @@ const HEIGHT = 720;
 const MATCH_SCALE = 1.6;
 const LOADOUT_SCALE = 1;
 const TEMPLATE_VERSION = 13;
-const LOADOUT_TEMPLATE_VERSION = 5;
+const LOADOUT_TEMPLATE_VERSION = 6;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
@@ -269,13 +269,14 @@ export class MatchRenderer {
       const level = Math.max(1, Math.min(5, Math.floor(Number(loadout.card_levels[index]) || 1)));
       const card = this.assets.loadoutCard(Number(cardId));
       const name = card?.name ?? `Card ${cardId}`;
+      const titleClass = name.length >= 21 ? 'long-card-name' : '';
       const description = scaleCardDescription(card?.description || card?.shortDescription || 'Card details unavailable.', level);
       const artwork = assetUrl(card?.iconPath ?? null);
       const frame = this.assets.loadoutFrame(level);
       return `<article class="loadout-card level-${level}" aria-label="${xml(name)}, level ${level} ${xml(frame?.rarity ?? '')}">
         <img class="card-art" src="${artwork}" alt=""/>
         <img class="card-frame" src="${assetUrl(frame?.iconPath ?? null)}" alt=""/>
-        <h2>${xml(name)}</h2>
+        <h2 class="${titleClass}">${xml(name)}</h2>
         <p class="card-description">${xml(description)}</p>
         <span class="level-badge">${level}</span>
       </article>`;
@@ -298,6 +299,7 @@ export class MatchRenderer {
       .card-art{position:absolute;z-index:1;left:6.5%;top:8.7%;width:87%;height:44%;object-fit:cover;background:#071014}
       .card-frame{position:absolute;z-index:2;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none}
       .loadout-card h2{position:absolute;z-index:3;left:9%;top:51.2%;width:82%;height:6.8%;margin:0;padding:0 5px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;line-height:1;text-align:center;text-shadow:0 2px 2px #111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .loadout-card h2.long-card-name{padding-inline:2px;font-size:14px;letter-spacing:-.015em}
       .card-description{position:absolute;z-index:3;left:9.5%;top:59.5%;width:81%;height:29%;margin:0;padding:4px 9px 0;display:flex;align-items:flex-start;justify-content:center;color:#303943;font-size:14px;line-height:1.25;font-weight:700;text-align:center;overflow:hidden}
       .level-badge{position:absolute;z-index:3;left:13.2%;top:92.7%;width:20%;aspect-ratio:1;transform:translate(-47%,-44%);display:flex;align-items:center;justify-content:center;padding:0;color:#f7fbff;font-size:27px;line-height:1;font-weight:820;font-variant-numeric:tabular-nums;text-align:center;text-shadow:0 2px 3px #10151d}
     </style></head><body data-theme="${this.theme}"><main id="loadout"><header class="loadout-header"><div class="loadout-identity"><div class="brand-line"><span class="brand-name"><img src="${brandIcon}" alt="">PaladinsCat</span><div class="status-tags"><span class="status-tag loadout-status">Loadout</span></div></div><h1>${xml(player.name)}</h1><div class="match-context loadout-context"><span>${xml(loadout.champion_name)}</span><span class="deck">${xml(loadout.loadout_name || 'Unnamed Loadout')}</span></div></div></header><section class="cards">${cards}</section></main></body></html>`;
