@@ -8,7 +8,7 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 const SCALE = 1.6;
 const TEMPLATE_VERSION = 13;
-const LOADOUT_TEMPLATE_VERSION = 2;
+const LOADOUT_TEMPLATE_VERSION = 3;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
@@ -271,25 +271,27 @@ export class MatchRenderer {
     }).join('');
     const totalPoints = loadout.card_levels.slice(0, 5).reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
     const background = championBanner ? `url('${championBanner}')` : championIcon ? `url('${championIcon}')` : 'none';
-    return `<!doctype html><html><head><meta charset="utf-8"><style>
-      *{box-sizing:border-box}html,body{margin:0;width:1280px;height:720px;overflow:hidden;background:#071014;color:#f4fbfa;font-family:Inter,"Segoe UI",Arial,sans-serif}
-      #loadout{position:relative;width:1280px;height:720px;overflow:hidden;background:#071014}
-      #loadout::before{content:"";position:absolute;inset:0;background-image:linear-gradient(90deg,rgba(2,9,12,.98) 0%,rgba(2,9,12,.78) 28%,rgba(2,9,12,.12) 66%,rgba(2,9,12,.62) 100%),linear-gradient(0deg,#071014 0%,rgba(7,16,20,.1) 62%,rgba(7,16,20,.45) 100%),${background};background-size:cover;background-position:center 24%;filter:saturate(1.12)}
-      #loadout::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 76% 4%,rgba(45,212,163,.24),transparent 34%),linear-gradient(135deg,rgba(45,212,163,.1),transparent 45%);pointer-events:none}
-      .top{position:relative;z-index:1;height:310px;padding:34px 46px;display:flex;align-items:flex-start;justify-content:space-between}
-      .eyebrow{display:flex;align-items:center;gap:10px;color:#79e4c3;text-transform:uppercase;letter-spacing:.22em;font-weight:800;font-size:14px}.eyebrow img{width:27px;height:27px;object-fit:contain;border-radius:50%}
-      h1{margin:10px 0 0;font-size:50px;line-height:.96;max-width:640px;letter-spacing:-.045em;text-shadow:0 3px 18px rgba(0,0,0,.65)}
-      .champion{display:block;margin-top:10px;color:#d2e3df;font-size:21px;font-weight:650;letter-spacing:.03em}.deck{color:#fff}
-      .points{margin-top:4px;text-align:right}.points strong{display:block;font-size:42px;letter-spacing:-.05em}.points span{color:#a9bbb7;text-transform:uppercase;letter-spacing:.18em;font-size:12px;font-weight:800}
-      .cards{position:relative;z-index:2;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;padding:0 44px;align-items:start}
-      .loadout-card{position:relative;width:100%;aspect-ratio:316/480;filter:drop-shadow(0 15px 18px rgba(0,0,0,.48))}
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${this.css}
+      *{box-sizing:border-box}html,body{margin:0;width:1280px;height:720px;min-height:720px;overflow:hidden;padding:0;background:transparent;color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      #loadout{position:relative;width:1280px;height:720px;overflow:hidden;border:1px solid rgba(111,130,153,.35);border-radius:20px;background:var(--bg)}
+      #loadout::before{content:"";position:absolute;inset:0;background-image:${background};background-size:cover;background-position:center 24%;filter:saturate(1.15);opacity:.7;pointer-events:none}
+      #loadout>*{z-index:1}
+      .loadout-header{position:relative;height:310px;padding:28px 38px;display:flex;align-items:flex-start;justify-content:space-between;background:rgba(5,9,15,.58);border-bottom:1px solid rgba(72,211,190,.22)}
+      .loadout-header::before{content:"";position:absolute;inset:0;pointer-events:none;-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);-webkit-mask-image:linear-gradient(90deg,#000,transparent 20%,transparent 80%,#000);mask-image:linear-gradient(90deg,#000,transparent 20%,transparent 80%,#000)}
+      .loadout-header>*{position:relative;z-index:1}.loadout-identity{min-width:0}.brand-line{justify-content:flex-start}.brand-line img{border-radius:0}.loadout-status{color:#bff7ee;border-color:rgba(55,214,192,.34);background:rgba(15,118,110,.25)}
+      h1{margin:15px 0 0;max-width:700px;overflow:hidden;color:var(--text);font-size:50px;line-height:.96;font-weight:760;letter-spacing:-.02em;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 3px 5px rgba(0,0,0,.45)}
+      .loadout-context{margin-top:13px}.loadout-context .deck{color:#d3dbe5}
+      .points{margin-top:3px;text-align:right}.points strong{display:block;color:var(--teal);font-size:41px;line-height:1;font-weight:820;letter-spacing:-.05em;text-shadow:0 0 12px rgba(55,214,192,.38);font-variant-numeric:tabular-nums}.points .meta-label{display:block;margin-top:5px}
+      .cards{position:relative;z-index:2;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;padding:17px 44px 23px;align-items:start;background:color-mix(in srgb,var(--bg) 80%,transparent);border-bottom:1px solid var(--line)}
+      .cards::before{content:"";position:absolute;inset:0;pointer-events:none;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}.cards>*{position:relative;z-index:1}
+      .loadout-card{position:relative;width:100%;aspect-ratio:316/480;filter:drop-shadow(0 3px 5px rgba(0,0,0,.45))}
       .card-art{position:absolute;z-index:1;left:6.5%;top:8.7%;width:87%;height:44%;object-fit:cover;background:#071014}
       .card-frame{position:absolute;z-index:2;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none}
       .loadout-card h2{position:absolute;z-index:3;left:9%;top:51.2%;width:82%;height:6.8%;margin:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;line-height:1;text-align:center;text-shadow:0 2px 2px #111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .card-description{position:absolute;z-index:3;left:10%;top:59.5%;width:80%;height:29%;margin:0;display:flex;align-items:flex-start;justify-content:center;color:#303943;font-size:12px;line-height:1.23;text-align:center;overflow:hidden}.card-description.long{font-size:10.5px;line-height:1.2}
-      .level-badge{position:absolute;z-index:3;left:5.2%;bottom:2.2%;width:20%;aspect-ratio:1;display:grid;place-items:center;color:#f7fbff;font-size:25px;line-height:1;font-weight:900;text-shadow:0 2px 3px #10151d}
-      .brand{position:absolute;z-index:3;right:43px;bottom:12px;color:#849792;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
-    </style></head><body><main id="loadout"><header class="top"><div><div class="eyebrow"><img src="${championIcon}" alt="">PaladinsCat loadout</div><h1>${xml(player.name)}</h1><span class="champion">${xml(loadout.champion_name)} <span aria-hidden="true">·</span> <span class="deck">${xml(loadout.loadout_name || 'Unnamed Loadout')}</span></span></div><div class="points"><strong>${number(totalPoints)}</strong><span>card points</span></div></header><section class="cards">${cards}</section><div class="brand">paladinscat.com</div></main></body></html>`;
+      .level-badge{position:absolute;z-index:3;left:13.2%;top:92.7%;width:20%;aspect-ratio:1;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;padding:0 0 1px;color:#f7fbff;font-size:25px;line-height:1;font-weight:820;font-variant-numeric:tabular-nums;text-align:center;text-shadow:0 2px 3px #10151d}
+      #loadout>.brand{position:absolute;z-index:3;right:43px;bottom:10px;color:var(--muted);font-size:8.5px;font-weight:760;letter-spacing:.12em;text-transform:uppercase}
+    </style></head><body data-theme="${this.theme}"><main id="loadout"><header class="loadout-header"><div class="loadout-identity"><div class="brand-line"><span class="brand-name"><img src="${championIcon}" alt="">PaladinsCat</span><div class="status-tags"><span class="status-tag loadout-status">Loadout</span></div></div><h1>${xml(player.name)}</h1><div class="match-context loadout-context"><span>${xml(loadout.champion_name)}</span><span class="deck">${xml(loadout.loadout_name || 'Unnamed Loadout')}</span></div></div><div class="points"><strong>${number(totalPoints)}</strong><span class="meta-label">Card points</span></div></header><section class="cards">${cards}</section><div class="brand">paladinscat.com</div></main></body></html>`;
   }
 
   private columns() {
