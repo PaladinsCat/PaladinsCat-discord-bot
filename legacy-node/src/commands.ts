@@ -16,12 +16,10 @@ import {
   buildCurrentPayload,
   buildHelpPayload,
   buildHistoryPayload,
-  buildLeaderboardPayload,
   buildLoadoutSelectionPayload,
   buildNoLoadoutsPayload,
-  buildRandomPayload,
-  buildStatusPayload,
 } from './message-builders.js';
+import { CHAMPION_LOBBY_SCOPES, championLobbyScope } from './champion-lobby.js';
 import { findPlayerChampionLoadouts } from './loadout-service.js';
 import { RenderService } from './render-service.js';
 import { QueueFullError } from './render-queue.js';
@@ -86,14 +84,11 @@ export const commandData = [
     .addStringOption((option) => option.setName('player').setDescription('Player name or ID').setRequired(true))
     .addStringOption(championOption),
   new SlashCommandBuilder().setName('champion').setDescription('Show champion ranked statistics')
-    .addStringOption(championOption),
-  new SlashCommandBuilder().setName('leaderboard').setDescription('Show the ranked leaderboard'),
-  new SlashCommandBuilder().setName('random').setDescription('Choose a random champion')
-    .addStringOption((option) => option.setName('role').setDescription('Optional class').addChoices(
-      { name: 'Damage', value: 'damage' }, { name: 'Flank', value: 'flank' },
-      { name: 'Frontline', value: 'frontline' }, { name: 'Support', value: 'support' },
-    )),
-  new SlashCommandBuilder().setName('status').setDescription('Show PaladinsCat API and render queue status'),
+    .addStringOption(championOption)
+    .addStringOption((option) => option
+      .setName('lobby')
+      .setDescription('Ranked lobby tier (global by default)')
+      .addChoices(...CHAMPION_LOBBY_SCOPES.map(({ label, value }) => ({ name: label, value })))),
 ].map((command) => command.toJSON());
 
 export class CommandHandler {
@@ -134,9 +129,6 @@ export class CommandHandler {
         case 'current': return this.current(interaction);
         case 'loadout': return this.loadout(interaction);
         case 'champion': return this.champion(interaction);
-        case 'leaderboard': return this.leaderboard(interaction);
-        case 'random': return this.random(interaction);
-        case 'status': return this.status(interaction);
         default: return interaction.editReply('Unknown command. Use `/help`.');
       }
     } catch (error) {
@@ -254,37 +246,9 @@ export class CommandHandler {
 
   private async champion(interaction: ChatInputCommandInteraction) {
     const name = interaction.options.getString('champion', true);
-    const result: any = await this.api.champion(name.toLocaleLowerCase());
-    return interaction.editReply(buildChampionPayload(result, this.webUrl));
-  }
-
-  private async leaderboard(interaction: ChatInputCommandInteraction) {
-    const rows = await this.api.rankedLeaderboard(10);
-    return interaction.editReply(buildLeaderboardPayload(rows, this.webUrl));
-  }
-
-  private async random(interaction: ChatInputCommandInteraction) {
-    const role = interaction.options.getString('role');
-    const champions = (await this.championsForAutocomplete()).filter((champion) => !role || String(champion.roles ?? '').toLocaleLowerCase().replace(/\s/g, '').includes(role));
-    const selected = champions[Math.floor(Math.random() * champions.length)];
-    if (!selected) throw new Error('No champion matched that class.');
-    return interaction.editReply(buildRandomPayload(selected, this.webUrl, role ?? undefined));
-  }
-
-  private async status(interaction: ChatInputCommandInteraction) {
-    const start = performance.now();
-    const api = await this.api.status();
-    const latency = Math.round(performance.now() - start);
-    const state = this.renders.snapshot();
-    const renderState = {
-      active: state.queue.active,
-      queued: state.queue.queued,
-      durationMs: state.queue.durationMs,
-      entries: state.cache.entries,
-      bytes: state.cache.bytes,
-      hits: state.cache.hits,
-    };
-    return interaction.editReply(buildStatusPayload(api, latency, renderState));
+    const scope = championLobbyScope(interaction.options.getString('lobby'));
+    const result = await this.api.championPageData(name.toLocaleLowerCase(), scope);
+    return interaction.editReply(buildChampionPayload(result, this.webUrl, scope.label));
   }
 
   private async championsForAutocomplete(): Promise<Champion[]> {

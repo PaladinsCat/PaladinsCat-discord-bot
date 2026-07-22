@@ -7,12 +7,10 @@ import {
   buildCurrentPayload,
   buildHelpPayload,
   buildHistoryPayload,
-  buildLeaderboardPayload,
   buildLoadoutSelectionPayload,
   buildNoLoadoutsPayload,
-  buildRandomPayload,
-  buildStatusPayload,
 } from './message-builders.js';
+import { championLobbyScope } from './champion-lobby.js';
 import { findPlayerChampionLoadouts } from './loadout-service.js';
 import { RenderService } from './render-service.js';
 
@@ -21,19 +19,39 @@ const COMMANDS = [
   { name: 'player', desc: 'Player profile', params: [{ name: 'player', label: 'Player name or ID', required: true }] },
   { name: 'match', desc: 'Match result image', params: [{ name: 'id', label: 'Match ID', required: true }] },
   { name: 'history', desc: 'Recent matches', params: [{ name: 'player', label: 'Player name or ID', required: true }] },
-  { name: 'current', desc: 'Current live match', params: [{ name: 'player', label: 'Player name or ID', required: true }] },
+  { name: 'current', desc: 'Current live match', params: [{ name: 'player', label: 'Player name or ID (`mock` for sample)', required: true }] },
   { name: 'loadout', desc: 'Choose and render a saved loadout', params: [{ name: 'player', label: 'Player name or ID', required: true }, { name: 'champion', label: 'Champion name', required: true }] },
-  { name: 'champion', desc: 'Champion stats', params: [{ name: 'champion', label: 'Champion name', required: true }] },
-  { name: 'leaderboard', desc: 'Ranked leaderboard', params: [] },
-  { name: 'random', desc: 'Random champion', params: [{ name: 'role', label: 'Class (optional)' }] },
-  { name: 'status', desc: 'API and render status', params: [] },
+  { name: 'champion', desc: 'Champion ranked stats by lobby tier', params: [{ name: 'champion', label: 'Champion name', required: true }, { name: 'lobby', label: 'Lobby: global, bronze-gold, platinum, or diamond' }] },
 ];
+
+const CURRENT_MATCH_MOCK = {
+  player_id: '42',
+  match: {
+    match_id: '9001',
+    queue_id: 486,
+    map: 'Stone Keep',
+    region: 'NA',
+    source_player_id: '42',
+    detected_at: '2026-07-21T22:00:00Z',
+  },
+  players: [
+    { player_id: '42', player_name: 'Point_Tank', champion_name: 'Ash', kbm_tier: 26, profile_win_rate: 54.8, queue_elo: 1842.4, task_force: 1 },
+    { player_id: '43', player_name: 'SolarFlare', champion_name: 'Furia', kbm_tier: 15, profile_win_rate: 51.2, queue_elo: 1518.7, task_force: 1 },
+    { player_id: '45', player_name: 'Accelarate', champion_name: 'Androxus', kbm_tier: 24, profile_win_rate: 56.1, queue_elo: 1796.2, task_force: 1 },
+    { player_id: '46', player_name: 'PrimalHunter', champion_name: 'Tyra', kbm_tier: 20, profile_win_rate: 49.7, queue_elo: 1621.5, task_force: 1 },
+    { player_id: '47', player_name: 'HotWall', champion_name: 'Fernando', kbm_tier: 21, profile_win_rate: 52.9, queue_elo: 1704.1, task_force: 1 },
+    { player_id: '44', player_name: 'NightStep', champion_name: 'Vatu', kbm_tier: 21, profile_win_rate: 55.4, queue_elo: 1758.9, task_force: 2 },
+    { player_id: '-1', player_name: 'Private Account', champion_name: 'Io', task_force: 2 },
+    { player_id: '48', player_name: 'ForgeFather', champion_name: 'Barik', kbm_tier: 26, profile_win_rate: 53.6, queue_elo: 1827.6, task_force: 2 },
+    { player_id: '49', player_name: 'RoyalDetonator', champion_name: 'Bomb King', kbm_tier: 23, profile_win_rate: 50.5, queue_elo: 1733.2, task_force: 2 },
+    { player_id: '50', player_name: 'MirageMaker', champion_name: 'Ying', kbm_tier: 19, profile_win_rate: 52.1, queue_elo: 1649.8, task_force: 2 },
+  ],
+};
 
 function handlePreviewCommand(
   command: string,
   params: Record<string, string>,
   api: PaladinsCatApi,
-  renders: RenderService,
   webUrl: string,
 ) {
   switch (command) {
@@ -54,6 +72,9 @@ function handlePreviewCommand(
       })();
     }
     case 'current': {
+      if ((params.player ?? '').trim().toLocaleLowerCase() === 'mock') {
+        return buildCurrentPayload(CURRENT_MATCH_MOCK, webUrl);
+      }
       const fetch = api.liveMatch(params.player ?? '');
       return (async () => {
         const result = await fetch;
@@ -86,46 +107,11 @@ function handlePreviewCommand(
       })();
     }
     case 'champion': {
-      const fetch = api.champion((params.champion ?? '').toLocaleLowerCase());
+      const scope = championLobbyScope(params.lobby);
+      const fetch = api.championPageData((params.champion ?? '').toLocaleLowerCase(), scope);
       return (async () => {
         const result = await fetch;
-        return buildChampionPayload(result, webUrl);
-      })();
-    }
-    case 'leaderboard': {
-      const fetch = api.rankedLeaderboard(10);
-      return (async () => {
-        const rows = await fetch;
-        return buildLeaderboardPayload(rows, webUrl);
-      })();
-    }
-    case 'random': {
-      const fetch = api.champions();
-      return (async () => {
-        const champions = await fetch;
-        const role = params.role;
-        const filtered = champions.filter((c) => !role || String(c.roles ?? '').toLocaleLowerCase().replace(/\s/g, '').includes(role));
-        const selected = filtered[Math.floor(Math.random() * filtered.length)];
-        if (!selected) throw new Error('No champion matched that class.');
-        return buildRandomPayload(selected, webUrl, role);
-      })();
-    }
-    case 'status': {
-      const status = api.status();
-      return (async () => {
-        const start = performance.now();
-        const api = await status;
-        const latency = Math.round(performance.now() - start);
-        const state = renders.snapshot();
-        const renderState = {
-          active: state.queue.active,
-          queued: state.queue.queued,
-          durationMs: state.queue.durationMs,
-          entries: state.cache.entries,
-          bytes: state.cache.bytes,
-          hits: state.cache.hits,
-        };
-        return buildStatusPayload(api, latency, renderState);
+        return buildChampionPayload(result, webUrl, scope.label);
       })();
     }
     default: throw new Error(`Unknown command: ${command}`);
@@ -209,7 +195,7 @@ export function startHealthServer(port: number, renders: RenderService, api: Pal
         if (key !== 'format') params[key] = value;
       }
       try {
-        const result = handlePreviewCommand(cmd, params, api, renders, webUrl);
+        const result = handlePreviewCommand(cmd, params, api, webUrl);
         const payload = await (result as Promise<any>);
         response.writeHead(200, { 'content-type': wantsJson ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8', 'cache-control': 'no-store' });
         response.end(wantsJson ? JSON.stringify(payload) : renderDiscordPreview(payload));

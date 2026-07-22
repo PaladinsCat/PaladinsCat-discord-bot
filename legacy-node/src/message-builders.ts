@@ -1,5 +1,5 @@
-import type { APIEmbed, APIEmbedField } from 'discord.js';
-import type { Champion, PlayerLoadout, PlayerProfileResponse } from './types.js';
+import type { APIEmbed } from 'discord.js';
+import type { PlayerLoadout, PlayerProfileResponse } from './types.js';
 import { assertDiscordMessage, type DiscordMessagePayload } from './discord-message.js';
 import { buildPlayerProfileMessage } from './player-profile-message.js';
 
@@ -25,10 +25,7 @@ export function buildHelpPayload(): DiscordMessagePayload {
       '`/history` recent matches',
       '`/current` current live match',
       '`/loadout` choose and render a saved champion deck',
-      '`/champion` champion ranked statistics',
-      '`/leaderboard` top ranked players',
-      '`/random` random champion by optional class',
-      '`/status` API and renderer health',
+      '`/champion` database-backed ranked statistics by lobby tier',
     ].join('\n'),
   };
   return embedPayload(embed);
@@ -84,6 +81,49 @@ function cleanDiscordText(value: unknown, fallback: string): string {
   return text.replace(/([\\`*_{}\[\]()#+\-.!|>~])/g, '\\$1');
 }
 
+function numericMetric(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function estimateLiveTeamWinChance(players: Record<string, unknown>[]): { teamOne: number; teamTwo: number } | null {
+  const teamMetrics = (taskForce: number) => {
+    const team = players.filter((player) => Number(player.task_force) === taskForce);
+    const elos = team.flatMap((player) => {
+      const value = numericMetric(player.queue_elo);
+      return value != null && value > 0 && value <= 3500 ? [value] : [];
+    });
+    const winRates = team.flatMap((player) => {
+      const value = numericMetric(player.profile_win_rate);
+      return value != null && value >= 0 && value <= 100 ? [value] : [];
+    });
+    const minimumCoverage = Math.min(3, team.length);
+    return {
+      averageElo: elos.length >= minimumCoverage
+        ? elos.reduce((sum, value) => sum + value, 0) / elos.length
+        : null,
+      averageWinRate: winRates.length >= minimumCoverage
+        ? winRates.reduce((sum, value) => sum + value, 0) / winRates.length
+        : null,
+    };
+  };
+
+  const teamOne = teamMetrics(1);
+  const teamTwo = teamMetrics(2);
+  if (teamOne.averageElo == null || teamTwo.averageElo == null) return null;
+
+  // Queue ELO is the primary matchup signal. Global win rate provides a small
+  // calibration only when both teams have enough PaladinsCat profile history.
+  const eloProbability = 1 / (1 + 10 ** ((teamTwo.averageElo - teamOne.averageElo) / 400));
+  const winRateProbability = teamOne.averageWinRate != null && teamTwo.averageWinRate != null
+    ? teamOne.averageWinRate / (teamOne.averageWinRate + teamTwo.averageWinRate || 100)
+    : 0.5;
+  const blended = Math.min(0.85, Math.max(0.15, eloProbability * 0.85 + winRateProbability * 0.15));
+  const teamOnePercent = Math.round(blended * 100);
+  return { teamOne: teamOnePercent, teamTwo: 100 - teamOnePercent };
+}
+
 function currentPlayerLine(player: Record<string, unknown>, sourcePlayerId: string, webUrl: string): string {
   const playerId = String(player.player_id ?? '');
   const playerName = cleanDiscordText(player.player_name, 'Private Account');
@@ -94,7 +134,14 @@ function currentPlayerLine(player: Record<string, unknown>, sourcePlayerId: stri
     ? `[${playerName}](${webUrl}/players/${encodeURIComponent(playerId)})`
     : playerName;
   const marker = playerId === sourcePlayerId ? '▸ ' : '';
-  return `${marker}**${champion}** · ${name}${tier === 'Unranked' ? '' : ` · ${tier}`}`;
+  const globalWinRate = numericMetric(player.profile_win_rate);
+  const queueElo = numericMetric(player.queue_elo);
+  const details = [
+    tier === 'Unranked' ? null : tier,
+    globalWinRate == null ? null : `Global ${globalWinRate.toFixed(1)}% WR`,
+    queueElo == null ? null : `${Math.round(queueElo).toLocaleString('en-US')} ELO`,
+  ].filter((value): value is string => Boolean(value));
+  return `${marker}**${champion}** · ${name}${details.length > 0 ? ` · ${details.join(' · ')}` : ''}`;
 }
 
 export function buildCurrentPayload(result: Record<string, unknown>, webUrl: string): DiscordMessagePayload {
@@ -126,6 +173,7 @@ export function buildCurrentPayload(result: Record<string, unknown>, webUrl: str
   const map = cleanDiscordText(String(match.map ?? '').replace(/^(?:(?:live|ranked|wip)\s+)+/i, ''), 'Unknown map');
   const region = cleanDiscordText(match.region, 'Unknown region');
   const detectedAt = String(match.detected_at ?? '');
+  const estimate = estimateLiveTeamWinChance(players);
   const team = (taskForce: number) => players
     .filter((player) => Number(player.task_force) === taskForce)
     .map((player) => currentPlayerLine(player, playerId, webUrl))
@@ -135,10 +183,12 @@ export function buildCurrentPayload(result: Record<string, unknown>, webUrl: str
     title: `${map} · Live match`,
     description: `**${queue}** · ${region}\nMatch ID \`${matchId}\``,
     fields: [
-      { name: 'Team 1', value: team(1), inline: true },
-      { name: 'Team 2', value: team(2), inline: true },
+      { name: estimate ? `Team 1 · ${estimate.teamOne}% win chance` : 'Team 1', value: team(1), inline: true },
+      { name: estimate ? `Team 2 · ${estimate.teamTwo}% win chance` : 'Team 2', value: team(2), inline: true },
     ],
-    footer: { text: '▸ marks the requested player · Live lobby snapshot' },
+    footer: {
+      text: `${estimate ? 'Estimate blends queue ELO with global win rate · ' : ''}▸ marks the requested player · Live lobby snapshot`,
+    },
   };
   if (!Number.isNaN(Date.parse(detectedAt))) embed.timestamp = new Date(detectedAt).toISOString();
   return embedPayload(embed);
@@ -198,75 +248,74 @@ export function buildNoLoadoutsPayload(
 export function buildChampionPayload(
   result: Record<string, unknown>,
   webUrl: string,
+  lobbyLabel = 'Global ranked lobbies',
 ): DiscordMessagePayload {
-  const champion = (result.champion ?? {}) as Record<string, unknown>;
-  const stats = (result.stats ?? {}) as Record<string, unknown>;
-  const name = String(champion.name ?? 'Unknown');
-  const numeric = (v: unknown): number | null => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
+  const champion = record(result.champion);
+  const stats = record(result.stats);
+  const performance = record(result.championPerformance);
+  const talentStats = record(result.talentStats);
+  const identityMetric = ['dpm', 'wpm', 'apm', 'gpm', 'hpm', 'mpm', 'kda']
+    .map((key) => record(performance[key]))
+    .find((metric) => metric.championName || metric.className) ?? {};
+  const name = String(champion.name ?? identityMetric.championName ?? 'Unknown');
+  const className = String(champion.roles ?? identityMetric.className ?? 'Unknown');
+  const formattedNumber = (value: unknown, decimals = 0): string => {
+    const numeric = numericMetric(value);
+    return numeric == null ? '—' : numeric.toLocaleString(undefined, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
   };
+  const averageTier = numericMetric(stats.avg_league_tier);
+  const roundedTier = averageTier == null ? 0 : Math.max(0, Math.min(TIER_NAMES.length - 1, Math.round(averageTier)));
+  const tierValue = averageTier == null || averageTier <= 0
+    ? '—'
+    : `**${TIER_NAMES[roundedTier]}**\n${averageTier.toFixed(1)} average`;
+  const winRate = numericMetric(stats.win_rate);
+  const recordValue = [
+    winRate == null ? '**—** win rate' : `**${winRate.toFixed(1)}%** win rate`,
+    `${formattedNumber(stats.wins)} W · ${formattedNumber(stats.losses)} L`,
+    `${formattedNumber(stats.total_plays ?? stats.total_matches)} total plays`,
+  ].join('\n');
+  const metricFields = [
+    ['DPM', 'dpm', 0], ['WPM', 'wpm', 0], ['APM', 'apm', 0], ['CPM', 'gpm', 0],
+    ['HPM', 'hpm', 0], ['SPM', 'mpm', 0], ['KDA', 'kda', 1],
+  ].map(([label, key, decimals]) => {
+    const metric = record(performance[String(key)]);
+    const p10 = formattedNumber(metric.p10, Number(decimals));
+    const p90 = formattedNumber(metric.p90, Number(decimals));
+    return {
+      name: String(label),
+      value: `**${formattedNumber(metric.avgValue, Number(decimals))}**\nP10–P90 ${p10}–${p90}`,
+      inline: true,
+    };
+  });
+  const talentCoverage = Math.max(0, numericMetric(talentStats.talentCoveredMatches) ?? 0);
+  const talents = Array.isArray(talentStats.talents)
+    ? (talentStats.talents as Array<Record<string, unknown>>)
+      .slice()
+      .sort((left, right) => (numericMetric(right.totalPlays) ?? 0) - (numericMetric(left.totalPlays) ?? 0))
+      .slice(0, 3)
+    : [];
+  const talentValue = talents.map((talent) => {
+    const plays = numericMetric(talent.totalPlays) ?? 0;
+    const pickRate = talentCoverage > 0 ? (100 * plays) / talentCoverage : null;
+    return `**${cleanDiscordText(talent.talentName, 'Unknown')}** · ${formattedNumber(talent.winRate, 1)}% WR · ${pickRate == null ? '—' : `${pickRate.toFixed(1)}%`} pick · ${formattedNumber(plays)} plays`;
+  }).join('\n') || 'No ranked talent data in this lobby range.';
+
   return embedPayload({
     color: accent,
-    title: name,
+    title: `${name} · Ranked performance`,
     url: `${webUrl}/champions/${encodeURIComponent(name.toLocaleLowerCase())}`,
-    description: String(champion.title ?? ''),
+    description: `**${lobbyLabel}** · Served from the PaladinsCat champion database.`,
     fields: [
-      { name: 'Class', value: String(champion.roles ?? 'Unknown'), inline: true },
-      { name: 'Win rate', value: numeric(stats.win_rate) == null ? '—' : `${Number(stats.win_rate).toFixed(1)}%`, inline: true },
-      { name: 'Ranked matches', value: Number(stats.total_matches ?? 0).toLocaleString(), inline: true },
+      { name: 'Class', value: className, inline: true },
+      { name: 'Average lobby tier', value: tierValue, inline: true },
+      { name: 'Ranked record', value: recordValue, inline: true },
+      ...metricFields,
+      { name: 'Most played talents', value: talentValue },
     ],
-  });
-}
-
-export function buildLeaderboardPayload(
-  rows: Array<Record<string, unknown>>,
-  webUrl: string,
-): DiscordMessagePayload {
-  const lines = rows.map((row: Record<string, unknown>, index: number) => {
-    const name = String(row.name ?? 'Unknown');
-    const playerId = String(row.player_id ?? '');
-    const points = Number(row.points ?? 0);
-    return `**${index + 1}.** [${name}](${webUrl}/players/${playerId}) · ${points.toLocaleString()} TP`;
-  });
-  return embedPayload({
-    color: accent,
-    title: 'Ranked leaderboard',
-    url: `${webUrl}/players/leaderboard`,
-    description: lines.join('\n') || 'No ranked players found.',
-  });
-}
-
-export function buildRandomPayload(
-  champion: Champion,
-  webUrl: string,
-  role?: string,
-): DiscordMessagePayload {
-  const name = champion.name ?? 'Unknown';
-  return embedPayload({
-    color: accent,
-    title: name,
-    url: `${webUrl}/champions/${encodeURIComponent(name.toLocaleLowerCase())}`,
-    description: `${champion.roles ?? 'Champion'}${role ? ` (${role})` : ''} · ${champion.title ?? ''}`,
-  });
-}
-
-export function buildStatusPayload(
-  apiStatus: Record<string, unknown>,
-  latency: number,
-  renderState: Record<string, unknown>,
-): DiscordMessagePayload {
-  function field(name: string, value: string, inline: boolean): APIEmbedField {
-    return { name, value, inline };
-  }
-  return embedPayload({
-    color: accent,
-    title: 'PaladinsCat status',
-    fields: [
-      field('API', `${apiStatus.status ?? 'online'} · ${latency}ms`, true),
-      field('Render queue', `${renderState.active ?? 0} active · ${renderState.queued ?? 0} queued`, true),
-      field('Render cache', `${renderState.entries ?? 0} images · ${Number(renderState.bytes ?? 0) / 1048576} MiB`, true),
-    ],
+    footer: { text: 'Lobby filters use the ranked match database; global is the default.' },
   });
 }
 

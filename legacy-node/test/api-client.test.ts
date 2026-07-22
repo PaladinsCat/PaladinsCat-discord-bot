@@ -10,8 +10,8 @@ function recordingFetch(urls: string[]): typeof fetch {
       ? { matches: [{ match: { match_id: '123' }, players: [] }] }
       : url.includes('/players/123?')
         ? { player: { id: '123', name: 'Database Player' } }
-        : url.includes('/stats/ranked-leaderboard')
-          ? []
+        : url.includes('/champions/Androxus/page-data')
+          ? { champion: { name: 'Androxus' }, stats: {} }
           : {};
     return new Response(JSON.stringify(body), {
       status: 200,
@@ -41,17 +41,36 @@ test('database-first bot reads keep an existing match on the fast local path', a
   ]);
 });
 
-test('leaderboard supplies the required database tier', async () => {
+test('champion page data forwards the selected lobby tier range', async () => {
   const urls: string[] = [];
   const api = new PaladinsCatApi('http://backend:3005', 1000, {
     localOnly: true,
     fetchImpl: recordingFetch(urls),
   });
 
-  await api.rankedLeaderboard(10);
+  await api.championPageData('Androxus', {
+    value: 'diamond',
+    label: 'Diamond+ lobbies',
+    tierMin: 21,
+    tierMax: 26,
+  });
 
   assert.deepEqual(urls, [
-    'http://backend:3005/stats/ranked-leaderboard?tier=26&top=10',
+    'http://backend:3005/champions/Androxus/page-data?tierMin=21&tierMax=26',
+  ]);
+});
+
+test('champion page data uses global ranked metrics when no bounds are set', async () => {
+  const urls: string[] = [];
+  const api = new PaladinsCatApi('http://backend:3005', 1000, {
+    localOnly: true,
+    fetchImpl: recordingFetch(urls),
+  });
+
+  await api.championPageData('Androxus', { value: 'global', label: 'Global ranked lobbies' });
+
+  assert.deepEqual(urls, [
+    'http://backend:3005/champions/Androxus/page-data',
   ]);
 });
 

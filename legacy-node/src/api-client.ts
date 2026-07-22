@@ -1,4 +1,5 @@
 import type { Champion, MatchFactPlayer, MatchPlayer, MatchRecord, PlayerLoadout, PlayerLoadoutsResponse, PlayerProfileResponse, PlayerSearchResult } from './types.js';
+import type { ChampionLobbyScope } from './champion-lobby.js';
 
 export class PaladinsCatApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string, public readonly details?: unknown) {
@@ -181,7 +182,11 @@ export class PaladinsCatApi {
   }
 
   champions(): Promise<Champion[]> { return this.get('/champions'); }
-  champion(idOrSlug: string): Promise<Record<string, unknown>> { return this.get(`/champions/${encodeURIComponent(idOrSlug)}`); }
-  rankedLeaderboard(limit = 10): Promise<Array<Record<string, unknown>>> { return this.get(`/stats/ranked-leaderboard?tier=26&top=${limit}`); }
-  status(): Promise<Record<string, unknown>> { return this.get('/health'); }
+  championPageData(idOrSlug: string, scope: ChampionLobbyScope): Promise<Record<string, unknown>> {
+    const query = new URLSearchParams();
+    if (scope.tierMin != null) query.set('tierMin', String(scope.tierMin));
+    if (scope.tierMax != null) query.set('tierMax', String(scope.tierMax));
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    return this.get(`/champions/${encodeURIComponent(idOrSlug)}/page-data${suffix}`);
+  }
 }

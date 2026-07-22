@@ -53,3 +53,25 @@ test('registers singular loadout with player and autocompleting champion options
   const champion = loadout.options?.find((option) => option.name === 'champion');
   assert.ok(champion && 'autocomplete' in champion && champion.autocomplete === true);
 });
+
+test('registers champion with a global-default lobby selector', () => {
+  const champion = commandData.find((command) => command.name === 'champion');
+  assert.ok(champion);
+  assert.deepEqual(champion.options?.map((option) => option.name), ['champion', 'lobby']);
+  const lobby = champion.options?.find((option) => option.name === 'lobby');
+  assert.ok(lobby && 'required' in lobby && lobby.required !== true);
+  const choices = 'choices' in lobby ? lobby.choices?.map(({ name, value }) => ({ name, value })) : undefined;
+  assert.deepEqual(choices, [
+    { name: 'Global ranked lobbies', value: 'global' },
+    { name: 'Bronze–Gold lobbies', value: 'bronze-gold' },
+    { name: 'Platinum+ lobbies', value: 'platinum' },
+    { name: 'Diamond+ lobbies', value: 'diamond' },
+  ]);
+});
+
+test('does not register retired leaderboard, random, or status commands', () => {
+  const names = commandData.map((command) => command.name);
+  assert.equal(names.includes('leaderboard'), false);
+  assert.equal(names.includes('random'), false);
+  assert.equal(names.includes('status'), false);
+});
