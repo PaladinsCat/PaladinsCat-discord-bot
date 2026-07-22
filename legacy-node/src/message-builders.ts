@@ -363,7 +363,7 @@ export function buildCompositionPayload(
   rows: Array<Record<string, unknown>>,
   webUrl: string,
 ): DiscordMessagePayload {
-  const lines = rows.slice(0, 5).map((row, index) => {
+  const fields = rows.slice(0, 5).map((row, index) => {
     const roles = [
       `${Math.round(numericMetric(row.frontline) ?? 0)} Frontline`,
       `${Math.round(numericMetric(row.damage) ?? 0)} Damage`,
@@ -372,13 +372,17 @@ export function buildCompositionPayload(
     ].join(' · ');
     const matches = Math.max(0, Math.round(numericMetric(row.count) ?? 0));
     const winRate = numericMetric(row.winrate);
-    return `**${index + 1}. ${roles}**\n${matches.toLocaleString()} matches · ${winRate == null ? '—' : `${winRate.toFixed(1)}%`} win rate`;
+    return {
+      name: `${index + 1}. ${roles}`,
+      value: `${matches.toLocaleString()} matches · ${winRate == null ? '—' : `${winRate.toFixed(1)}%`} win rate`,
+    };
   });
   return embedPayload({
     color: accent,
     title: 'Top ranked team compositions',
     url: `${webUrl}/game/compositions`,
-    description: descriptionFromLines(lines, 'No ranked composition statistics are available.'),
+    description: fields.length > 0 ? 'Most-played global ranked role lineups.' : 'No ranked composition statistics are available.',
+    fields,
     footer: { text: 'Top five by matches played · PaladinsCat ranked match database' },
   });
 }

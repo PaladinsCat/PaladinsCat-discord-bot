@@ -28,9 +28,12 @@ test('composition payload is limited to the five most-played rows', () => {
   }));
   const payload = buildCompositionPayload(rows, 'https://paladinscat.example');
   assert.deepEqual(validateDiscordMessage(payload), []);
-  const description = payload.embeds?.[0]?.description ?? '';
-  assert.match(description, /5\. 1 Frontline/);
-  assert.doesNotMatch(description, /6\. 1 Frontline/);
+  const fields = payload.embeds?.[0]?.fields ?? [];
+  assert.equal(fields.length, 5);
+  assert.match(fields[0]?.name ?? '', /1\. 1 Frontline/);
+  assert.match(fields[0]?.value ?? '', /1,000 matches · 50\.0% win rate/);
+  assert.match(fields[4]?.name ?? '', /5\. 1 Frontline/);
+  assert.equal(fields.some((field) => /^6\./.test(field.name)), false);
 });
 
 test('items payload identifies the selected lobby and displays database aggregates', () => {

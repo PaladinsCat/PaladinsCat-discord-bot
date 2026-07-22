@@ -13,21 +13,37 @@ import {
   buildNoLoadoutsPayload,
   buildCompositionPayload,
 } from './message-builders.js';
-import { rankedLobbyScope } from './ranked-lobby.js';
+import { RANKED_LOBBY_SCOPES, rankedLobbyScope } from './ranked-lobby.js';
 import { findPlayerChampionLoadouts } from './loadout-service.js';
 import { RenderService } from './render-service.js';
 
-const COMMANDS = [
+type PreviewParam = {
+  name: string;
+  label: string;
+  required?: boolean;
+  choices?: Array<{ label: string; value: string }>;
+};
+
+type PreviewCommand = { name: string; desc: string; params: PreviewParam[] };
+
+const LOBBY_PREVIEW_PARAM: PreviewParam = {
+  name: 'lobby',
+  label: 'Lobby',
+  required: true,
+  choices: RANKED_LOBBY_SCOPES.map(({ label, value }) => ({ label, value })),
+};
+
+const COMMANDS: PreviewCommand[] = [
   { name: 'help', desc: 'List bot commands', params: [] },
   { name: 'player', desc: 'Player profile', params: [{ name: 'player', label: 'Player name or ID', required: true }] },
   { name: 'match', desc: 'Match result image', params: [{ name: 'id', label: 'Match ID', required: true }] },
   { name: 'history', desc: 'Recent matches', params: [{ name: 'player', label: 'Player name or ID', required: true }] },
   { name: 'current', desc: 'Current live match', params: [{ name: 'player', label: 'Player name or ID (`mock` for sample)', required: true }] },
   { name: 'loadout', desc: 'Choose and render a saved loadout', params: [{ name: 'player', label: 'Player name or ID', required: true }, { name: 'champion', label: 'Champion name', required: true }] },
-  { name: 'champion', desc: 'Champion ranked stats by lobby tier', params: [{ name: 'champion', label: 'Champion name', required: true }, { name: 'lobby', label: 'Lobby: global, bronze-gold, platinum, or diamond' }] },
+  { name: 'champion', desc: 'Champion ranked stats by lobby tier', params: [{ name: 'champion', label: 'Champion name', required: true }, LOBBY_PREVIEW_PARAM] },
   { name: 'maps', desc: 'Statistics for every ranked map', params: [] },
   { name: 'composition', desc: 'Five most-played ranked team compositions', params: [] },
-  { name: 'items', desc: 'Ranked item statistics by lobby tier', params: [{ name: 'lobby', label: 'Lobby: global, bronze-gold, platinum, or diamond' }] },
+  { name: 'items', desc: 'Ranked item statistics by lobby tier', params: [LOBBY_PREVIEW_PARAM] },
 ];
 
 const CURRENT_MATCH_MOCK = {
@@ -327,9 +343,17 @@ function renderPlaygroundHTML() {
     '  cmd && cmd.params.forEach(function(p) {',
     '    var label = document.createElement("label");',
     '    label.innerHTML = p.label;',
-    '    var input = document.createElement("input");',
+    '    var input = document.createElement(p.choices && p.choices.length ? "select" : "input");',
     '    input.id = p.name;',
-    '    input.placeholder = p.label;',
+    '    if (input.tagName === "INPUT") { input.placeholder = p.label; }',
+    '    if (input.tagName === "SELECT") {',
+    '      p.choices.forEach(function(choice) {',
+    '        var option = document.createElement("option");',
+    '        option.value = choice.value;',
+    '        option.textContent = choice.label;',
+    '        input.appendChild(option);',
+    '      });',
+    '    }',
     '    input.required = p.required;',
     '    input.style.minWidth = "180px";',
     '    label.appendChild(input);',

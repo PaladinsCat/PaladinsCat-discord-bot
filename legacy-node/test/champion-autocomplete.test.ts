@@ -54,12 +54,12 @@ test('registers singular loadout with player and autocompleting champion options
   assert.ok(champion && 'autocomplete' in champion && champion.autocomplete === true);
 });
 
-test('registers champion with a global-default lobby selector', () => {
+test('registers champion with a required lobby choice list led by Global', () => {
   const champion = commandData.find((command) => command.name === 'champion');
   assert.ok(champion);
   assert.deepEqual(champion.options?.map((option) => option.name), ['champion', 'lobby']);
   const lobby = champion.options?.find((option) => option.name === 'lobby');
-  assert.ok(lobby && 'required' in lobby && lobby.required !== true);
+  assert.ok(lobby && 'required' in lobby && lobby.required === true);
   const choices = 'choices' in lobby ? lobby.choices?.map(({ name, value }) => ({ name, value })) : undefined;
   assert.deepEqual(choices, [
     { name: 'Global ranked lobbies', value: 'global' },
@@ -84,7 +84,7 @@ test('registers maps, composition, and tier-filtered items commands', () => {
   assert.ok(items);
   assert.deepEqual(items.options?.map((option) => option.name), ['lobby']);
   const lobby = items.options?.[0];
-  assert.ok(lobby && 'required' in lobby && lobby.required !== true);
+  assert.ok(lobby && 'required' in lobby && lobby.required === true);
   assert.deepEqual('choices' in lobby ? lobby.choices?.map(({ value }) => value) : undefined, [
     'global', 'bronze-gold', 'platinum', 'diamond',
   ]);

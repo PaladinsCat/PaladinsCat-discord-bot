@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, REST, Routes } from 'discord.js';
+import { Client, Events, GatewayIntentBits, REST } from 'discord.js';
 import { loadConfig } from './config.js';
 import { PaladinsCatApi } from './api-client.js';
 import { AssetCatalog } from './asset-catalog.js';
@@ -6,6 +6,7 @@ import { MatchRenderer } from './match-renderer.js';
 import { RenderService } from './render-service.js';
 import { commandData, CommandHandler } from './commands.js';
 import { startHealthServer } from './health.js';
+import { syncDiscordCommands } from './command-registration.js';
 
 const config = loadConfig();
 const api = new PaladinsCatApi(config.apiUrl, 12000, {
@@ -40,11 +41,20 @@ if (config.mode === 'dummy') {
     discordState = 'ready';
     console.log(`[bot] connected as ${ready.user.tag}`);
     const rest = new REST({ version: '10' }).setToken(config.discordToken!);
-    const route = config.developmentGuildId
-      ? Routes.applicationGuildCommands(config.applicationId!, config.developmentGuildId)
-      : Routes.applicationCommands(config.applicationId!);
-    await rest.put(route, { body: commandData });
-    console.log(`[bot] registered ${commandData.length} slash commands${config.developmentGuildId ? ' in development guild' : ' globally'}`);
+    const registration = await syncDiscordCommands(
+      rest,
+      config.applicationId!,
+      config.developmentGuildId,
+      ready.guilds.cache.keys(),
+      commandData,
+    );
+    console.log(`[bot] registered ${registration.registered} slash commands ${registration.scope === 'guild' ? 'in development guild' : 'globally'}`);
+    if (registration.scope === 'global') {
+      console.log(`[bot] cleared ${registration.clearedGuildScopes} stale guild command scope(s)`);
+      if (registration.failedGuildScopes > 0) {
+        console.warn(`[bot] failed to clear ${registration.failedGuildScopes} stale guild command scope(s)`);
+      }
+    }
     void commands.warmAutocomplete()
       .then(() => console.log('[bot] champion autocomplete catalog warmed'))
       .catch((error) => console.warn(`[bot] champion autocomplete warm-up failed: ${error instanceof Error ? error.message : error}`));

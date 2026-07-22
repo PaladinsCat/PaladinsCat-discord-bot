@@ -45,7 +45,8 @@ const championOption = (option: SlashCommandStringOption) => option
 
 const lobbyOption = (option: SlashCommandStringOption) => option
   .setName('lobby')
-  .setDescription('Ranked lobby tier (global by default)')
+  .setDescription('Ranked lobby tier; choose Global for all ranks')
+  .setRequired(true)
   .addChoices(...RANKED_LOBBY_SCOPES.map(({ label, value }) => ({ name: label, value })));
 
 function normalized(value: string) {
