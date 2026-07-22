@@ -75,3 +75,17 @@ test('does not register retired leaderboard, random, or status commands', () => 
   assert.equal(names.includes('random'), false);
   assert.equal(names.includes('status'), false);
 });
+
+test('registers maps, composition, and tier-filtered items commands', () => {
+  const names = commandData.map((command) => command.name);
+  assert.ok(names.includes('maps'));
+  assert.ok(names.includes('composition'));
+  const items = commandData.find((command) => command.name === 'items');
+  assert.ok(items);
+  assert.deepEqual(items.options?.map((option) => option.name), ['lobby']);
+  const lobby = items.options?.[0];
+  assert.ok(lobby && 'required' in lobby && lobby.required !== true);
+  assert.deepEqual('choices' in lobby ? lobby.choices?.map(({ value }) => value) : undefined, [
+    'global', 'bronze-gold', 'platinum', 'diamond',
+  ]);
+});

@@ -1,5 +1,5 @@
 import type { Champion, MatchFactPlayer, MatchPlayer, MatchRecord, PlayerLoadout, PlayerLoadoutsResponse, PlayerProfileResponse, PlayerSearchResult } from './types.js';
-import type { ChampionLobbyScope } from './champion-lobby.js';
+import type { RankedLobbyScope } from './ranked-lobby.js';
 
 export class PaladinsCatApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string, public readonly details?: unknown) {
@@ -182,11 +182,29 @@ export class PaladinsCatApi {
   }
 
   champions(): Promise<Champion[]> { return this.get('/champions'); }
-  championPageData(idOrSlug: string, scope: ChampionLobbyScope): Promise<Record<string, unknown>> {
+  championPageData(idOrSlug: string, scope: RankedLobbyScope): Promise<Record<string, unknown>> {
     const query = new URLSearchParams();
     if (scope.tierMin != null) query.set('tierMin', String(scope.tierMin));
     if (scope.tierMax != null) query.set('tierMax', String(scope.tierMax));
     const suffix = query.size > 0 ? `?${query.toString()}` : '';
     return this.get(`/champions/${encodeURIComponent(idOrSlug)}/page-data${suffix}`);
+  }
+
+  rankedMaps(limit = 100): Promise<Array<Record<string, unknown>>> {
+    return this.get(`/stats/maps?queueId=486&limit=${Math.min(Math.max(limit, 1), 100)}`);
+  }
+
+  async rankedCompositions(limit = 5): Promise<Array<Record<string, unknown>>> {
+    const payload = await this.get<{ data?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
+      `/matches/compositions?sortBy=count&order=desc&limit=${Math.min(Math.max(limit, 1), 25)}`,
+    );
+    return Array.isArray(payload) ? payload : payload.data ?? [];
+  }
+
+  rankedItems(scope: RankedLobbyScope, limit = 20): Promise<Array<Record<string, unknown>>> {
+    const query = new URLSearchParams({ mode: 'ranked', limit: String(Math.min(Math.max(limit, 1), 50)) });
+    if (scope.tierMin != null) query.set('tierMin', String(scope.tierMin));
+    if (scope.tierMax != null) query.set('tierMax', String(scope.tierMax));
+    return this.get(`/stats/items?${query.toString()}`);
   }
 }

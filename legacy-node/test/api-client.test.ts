@@ -74,6 +74,24 @@ test('champion page data uses global ranked metrics when no bounds are set', asy
   ]);
 });
 
+test('map, composition, and item commands use ranked database aggregate routes', async () => {
+  const urls: string[] = [];
+  const api = new PaladinsCatApi('http://backend:3005', 1000, {
+    localOnly: true,
+    fetchImpl: recordingFetch(urls),
+  });
+
+  await api.rankedMaps(100);
+  await api.rankedCompositions(5);
+  await api.rankedItems({ value: 'diamond', label: 'Diamond+ lobbies', tierMin: 21, tierMax: 26 }, 20);
+
+  assert.deepEqual(urls, [
+    'http://backend:3005/stats/maps?queueId=486&limit=100',
+    'http://backend:3005/matches/compositions?sortBy=count&order=desc&limit=5',
+    'http://backend:3005/stats/items?mode=ranked&limit=20&tierMin=21&tierMax=26',
+  ]);
+});
+
 test('normal mode preserves database-first backend fallback behavior', async () => {
   const urls: string[] = [];
   const api = new PaladinsCatApi('http://backend:3005', 1000, {

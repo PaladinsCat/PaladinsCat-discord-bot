@@ -26,6 +26,9 @@ export function buildHelpPayload(): DiscordMessagePayload {
       '`/current` current live match',
       '`/loadout` choose and render a saved champion deck',
       '`/champion` database-backed ranked statistics by lobby tier',
+      '`/maps` statistics for every ranked map',
+      '`/composition` five most-played ranked team compositions',
+      '`/items` ranked item usage and win rate by lobby tier',
     ].join('\n'),
   };
   return embedPayload(embed);
@@ -316,6 +319,90 @@ export function buildChampionPayload(
       { name: 'Most played talents', value: talentValue },
     ],
     footer: { text: 'Lobby filters use the ranked match database; global is the default.' },
+  });
+}
+
+function descriptionFromLines(lines: string[], fallback: string): string {
+  const kept: string[] = [];
+  let length = 0;
+  for (const line of lines) {
+    const nextLength = length + line.length + (kept.length > 0 ? 1 : 0);
+    if (nextLength > 4000) break;
+    kept.push(line);
+    length = nextLength;
+  }
+  return kept.join('\n') || fallback;
+}
+
+function durationLabel(value: unknown): string {
+  const seconds = Math.max(0, Math.round(numericMetric(value) ?? 0));
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+}
+
+export function buildMapsPayload(
+  rows: Array<Record<string, unknown>>,
+  webUrl: string,
+): DiscordMessagePayload {
+  const lines = rows.map((row) => {
+    const name = String(row.map ?? 'Unknown');
+    const safeName = cleanDiscordText(name.replace(/^Ranked\s+/i, ''), 'Unknown');
+    const matches = Math.max(0, Math.round(numericMetric(row.total_matches) ?? 0));
+    const share = numericMetric(row.distribution_rate);
+    return `**[${safeName}](${webUrl}/game/maps/${encodeURIComponent(name)})** · ${matches.toLocaleString()} matches · ${share == null ? '—' : `${share.toFixed(1)}%`} of pool · ${durationLabel(row.avg_duration_seconds)} avg`;
+  });
+  return embedPayload({
+    color: accent,
+    title: 'Ranked map statistics',
+    url: `${webUrl}/game/maps`,
+    description: descriptionFromLines(lines, 'No ranked map statistics are available.'),
+    footer: { text: 'PaladinsCat ranked match database · Ordered by matches played' },
+  });
+}
+
+export function buildCompositionPayload(
+  rows: Array<Record<string, unknown>>,
+  webUrl: string,
+): DiscordMessagePayload {
+  const lines = rows.slice(0, 5).map((row, index) => {
+    const roles = [
+      `${Math.round(numericMetric(row.frontline) ?? 0)} Frontline`,
+      `${Math.round(numericMetric(row.damage) ?? 0)} Damage`,
+      `${Math.round(numericMetric(row.flank) ?? 0)} Flank`,
+      `${Math.round(numericMetric(row.support) ?? 0)} Support`,
+    ].join(' · ');
+    const matches = Math.max(0, Math.round(numericMetric(row.count) ?? 0));
+    const winRate = numericMetric(row.winrate);
+    return `**${index + 1}. ${roles}**\n${matches.toLocaleString()} matches · ${winRate == null ? '—' : `${winRate.toFixed(1)}%`} win rate`;
+  });
+  return embedPayload({
+    color: accent,
+    title: 'Top ranked team compositions',
+    url: `${webUrl}/game/compositions`,
+    description: descriptionFromLines(lines, 'No ranked composition statistics are available.'),
+    footer: { text: 'Top five by matches played · PaladinsCat ranked match database' },
+  });
+}
+
+export function buildItemsPayload(
+  rows: Array<Record<string, unknown>>,
+  webUrl: string,
+  lobbyLabel = 'Global ranked lobbies',
+): DiscordMessagePayload {
+  const lines = rows.slice(0, 20).map((row, index) => {
+    const id = String(row.item_id ?? '');
+    const name = cleanDiscordText(row.item_name, 'Unknown item');
+    const uses = Math.max(0, Math.round(numericMetric(row.total_uses ?? row.total_usage) ?? 0));
+    const pickRate = numericMetric(row.pick_rate);
+    const winRate = numericMetric(row.win_rate);
+    const linkedName = id ? `[${name}](${webUrl}/game/items/${encodeURIComponent(id)})` : name;
+    return `**${index + 1}. ${linkedName}** · ${pickRate == null ? '—' : `${pickRate.toFixed(1)}%`} pick · ${winRate == null ? '—' : `${winRate.toFixed(1)}%`} WR · ${uses.toLocaleString()} uses`;
+  });
+  return embedPayload({
+    color: accent,
+    title: 'Ranked item statistics',
+    url: `${webUrl}/game/items`,
+    description: `**${lobbyLabel}**\n${descriptionFromLines(lines, 'No ranked item statistics are available.')}`,
+    footer: { text: 'Top twenty by usage · Global ranked lobbies are the default' },
   });
 }
 

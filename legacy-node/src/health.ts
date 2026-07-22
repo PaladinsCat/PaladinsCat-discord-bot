@@ -7,10 +7,13 @@ import {
   buildCurrentPayload,
   buildHelpPayload,
   buildHistoryPayload,
+  buildItemsPayload,
   buildLoadoutSelectionPayload,
+  buildMapsPayload,
   buildNoLoadoutsPayload,
+  buildCompositionPayload,
 } from './message-builders.js';
-import { championLobbyScope } from './champion-lobby.js';
+import { rankedLobbyScope } from './ranked-lobby.js';
 import { findPlayerChampionLoadouts } from './loadout-service.js';
 import { RenderService } from './render-service.js';
 
@@ -22,6 +25,9 @@ const COMMANDS = [
   { name: 'current', desc: 'Current live match', params: [{ name: 'player', label: 'Player name or ID (`mock` for sample)', required: true }] },
   { name: 'loadout', desc: 'Choose and render a saved loadout', params: [{ name: 'player', label: 'Player name or ID', required: true }, { name: 'champion', label: 'Champion name', required: true }] },
   { name: 'champion', desc: 'Champion ranked stats by lobby tier', params: [{ name: 'champion', label: 'Champion name', required: true }, { name: 'lobby', label: 'Lobby: global, bronze-gold, platinum, or diamond' }] },
+  { name: 'maps', desc: 'Statistics for every ranked map', params: [] },
+  { name: 'composition', desc: 'Five most-played ranked team compositions', params: [] },
+  { name: 'items', desc: 'Ranked item statistics by lobby tier', params: [{ name: 'lobby', label: 'Lobby: global, bronze-gold, platinum, or diamond' }] },
 ];
 
 const CURRENT_MATCH_MOCK = {
@@ -107,12 +113,25 @@ function handlePreviewCommand(
       })();
     }
     case 'champion': {
-      const scope = championLobbyScope(params.lobby);
+      const scope = rankedLobbyScope(params.lobby);
       const fetch = api.championPageData((params.champion ?? '').toLocaleLowerCase(), scope);
       return (async () => {
         const result = await fetch;
         return buildChampionPayload(result, webUrl, scope.label);
       })();
+    }
+    case 'maps': {
+      const fetch = api.rankedMaps(100);
+      return (async () => buildMapsPayload(await fetch, webUrl))();
+    }
+    case 'composition': {
+      const fetch = api.rankedCompositions(5);
+      return (async () => buildCompositionPayload(await fetch, webUrl))();
+    }
+    case 'items': {
+      const scope = rankedLobbyScope(params.lobby);
+      const fetch = api.rankedItems(scope, 20);
+      return (async () => buildItemsPayload(await fetch, webUrl, scope.label))();
     }
     default: throw new Error(`Unknown command: ${command}`);
   }

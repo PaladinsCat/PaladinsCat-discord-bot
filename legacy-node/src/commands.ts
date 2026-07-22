@@ -16,10 +16,13 @@ import {
   buildCurrentPayload,
   buildHelpPayload,
   buildHistoryPayload,
+  buildItemsPayload,
   buildLoadoutSelectionPayload,
+  buildMapsPayload,
   buildNoLoadoutsPayload,
+  buildCompositionPayload,
 } from './message-builders.js';
-import { CHAMPION_LOBBY_SCOPES, championLobbyScope } from './champion-lobby.js';
+import { RANKED_LOBBY_SCOPES, rankedLobbyScope } from './ranked-lobby.js';
 import { findPlayerChampionLoadouts } from './loadout-service.js';
 import { RenderService } from './render-service.js';
 import { QueueFullError } from './render-queue.js';
@@ -39,6 +42,11 @@ const championOption = (option: SlashCommandStringOption) => option
   .setDescription('Champion name')
   .setRequired(true)
   .setAutocomplete(true);
+
+const lobbyOption = (option: SlashCommandStringOption) => option
+  .setName('lobby')
+  .setDescription('Ranked lobby tier (global by default)')
+  .addChoices(...RANKED_LOBBY_SCOPES.map(({ label, value }) => ({ name: label, value })));
 
 function normalized(value: string) {
   return value.normalize('NFKD').toLocaleLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -85,10 +93,11 @@ export const commandData = [
     .addStringOption(championOption),
   new SlashCommandBuilder().setName('champion').setDescription('Show champion ranked statistics')
     .addStringOption(championOption)
-    .addStringOption((option) => option
-      .setName('lobby')
-      .setDescription('Ranked lobby tier (global by default)')
-      .addChoices(...CHAMPION_LOBBY_SCOPES.map(({ label, value }) => ({ name: label, value })))),
+    .addStringOption(lobbyOption),
+  new SlashCommandBuilder().setName('maps').setDescription('Show statistics for every ranked map'),
+  new SlashCommandBuilder().setName('composition').setDescription('Show the five most-played ranked team compositions'),
+  new SlashCommandBuilder().setName('items').setDescription('Show global ranked item statistics')
+    .addStringOption(lobbyOption),
 ].map((command) => command.toJSON());
 
 export class CommandHandler {
@@ -129,6 +138,9 @@ export class CommandHandler {
         case 'current': return this.current(interaction);
         case 'loadout': return this.loadout(interaction);
         case 'champion': return this.champion(interaction);
+        case 'maps': return this.maps(interaction);
+        case 'composition': return this.composition(interaction);
+        case 'items': return this.items(interaction);
         default: return interaction.editReply('Unknown command. Use `/help`.');
       }
     } catch (error) {
@@ -246,9 +258,25 @@ export class CommandHandler {
 
   private async champion(interaction: ChatInputCommandInteraction) {
     const name = interaction.options.getString('champion', true);
-    const scope = championLobbyScope(interaction.options.getString('lobby'));
+    const scope = rankedLobbyScope(interaction.options.getString('lobby'));
     const result = await this.api.championPageData(name.toLocaleLowerCase(), scope);
     return interaction.editReply(buildChampionPayload(result, this.webUrl, scope.label));
+  }
+
+  private async maps(interaction: ChatInputCommandInteraction) {
+    const rows = await this.api.rankedMaps(100);
+    return interaction.editReply(buildMapsPayload(rows, this.webUrl));
+  }
+
+  private async composition(interaction: ChatInputCommandInteraction) {
+    const rows = await this.api.rankedCompositions(5);
+    return interaction.editReply(buildCompositionPayload(rows, this.webUrl));
+  }
+
+  private async items(interaction: ChatInputCommandInteraction) {
+    const scope = rankedLobbyScope(interaction.options.getString('lobby'));
+    const rows = await this.api.rankedItems(scope, 20);
+    return interaction.editReply(buildItemsPayload(rows, this.webUrl, scope.label));
   }
 
   private async championsForAutocomplete(): Promise<Champion[]> {
