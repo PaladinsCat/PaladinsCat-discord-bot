@@ -14,6 +14,10 @@ const schema = z.object({
   PALADINSCAT_MATCH_LOOKUP_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
   PALADINSCAT_MATCH_LOOKUP_QUEUE_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
   PALADINSCAT_MATCH_LOOKUP_TIMEOUT_MS: z.coerce.number().int().min(10000).max(180000).default(125000),
+  PALADINSCAT_SERVICE_TOKEN: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().min(32).optional(),
+  ),
   PALADINSCAT_RENDER_CACHE_BYTES: z.coerce.number().int().min(0).max(64 * 1024 * 1024).default(32 * 1024 * 1024),
   PALADINSCAT_RENDER_CACHE_TTL_MS: z.coerce.number().int().min(1000).max(3600000).default(600000),
   DISCORD_TOKEN: z.string().optional(),
@@ -41,6 +45,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     matchLookupConcurrency: parsed.PALADINSCAT_MATCH_LOOKUP_CONCURRENCY,
     matchLookupQueueLimit: parsed.PALADINSCAT_MATCH_LOOKUP_QUEUE_LIMIT,
     matchLookupTimeoutMs: parsed.PALADINSCAT_MATCH_LOOKUP_TIMEOUT_MS,
+    serviceToken: parsed.PALADINSCAT_SERVICE_TOKEN,
     renderCacheBytes: parsed.PALADINSCAT_RENDER_CACHE_BYTES,
     renderCacheTtlMs: parsed.PALADINSCAT_RENDER_CACHE_TTL_MS,
     discordToken: parsed.DISCORD_TOKEN,

@@ -12,6 +12,7 @@ const config = loadConfig();
 const api = new PaladinsCatApi(config.apiUrl, 12000, {
   localOnly: config.localOnly,
   matchTimeoutMs: config.matchLookupTimeoutMs,
+  serviceToken: config.serviceToken,
 });
 const renderer = new MatchRenderer(new AssetCatalog(config.assetRoot));
 const renders = new RenderService(renderer, {

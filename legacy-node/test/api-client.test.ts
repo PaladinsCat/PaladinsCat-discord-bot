@@ -166,6 +166,26 @@ test('Discord player reads use the dedicated five-minute refresh path', async ()
   ]);
 });
 
+test('service credentials are attached to backend requests without changing route contracts', async () => {
+  let observedToken = '';
+  const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+    observedToken = new Headers(init?.headers).get('x-paladinscat-service-token') || '';
+    return new Response(JSON.stringify({ player: { id: '123' } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+  const api = new PaladinsCatApi('http://backend:3005', 1000, {
+    localOnly: true,
+    serviceToken: 'a'.repeat(64),
+    fetchImpl,
+  });
+
+  await api.playerById('123');
+
+  assert.equal(observedToken, 'a'.repeat(64));
+});
+
 test('current match uses the enriched live-lobby projection', async () => {
   const urls: string[] = [];
   const api = new PaladinsCatApi('http://backend:3005', 1000, {

@@ -11,15 +11,22 @@ export class PaladinsCatApi {
   private readonly localOnly: boolean;
   private readonly fetchImpl: typeof fetch;
   private readonly matchTimeoutMs: number;
+  private readonly serviceToken?: string;
 
   constructor(
     private readonly baseUrl: string,
     private readonly timeoutMs = 12000,
-    options: { localOnly?: boolean; fetchImpl?: typeof fetch; matchTimeoutMs?: number } = {},
+    options: {
+      localOnly?: boolean;
+      fetchImpl?: typeof fetch;
+      matchTimeoutMs?: number;
+      serviceToken?: string;
+    } = {},
   ) {
     this.localOnly = options.localOnly ?? false;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.matchTimeoutMs = options.matchTimeoutMs ?? Math.max(timeoutMs, 125000);
+    this.serviceToken = options.serviceToken?.trim() || undefined;
   }
 
   private readPath(path: string): string {
@@ -29,9 +36,13 @@ export class PaladinsCatApi {
   }
 
   private async request<T>(path: string, init: RequestInit = {}, timeoutMs = this.timeoutMs): Promise<T> {
+    const headers = new Headers(init.headers);
+    headers.set('Accept', 'application/json');
+    headers.set('User-Agent', 'PaladinsCatDiscordBot/0.1');
+    if (this.serviceToken) headers.set('X-PaladinsCat-Service-Token', this.serviceToken);
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       ...init,
-      headers: { Accept: 'application/json', 'User-Agent': 'PaladinsCatDiscordBot/0.1' },
+      headers,
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
