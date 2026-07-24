@@ -166,6 +166,53 @@ test('Discord player reads use the dedicated five-minute refresh path', async ()
   ]);
 });
 
+test('Discord saved-player reads and writes use the service mapping contract', async () => {
+  const requests: Array<{ url: string; method: string; body: unknown }> = [];
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const body = init?.body ? JSON.parse(String(init.body)) : null;
+    requests.push({ url, method, body });
+    const payload = url.includes('/players/discord?')
+      ? { player: { id: '716515038', name: 'NabiCookTV' } }
+      : { player: { id: '716515038', name: 'NabiCookTV' } };
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+  const api = new PaladinsCatApi('http://backend:3005', 1000, {
+    localOnly: true,
+    fetchImpl,
+  });
+
+  const saved = await api.saveDiscordPlayer('test-user-1', 'NabiCookTV');
+  const read = await api.savedDiscordPlayer('test-user-1');
+
+  assert.deepEqual(saved, { id: '716515038', name: 'NabiCookTV' });
+  assert.deepEqual(read, saved);
+  assert.deepEqual(requests, [
+    {
+      url: 'http://backend:3005/players/discord?player=NabiCookTV',
+      method: 'GET',
+      body: null,
+    },
+    {
+      url: 'http://backend:3005/players/discord/saved-player',
+      method: 'PUT',
+      body: {
+        discordUserId: 'test-user-1',
+        playerId: '716515038',
+      },
+    },
+    {
+      url: 'http://backend:3005/players/discord/saved-player?discordUserId=test-user-1',
+      method: 'GET',
+      body: null,
+    },
+  ]);
+});
+
 test('service credentials are attached to backend requests without changing route contracts', async () => {
   let observedToken = '';
   const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {

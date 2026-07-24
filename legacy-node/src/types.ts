@@ -94,6 +94,11 @@ export interface Champion {
   roles?: string;
 }
 
+export interface DiscordSavedPlayer {
+  id: string;
+  name: string;
+}
+
 export interface PlayerLoadout {
   id: string;
   deck_id: string | null;

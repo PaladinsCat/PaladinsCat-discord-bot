@@ -4,6 +4,8 @@ import {
   AttachmentBuilder,
   AutocompleteInteraction,
   ChatInputCommandInteraction,
+  escapeMarkdown,
+  MessageFlags,
   SlashCommandStringOption,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
@@ -49,6 +51,11 @@ const lobbyOption = (option: SlashCommandStringOption) => option
   .setRequired(true)
   .addChoices(...RANKED_LOBBY_SCOPES.map(({ label, value }) => ({ name: label, value })));
 
+const playerOption = (option: SlashCommandStringOption) => option
+  .setName('player')
+  .setDescription('Player name or ID; uses your saved player when omitted')
+  .setRequired(false);
+
 function normalized(value: string) {
   return value.normalize('NFKD').toLocaleLowerCase().replace(/[^a-z0-9]+/g, '');
 }
@@ -81,17 +88,21 @@ export function championAutocompleteChoices(champions: Champion[], input: string
 
 export const commandData = [
   new SlashCommandBuilder().setName('help').setDescription('List PaladinsCat bot commands'),
-  new SlashCommandBuilder().setName('player').setDescription('Show a Paladins player profile')
+  new SlashCommandBuilder().setName('save').setDescription('Save your default Paladins player')
     .addStringOption((option) => option.setName('player').setDescription('Player name or ID').setRequired(true)),
+  new SlashCommandBuilder().setName('profile').setDescription('Show a Paladins player profile')
+    .addStringOption(playerOption),
+  new SlashCommandBuilder().setName('player').setDescription('Show a Paladins player profile')
+    .addStringOption(playerOption),
   new SlashCommandBuilder().setName('match').setDescription('Render a match result image')
     .addStringOption((option) => option.setName('id').setDescription('Match ID').setRequired(true)),
   new SlashCommandBuilder().setName('history').setDescription('Show recent matches for a player')
-    .addStringOption((option) => option.setName('player').setDescription('Player name or ID').setRequired(true)),
+    .addStringOption(playerOption),
   new SlashCommandBuilder().setName('current').setDescription('Check a player’s current live match')
-    .addStringOption((option) => option.setName('player').setDescription('Player name or ID').setRequired(true)),
+    .addStringOption(playerOption),
   new SlashCommandBuilder().setName('loadout').setDescription('Render one of a player’s saved champion loadouts')
-    .addStringOption((option) => option.setName('player').setDescription('Player name or ID').setRequired(true))
-    .addStringOption(championOption),
+    .addStringOption(championOption)
+    .addStringOption(playerOption),
   new SlashCommandBuilder().setName('champion').setDescription('Show champion ranked statistics')
     .addStringOption(championOption)
     .addStringOption(lobbyOption),
@@ -131,17 +142,23 @@ export class CommandHandler {
   async handle(interaction: ChatInputCommandInteraction) {
     try {
       if (interaction.commandName === 'help') return interaction.reply({ ...buildHelpPayload(), ephemeral: true });
-      await interaction.deferReply();
+      if (interaction.commandName === 'save') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.deferReply();
+      }
       switch (interaction.commandName) {
-        case 'player': return this.player(interaction);
-        case 'match': return this.match(interaction);
-        case 'history': return this.history(interaction);
-        case 'current': return this.current(interaction);
-        case 'loadout': return this.loadout(interaction);
-        case 'champion': return this.champion(interaction);
-        case 'maps': return this.maps(interaction);
-        case 'composition': return this.composition(interaction);
-        case 'items': return this.items(interaction);
+        case 'save': return await this.save(interaction);
+        case 'profile':
+        case 'player': return await this.player(interaction);
+        case 'match': return await this.match(interaction);
+        case 'history': return await this.history(interaction);
+        case 'current': return await this.current(interaction);
+        case 'loadout': return await this.loadout(interaction);
+        case 'champion': return await this.champion(interaction);
+        case 'maps': return await this.maps(interaction);
+        case 'composition': return await this.composition(interaction);
+        case 'items': return await this.items(interaction);
         default: return interaction.editReply('Unknown command. Use `/help`.');
       }
     } catch (error) {
@@ -191,8 +208,18 @@ export class CommandHandler {
   }
 
   private async player(interaction: ChatInputCommandInteraction) {
-    const response = await this.api.discordPlayer(interaction.options.getString('player', true));
+    const response = await this.api.discordPlayer(await this.playerInput(interaction));
     return interaction.editReply(buildPlayerProfileMessage(response, this.webUrl));
+  }
+
+  private async save(interaction: ChatInputCommandInteraction) {
+    const input = interaction.options.getString('player', true).trim();
+    const player = await this.api.saveDiscordPlayer(interaction.user.id, input);
+    return interaction.editReply({
+      content: `Saved **${escapeMarkdown(player.name).slice(0, 100)}** (ID: \`${player.id}\`) as your default player. `
+        + 'Player commands will use it whenever you omit the player option.',
+      allowedMentions: { parse: [] },
+    });
   }
 
   private async match(interaction: ChatInputCommandInteraction) {
@@ -205,14 +232,14 @@ export class CommandHandler {
   }
 
   private async history(interaction: ChatInputCommandInteraction) {
-    const input = interaction.options.getString('player', true);
+    const input = await this.playerInput(interaction);
     const player = await this.api.resolvePlayer(input);
     const rows = await this.api.playerHistoryById(player.id, 10);
     return interaction.editReply(buildHistoryPayload(player.name, rows, this.webUrl));
   }
 
   private async current(interaction: ChatInputCommandInteraction) {
-    const input = interaction.options.getString('player', true);
+    const input = await this.playerInput(interaction);
     const result = await this.api.liveMatch(input);
     return interaction.editReply(buildCurrentPayload(result, this.webUrl));
   }
@@ -220,7 +247,7 @@ export class CommandHandler {
   private async loadout(interaction: ChatInputCommandInteraction) {
     const result = await findPlayerChampionLoadouts(
       this.api,
-      interaction.options.getString('player', true),
+      await this.playerInput(interaction),
       interaction.options.getString('champion', true),
     );
     if (result.loadouts.length === 0) {
@@ -291,6 +318,22 @@ export class CommandHandler {
       return values;
     } catch (error) {
       if (this.championCache) return this.championCache.values;
+      throw error;
+    }
+  }
+
+  private async playerInput(interaction: ChatInputCommandInteraction): Promise<string> {
+    const explicit = interaction.options.getString('player')?.trim();
+    if (explicit) return explicit;
+    try {
+      return (await this.api.savedDiscordPlayer(interaction.user.id)).id;
+    } catch (error) {
+      if (error instanceof PaladinsCatApiError && error.status === 404) {
+        throw new Error(
+          'No player name was entered and you do not have a saved player. '
+          + 'Enter a player or use `/save player:<name or ID>` first.',
+        );
+      }
       throw error;
     }
   }

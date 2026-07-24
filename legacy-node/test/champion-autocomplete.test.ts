@@ -45,11 +45,27 @@ test('every registered champion option enables Discord autocomplete', () => {
   assert.ok(championOptions.every((option) => 'autocomplete' in option && option.autocomplete === true));
 });
 
-test('registers singular loadout with player and autocompleting champion options', () => {
+test('registers player defaults and keeps every player argument optional outside save', () => {
+  const save = commandData.find((command) => command.name === 'save');
+  const profile = commandData.find((command) => command.name === 'profile');
+  assert.ok(save);
+  assert.ok(profile);
+  assert.equal(save.options?.[0]?.name, 'player');
+  assert.equal(save.options?.[0] && 'required' in save.options[0] ? save.options[0].required : undefined, true);
+
+  for (const commandName of ['profile', 'player', 'history', 'current', 'loadout']) {
+    const command = commandData.find((candidate) => candidate.name === commandName);
+    const player = command?.options?.find((option) => option.name === 'player');
+    assert.ok(player, `${commandName} should have a player option`);
+    assert.notEqual('required' in player ? player.required : undefined, true);
+  }
+});
+
+test('registers singular loadout with a required champion and optional player', () => {
   const loadout = commandData.find((command) => command.name === 'loadout');
   assert.ok(loadout);
   assert.equal(commandData.some((command) => command.name === 'loadouts'), false);
-  assert.deepEqual(loadout.options?.map((option) => option.name), ['player', 'champion']);
+  assert.deepEqual(loadout.options?.map((option) => option.name), ['champion', 'player']);
   const champion = loadout.options?.find((option) => option.name === 'champion');
   assert.ok(champion && 'autocomplete' in champion && champion.autocomplete === true);
 });

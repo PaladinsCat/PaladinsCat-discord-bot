@@ -20,7 +20,8 @@ export function buildHelpPayload(): DiscordMessagePayload {
     color: accent,
     title: 'PaladinsCat commands',
     description: [
-      '`/player` profile, rank, record and performance',
+      '`/save` remember your default Paladins player',
+      '`/profile` profile, rank, record and performance',
       '`/match` optimized match-result image',
       '`/history` recent matches',
       '`/current` current live match',
@@ -29,6 +30,8 @@ export function buildHelpPayload(): DiscordMessagePayload {
       '`/maps` statistics for every ranked map',
       '`/composition` five most-played ranked team compositions',
       '`/items` ranked item usage and win rate by lobby tier',
+      '',
+      'Player options are optional after you use `/save`.',
     ].join('\n'),
   };
   return embedPayload(embed);

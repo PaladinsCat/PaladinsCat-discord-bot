@@ -1,4 +1,4 @@
-import type { Champion, MatchFactPlayer, MatchPlayer, MatchRecord, PlayerLoadout, PlayerLoadoutsResponse, PlayerProfileResponse, PlayerSearchResult } from './types.js';
+import type { Champion, DiscordSavedPlayer, MatchFactPlayer, MatchPlayer, MatchRecord, PlayerLoadout, PlayerLoadoutsResponse, PlayerProfileResponse, PlayerSearchResult } from './types.js';
 import type { RankedLobbyScope } from './ranked-lobby.js';
 
 export class PaladinsCatApiError extends Error {
@@ -66,6 +66,14 @@ export class PaladinsCatApi {
     return this.request<T>(path, { method: 'POST' }, timeoutMs);
   }
 
+  private put<T>(path: string, body: unknown, timeoutMs = this.timeoutMs): Promise<T> {
+    return this.request<T>(path, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }, timeoutMs);
+  }
+
   async searchPlayers(name: string, limit = 5): Promise<PlayerSearchResult[]> {
     return this.get(`/players/search?name=${encodeURIComponent(name)}&limit=${limit}`);
   }
@@ -95,6 +103,22 @@ export class PaladinsCatApi {
     // backend for Hi-Rez data. The endpoint owns the durable five-minute
     // profile/name lookup guard and the web's history-cache TTL.
     return this.get(`/players/discord?${query.toString()}`);
+  }
+
+  async savedDiscordPlayer(discordUserId: string): Promise<DiscordSavedPlayer> {
+    const payload = await this.get<{ player: DiscordSavedPlayer }>(
+      `/players/discord/saved-player?discordUserId=${encodeURIComponent(discordUserId)}`,
+    );
+    return payload.player;
+  }
+
+  async saveDiscordPlayer(discordUserId: string, input: string): Promise<DiscordSavedPlayer> {
+    const resolved = await this.discordPlayer(input);
+    const payload = await this.put<{ player: DiscordSavedPlayer }>('/players/discord/saved-player', {
+      discordUserId,
+      playerId: String(resolved.player.id),
+    });
+    return payload.player;
   }
 
   async playerHistory(input: string, limit = 10): Promise<Array<Record<string, unknown>>> {
