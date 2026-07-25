@@ -79,7 +79,29 @@ function backendFetch(requests: string[]): typeof fetch {
       return Response.json([]);
     }
     if (url.pathname === '/live/players/716515038') {
-      return Response.json({ player_id: '716515038', match: null, players: [] });
+      return Response.json({
+        player_id: '716515038',
+        match: {
+          match_id: '1280977354',
+          queue_id: 486,
+          map: 'Stone Keep',
+          region: 'North America',
+        },
+        players: [
+          {
+            player_id: '716515038',
+            player_name: 'NabiCookTV',
+            champion_name: 'Ying',
+            task_force: 1,
+          },
+          {
+            player_id: '99',
+            player_name: 'OtherPlayer',
+            champion_name: 'Androxus',
+            task_force: 2,
+          },
+        ],
+      });
     }
     if (url.pathname === '/players/716515038/loadouts') {
       return Response.json({
@@ -134,12 +156,30 @@ test('save then every player command resolves the Discord-linked default end to 
 
   const playerAlias = interaction('player', userId);
   await handler.handle(playerAlias);
+  const playerAliasEmbed = (playerAlias.replies[0] as { embeds: Array<{ title: string }> }).embeds[0];
+  assert.ok(playerAliasEmbed);
+  assert.equal(playerAliasEmbed.title, 'NabiCookTV');
+
   const history = interaction('history', userId);
   await handler.handle(history);
+  const historyEmbed = (history.replies[0] as { embeds: Array<{ title: string }> }).embeds[0];
+  assert.ok(historyEmbed);
+  assert.equal(historyEmbed.title, 'NabiCookTV · Recent matches');
+
   const current = interaction('current', userId);
   await handler.handle(current);
+  const currentEmbed = (current.replies[0] as {
+    embeds: Array<{ fields?: Array<{ value: string }> }>;
+  }).embeds[0];
+  assert.ok(currentEmbed);
+  assert.match(currentEmbed.fields?.[0]?.value ?? '', /\[NabiCookTV\]/);
+  assert.doesNotMatch(currentEmbed.fields?.[0]?.value ?? '', /\[716515038\]/);
+
   const loadout = interaction('loadout', userId, { champion: 'Androxus' });
   await handler.handle(loadout);
+  const loadoutEmbed = (loadout.replies[0] as { embeds: Array<{ title: string }> }).embeds[0];
+  assert.ok(loadoutEmbed);
+  assert.equal(loadoutEmbed.title, 'NabiCookTV · Androxus');
 
   assert.deepEqual(requests, [
     'GET /players/discord?player=NabiCookTV',

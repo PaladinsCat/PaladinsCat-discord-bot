@@ -22,10 +22,12 @@ export interface PlayerChampionLoadouts {
  */
 export async function findPlayerChampionLoadouts(
   api: PaladinsCatApi,
-  playerInput: string,
+  playerInput: string | PlayerSearchResult,
   championInput: string,
 ): Promise<PlayerChampionLoadouts> {
-  const player = await api.resolvePlayer(playerInput.trim());
+  const player = typeof playerInput === 'string'
+    ? await api.resolvePlayer(playerInput.trim())
+    : playerInput;
   const requestedChampion = normalizeChampionName(championInput);
   if (!requestedChampion) throw new Error('Enter a champion name.');
 

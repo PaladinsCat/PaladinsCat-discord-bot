@@ -39,6 +39,11 @@ type LoadoutSession = {
   loadouts: PlayerLoadout[];
   expiresAt: number;
 };
+
+type PlayerCommandInput = {
+  query: string;
+  resolved?: PlayerSearchResult;
+};
 const championOption = (option: SlashCommandStringOption) => option
   .setName('champion')
   .setDescription('Champion name')
@@ -208,7 +213,8 @@ export class CommandHandler {
   }
 
   private async player(interaction: ChatInputCommandInteraction) {
-    const response = await this.api.discordPlayer(await this.playerInput(interaction));
+    const input = await this.playerInput(interaction);
+    const response = await this.api.discordPlayer(input.query);
     return interaction.editReply(buildPlayerProfileMessage(response, this.webUrl));
   }
 
@@ -233,21 +239,22 @@ export class CommandHandler {
 
   private async history(interaction: ChatInputCommandInteraction) {
     const input = await this.playerInput(interaction);
-    const player = await this.api.resolvePlayer(input);
+    const player = input.resolved ?? await this.api.resolvePlayer(input.query);
     const rows = await this.api.playerHistoryById(player.id, 10);
     return interaction.editReply(buildHistoryPayload(player.name, rows, this.webUrl));
   }
 
   private async current(interaction: ChatInputCommandInteraction) {
     const input = await this.playerInput(interaction);
-    const result = await this.api.liveMatch(input);
+    const result = await this.api.liveMatch(input.query);
     return interaction.editReply(buildCurrentPayload(result, this.webUrl));
   }
 
   private async loadout(interaction: ChatInputCommandInteraction) {
+    const input = await this.playerInput(interaction);
     const result = await findPlayerChampionLoadouts(
       this.api,
-      await this.playerInput(interaction),
+      input.resolved ?? input.query,
       interaction.options.getString('champion', true),
     );
     if (result.loadouts.length === 0) {
@@ -322,11 +329,12 @@ export class CommandHandler {
     }
   }
 
-  private async playerInput(interaction: ChatInputCommandInteraction): Promise<string> {
+  private async playerInput(interaction: ChatInputCommandInteraction): Promise<PlayerCommandInput> {
     const explicit = interaction.options.getString('player')?.trim();
-    if (explicit) return explicit;
+    if (explicit) return { query: explicit };
     try {
-      return (await this.api.savedDiscordPlayer(interaction.user.id)).id;
+      const saved = await this.api.savedDiscordPlayer(interaction.user.id);
+      return { query: saved.id, resolved: saved };
     } catch (error) {
       if (error instanceof PaladinsCatApiError && error.status === 404) {
         throw new Error(
