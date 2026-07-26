@@ -8,7 +8,7 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 const MATCH_SCALE = 1.6;
 const LOADOUT_SCALE = 1;
-const TEMPLATE_VERSION = 13;
+const TEMPLATE_VERSION = 14;
 const LOADOUT_TEMPLATE_VERSION = 9;
 const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
@@ -77,7 +77,38 @@ export function matchPlayerDisplayTier(player: TierSource) {
   const rank = Number(player.kbm_rank ?? player.profile_snapshot?.kbm_rank ?? 0);
   return value === 26 && Number.isFinite(rank) && rank >= 1 && rank <= 100 ? 27 : value;
 }
-function party(player: MatchPlayer) { const value = Number(player.party ?? player.party_number ?? player.party_id ?? 0); return Number.isFinite(value) && value > 0 ? Math.floor(value) : null; }
+function matchPartyNumbers(players: MatchPlayer[]): Map<MatchPlayer, number> {
+  const rawPartyCounts = new Map<number, number>();
+  for (const player of players) {
+    const rawPartyId = Number(player.party_id ?? 0);
+    if (!Number.isSafeInteger(rawPartyId) || rawPartyId <= 0) continue;
+    rawPartyCounts.set(rawPartyId, (rawPartyCounts.get(rawPartyId) ?? 0) + 1);
+  }
+
+  const rawPartyNumbers = new Map(
+    [...rawPartyCounts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([partyId]) => partyId)
+      .sort((left, right) => left - right)
+      .map((partyId, index) => [partyId, index + 1] as const),
+  );
+
+  const result = new Map<MatchPlayer, number>();
+  for (const player of players) {
+    const rawPartyId = Number(player.party_id ?? 0);
+    const derived = rawPartyNumbers.get(rawPartyId);
+    if (derived != null) {
+      result.set(player, derived);
+      continue;
+    }
+
+    // Older ranked read models already expose the safe match-local party
+    // number. Never fall back to a singleton raw Hi-Rez party ID.
+    const stored = Number(player.party ?? player.party_number ?? 0);
+    if (Number.isSafeInteger(stored) && stored > 0) result.set(player, stored);
+  }
+  return result;
+}
 const assetDataUrls = new Map<string, string>();
 
 function assetUrl(source: string | null) {
@@ -281,7 +312,8 @@ export class MatchRenderer {
   private document(record: MatchRecord) {
     const map = assetUrl(this.assets.mapImage(record.match.map));
     const background = map ? `#scoreboard::before{background-image:url('${map}')!important}` : '';
-    return `<!doctype html><html><head><meta charset="utf-8"/><style>${this.css}\n${background}\nbody{--cheater-pattern:url("${this.cheaterPatternUrl}");min-height:720px;padding:0;background:transparent}.scoreboard{transform:none}.scoreboard-canvas{width:1280px;height:720px}.viewport{width:1280px;max-width:none}.prototype-note,.color-lab{display:none}</style></head><body data-theme="${this.theme}"><main class="viewport"><div class="scoreboard-canvas"><section class="scoreboard" id="scoreboard" aria-label="Paladins match scoreboard">${this.hero(record)}${this.columns()}<div class="players" id="team-one">${this.teamRows(record, 1)}</div>${this.summary(record, 1)}<div class="players" id="team-two">${this.teamRows(record, 2)}</div>${this.summary(record, 2)}</section></div></main></body></html>`;
+    const partyNumbers = matchPartyNumbers(record.players);
+    return `<!doctype html><html><head><meta charset="utf-8"/><style>${this.css}\n${background}\nbody{--cheater-pattern:url("${this.cheaterPatternUrl}");min-height:720px;padding:0;background:transparent}.scoreboard{transform:none}.scoreboard-canvas{width:1280px;height:720px}.viewport{width:1280px;max-width:none}.prototype-note,.color-lab{display:none}.talent-empty{display:grid;place-items:center;color:#8f9bad;font-size:18px;font-weight:700}</style></head><body data-theme="${this.theme}"><main class="viewport"><div class="scoreboard-canvas"><section class="scoreboard" id="scoreboard" aria-label="Paladins match scoreboard">${this.hero(record)}${this.columns()}<div class="players" id="team-one">${this.teamRows(record, 1, partyNumbers)}</div>${this.summary(record, 1)}<div class="players" id="team-two">${this.teamRows(record, 2, partyNumbers)}</div>${this.summary(record, 2)}</section></div></main></body></html>`;
   }
 
   private loadoutDocument(record: LoadoutRenderRecord) {
@@ -361,7 +393,7 @@ export class MatchRenderer {
     return `<header class="hero${ranked ? '' : ' casual'}"><div class="match-identity"><div class="brand-line"><span class="brand-name"><img src="${assetUrl(this.assets.icon('paladinscat'))}" alt=""/> PaladinsCat</span><div class="status-tags">${statusMarkup}</div></div><div class="map-line"><div class="${mapClass}" title="${xml(mapName)}">${xml(mapName)}</div></div>${contextMarkup}</div><div class="score${ranked ? '' : ' casual'}">${banMarkup}<span class="score-number team-one-score">${score(match.team1_score)}</span><span class="score-separator">/</span><span class="score-number team-two-score">${score(match.team2_score)}</span>${rightBanMarkup}</div><div class="match-meta${ranked ? '' : ' casual-meta'}">${tierMarkup}<time class="timestamp-meta" datetime="${xml(match.entry_datetime)}">${xml(utcTimestamp(match.entry_datetime))}</time><div class="duration-meta"><div class="meta-value">${duration(match.duration_seconds)}</div><div class="meta-label">Duration</div></div><div class="match-id-meta"><div class="meta-value">${xml(match.match_id)}</div><div class="meta-label">Match ID</div></div></div></header>`;
   }
 
-  private teamRows(record: MatchRecord, team: 1 | 2) {
+  private teamRows(record: MatchRecord, team: 1 | 2, partyNumbers: Map<MatchPlayer, number>) {
     const players = record.players.filter((player) => player.task_force === team).slice(0, 5);
     const facts = new Map((record.facts ?? []).map((fact) => [String(fact.player_id), fact]));
     const metrics = players.map((player) => this.metrics(player));
@@ -379,10 +411,14 @@ export class MatchRenderer {
       const verificationBadge = (player.verified ?? player.profile_snapshot?.verified)
         ? `<img class="verified-player-icon" src="${assetUrl(this.assets.icon('Verified_Player_Support_Icon', '.png'))}" alt="Verified PaladinsCat player"/>`
         : '';
-      const moderationTag = cheater
-        ? '<span class="player-status-tag cheater">CHEATER</span>'
-        : suspicious ? '<span class="player-status-tag suspicious">SUS</span>' : '';
-      return `<div class="player-row grid-row${cheater ? ' cheater-row' : ''}"><div class="champion-wrap"><img class="champion-icon" src="${assetUrl(this.assets.championIcon(player.champion_name))}" alt="${xml(player.champion_name)}"/>${party(player) ? `<span class="party-badge" title="Party ${party(player)}">${party(player)}</span>` : ''}</div><div class="rank"><img src="${assetUrl(this.assets.rankIcon(playerTier))}" alt="${xml(TIER_NAMES[playerTier] ?? 'Unranked')}"/></div><div class="level">${number(level)}</div><div class="player"><div class="player-name"><span class="player-name-text">${xml(player.player_name || 'PRIVATE')}</span>${verificationBadge}${moderationTag}</div><div class="player-sub">PID ${xml(player.player_id || 0)}</div></div><div class="player-elo">${player.queue_elo ? number(player.queue_elo) : '—'}</div><img class="talent-icon" src="${assetUrl(talentIcon)}" alt="${xml(talent?.talent_name ?? '')}"/><div class="metric credits${peak('credits')}"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${number(values.credits)}</div><div class="metric kda">${player.kills} / ${player.deaths} / ${player.assists}</div><div class="metric obj${peak('objective')}">${number(values.objective)}</div><div class="metric damage${peak('damage')}">${number(values.damage)}</div><div class="metric taken${peak('taken')}">${number(values.taken)}</div><div class="metric shield${peak('shielding', true)}">${number(values.shielding)}</div><div class="metric heal${peak('healing', true)}">${number(values.healing)}</div></div>`;
+        const moderationTag = cheater
+          ? '<span class="player-status-tag cheater">CHEATER</span>'
+          : suspicious ? '<span class="player-status-tag suspicious">SUS</span>' : '';
+        const partyNumber = partyNumbers.get(player);
+        const talentMarkup = talentIcon
+          ? `<img class="talent-icon" src="${assetUrl(talentIcon)}" alt="${xml(talent?.talent_name ?? '')}"/>`
+          : '<span class="talent-icon talent-empty" aria-label="Talent unavailable">—</span>';
+        return `<div class="player-row grid-row${cheater ? ' cheater-row' : ''}"><div class="champion-wrap"><img class="champion-icon" src="${assetUrl(this.assets.championIcon(player.champion_name))}" alt="${xml(player.champion_name)}"/>${partyNumber ? `<span class="party-badge" title="Party ${partyNumber}">${partyNumber}</span>` : ''}</div><div class="rank"><img src="${assetUrl(this.assets.rankIcon(playerTier))}" alt="${xml(TIER_NAMES[playerTier] ?? 'Unranked')}"/></div><div class="level">${number(level)}</div><div class="player"><div class="player-name"><span class="player-name-text">${xml(player.player_name || 'PRIVATE')}</span>${verificationBadge}${moderationTag}</div><div class="player-sub">PID ${xml(player.player_id || 0)}</div></div><div class="player-elo">${player.queue_elo ? number(player.queue_elo) : '—'}</div>${talentMarkup}<div class="metric credits${peak('credits')}"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${number(values.credits)}</div><div class="metric kda">${player.kills} / ${player.deaths} / ${player.assists}</div><div class="metric obj${peak('objective')}">${number(values.objective)}</div><div class="metric damage${peak('damage')}">${number(values.damage)}</div><div class="metric taken${peak('taken')}">${number(values.taken)}</div><div class="metric shield${peak('shielding', true)}">${number(values.shielding)}</div><div class="metric heal${peak('healing', true)}">${number(values.healing)}</div></div>`;
     }).join('');
   }
 

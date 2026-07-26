@@ -83,6 +83,57 @@ test("embeds Io's canonical talent artwork when the API name differs from the as
   assert.doesNotMatch(markup, /class="talent-icon" src="" alt="Goddess&#39; Blessing"/);
 });
 
+test('derives compact party groups and never renders raw singleton party IDs or empty talent images', () => {
+  const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
+  const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
+  const partyIds = [168453, 168453, 168453, 168453, 171763, 172817, 171383, 173096, 172267, 172267];
+  const players = partyIds.map((partyId, index) => ({
+    player_id: String(index + 1),
+    player_name: `Player ${index + 1}`,
+    champion_id: 2205,
+    champion_name: 'Androxus',
+    kills: 1,
+    deaths: 1,
+    assists: 1,
+    damage_done_physical: 1000,
+    damage_taken: 1000,
+    damage_mitigated: 0,
+    healing: 0,
+    gold_earned: 1000,
+    party_id: partyId,
+    win_status: index < 5 ? 'Winner' : 'Loser',
+    task_force: index < 5 ? 1 : 2,
+    league_tier: 0,
+    source: 'direct',
+  }));
+  const record: MatchRecord = {
+    match: {
+      match_id: '1281027944',
+      entry_datetime: '2026-07-26T08:28:00Z',
+      queue_id: 424,
+      duration_seconds: 1097,
+      region: 'NA',
+      map: 'Jaguar Falls',
+      team1_score: 4,
+      team2_score: 3,
+      winning_task_force: 1,
+      broken: false,
+      recovered: false,
+      private: false,
+    },
+    players,
+    facts: [],
+  };
+
+  const html = (renderer as unknown as { document(value: MatchRecord): string }).document(record);
+  const markup = html.slice(html.indexOf('</style>'));
+  assert.equal((markup.match(/title="Party 1"/g) ?? []).length, 4);
+  assert.equal((markup.match(/title="Party 2"/g) ?? []).length, 2);
+  assert.doesNotMatch(markup, /title="Party (?:168453|171763|172817|171383|173096|172267)"/);
+  assert.equal((markup.match(/class="talent-icon talent-empty"/g) ?? []).length, 10);
+  assert.doesNotMatch(markup, /class="talent-icon" src=""/);
+});
+
 test('shows the approved casual hero while preserving ranked metadata coordinates', () => {
   const assetRoot = path.resolve(process.cwd(), '../frontend/public/images');
   const renderer = new MatchRenderer(new AssetCatalog(assetRoot));
