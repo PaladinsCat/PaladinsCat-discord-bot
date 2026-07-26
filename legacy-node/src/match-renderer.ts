@@ -133,7 +133,6 @@ export class MatchRenderer {
   private readonly css: string;
   private readonly cheaterPatternUrl: string;
   private browserPromise: Promise<Browser> | null = null;
-  private readonly idlePages = new Map<number, Page[]>();
 
   constructor(
     private readonly assets: AssetCatalog,
@@ -162,15 +161,14 @@ export class MatchRenderer {
       this.acquirePage(LOADOUT_SCALE),
     ]);
     await Promise.all([
-      this.releasePage(matchPage, MATCH_SCALE, true),
-      this.releasePage(loadoutPage, LOADOUT_SCALE, true),
+      this.releasePage(matchPage),
+      this.releasePage(loadoutPage),
     ]);
   }
 
   async close(): Promise<void> {
     const pending = this.browserPromise;
     this.browserPromise = null;
-    this.idlePages.clear();
     if (!pending) return;
     try {
       const browser = await pending;
@@ -180,18 +178,49 @@ export class MatchRenderer {
     }
   }
 
-  async render(record: MatchRecord): Promise<Buffer> {
-    return this.renderElement(this.document(record), '#scoreboard', 'Scoreboard markup did not render.', MATCH_SCALE);
+  async render(record: MatchRecord, signal?: AbortSignal): Promise<Buffer> {
+    return this.renderElement(this.document(record), '#scoreboard', 'Scoreboard markup did not render.', MATCH_SCALE, signal);
   }
 
-  async renderLoadout(record: LoadoutRenderRecord): Promise<Buffer> {
-    return this.renderElement(this.loadoutDocument(record), '#loadout', 'Loadout markup did not render.', LOADOUT_SCALE);
+  async renderLoadout(record: LoadoutRenderRecord, signal?: AbortSignal): Promise<Buffer> {
+    return this.renderElement(this.loadoutDocument(record), '#loadout', 'Loadout markup did not render.', LOADOUT_SCALE, signal);
   }
 
-  private async renderElement(documentHtml: string, selector: string, missingMessage: string, scale: number): Promise<Buffer> {
-    const page = await this.acquirePage(scale);
-    let reusable = false;
+  /**
+   * Immediately discard the current Chromium process after a hung render.
+   * Browser.close() can wait on the same poisoned renderer that caused the
+   * timeout, so recovery deliberately disconnects and terminates the child.
+   * The next render lazily starts a clean browser.
+   */
+  async recycle(): Promise<void> {
+    const pending = this.browserPromise;
+    this.browserPromise = null;
+    if (!pending) return;
     try {
+      const browser = await pending;
+      const process = browser.process();
+      browser.disconnect();
+      if (process && !process.killed) process.kill('SIGKILL');
+    } catch {
+      // A failed or already-disconnected browser is already safe to replace.
+    }
+  }
+
+  private async renderElement(
+    documentHtml: string,
+    selector: string,
+    missingMessage: string,
+    scale: number,
+    signal?: AbortSignal,
+  ): Promise<Buffer> {
+    signal?.throwIfAborted();
+    const page = await this.acquirePage(scale);
+    const abortPage = () => {
+      void page.close().catch(() => undefined);
+    };
+    signal?.addEventListener('abort', abortPage, { once: true });
+    try {
+      signal?.throwIfAborted();
       // The source prototype has an external font import. Waiting for the load
       // event lets a network-restricted render container hang on that request.
       await page.setContent(documentHtml, { waitUntil: 'domcontentloaded' });
@@ -203,33 +232,29 @@ export class MatchRenderer {
         }));
         await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       });
+      signal?.throwIfAborted();
       const board = await page.$(selector);
       if (!board) throw new Error(missingMessage);
       const image = Buffer.from(await board.screenshot({ type: 'png', optimizeForSpeed: true }));
-      reusable = true;
+      signal?.throwIfAborted();
       return image;
     } finally {
-      await this.releasePage(page, scale, reusable);
+      signal?.removeEventListener('abort', abortPage);
+      await this.releasePage(page);
     }
   }
 
   private async acquirePage(scale: number): Promise<Page> {
-    const pool = this.idlePages.get(scale) ?? [];
-    let page = pool.pop();
-    while (page?.isClosed()) page = pool.pop();
-    if (page) return page;
-    page = await (await this.browser()).newPage();
+    // Reusing an idle page saves only a small newPage() cost, but Chromium can
+    // leave an inactive headless renderer unable to complete its next
+    // screenshot. Keep the browser process warm and isolate every image in a
+    // fresh page instead.
+    const page = await (await this.browser()).newPage();
     await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: scale });
     return page;
   }
 
-  private async releasePage(page: Page, scale: number, reusable: boolean): Promise<void> {
-    if (reusable && !page.isClosed() && this.browserPromise) {
-      const pool = this.idlePages.get(scale) ?? [];
-      pool.push(page);
-      this.idlePages.set(scale, pool);
-      return;
-    }
+  private async releasePage(page: Page): Promise<void> {
     await page.close().catch(() => undefined);
   }
 
@@ -245,7 +270,6 @@ export class MatchRenderer {
       browser.once('disconnected', () => {
         if (this.browserPromise === pending) {
           this.browserPromise = null;
-          this.idlePages.clear();
         }
       });
     }).catch(() => {

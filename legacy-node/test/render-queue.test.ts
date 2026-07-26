@@ -26,3 +26,20 @@ test('rejects new work when the waiting queue is full', async () => {
   release();
   assert.deepEqual(await Promise.all([active, waiting]), [1, 2]);
 });
+
+test('aborts underlying work when its queue timeout expires', async () => {
+  const queue = new BoundedWorkQueue<number>(1, 1, 10);
+  let aborted = false;
+  const pending = queue.add('hung', async (signal) => {
+    await new Promise<void>((resolve) => signal.addEventListener('abort', () => {
+      aborted = true;
+      resolve();
+    }, { once: true }));
+    throw signal.reason;
+  });
+
+  await assert.rejects(pending, /Render exceeded 10ms/);
+  assert.equal(aborted, true);
+  assert.equal(queue.snapshot().active, 0);
+  assert.equal(queue.snapshot().failed, 1);
+});

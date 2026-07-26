@@ -232,9 +232,17 @@ export class CommandHandler {
     this.claimImageCooldown(interaction.user.id);
     const id = interaction.options.getString('id', true);
     if (!/^\d{6,20}$/.test(id)) throw new Error('Enter a valid numeric match ID.');
-    const buffer = await this.renders.matchById(id, () => this.api.match(id));
-    const attachment = new AttachmentBuilder(buffer, { name: `paladinscat-match-${id}.png`, description: `Paladins match ${id}` });
-    return interaction.editReply({ content: `${this.webUrl}/matches/${id}`, files: [attachment] });
+    const startedAt = performance.now();
+    try {
+      const buffer = await this.renders.matchById(id, () => this.api.match(id));
+      const attachment = new AttachmentBuilder(buffer, { name: `paladinscat-match-${id}.png`, description: `Paladins match ${id}` });
+      const reply = await interaction.editReply({ content: `${this.webUrl}/matches/${id}`, files: [attachment] });
+      console.log(`[bot] match ${id} completed in ${Math.round(performance.now() - startedAt)}ms`);
+      return reply;
+    } catch (error) {
+      console.warn(`[bot] match ${id} failed in ${Math.round(performance.now() - startedAt)}ms: ${error instanceof Error ? error.message : error}`);
+      throw error;
+    }
   }
 
   private async history(interaction: ChatInputCommandInteraction) {

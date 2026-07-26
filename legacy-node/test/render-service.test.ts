@@ -118,3 +118,35 @@ test('caches and deduplicates loadout renders in the shared image queue', async 
   assert.equal((await service.loadout(loadout)).toString(), 'loadout-image');
   assert.equal(renders, 1);
 });
+
+test('recycles Chromium and retries a hung render inside the total queue budget', async () => {
+  let renders = 0;
+  let recycles = 0;
+  const renderer = {
+    templateVersion: 99,
+    render: async (_record: MatchRecord, signal?: AbortSignal) => {
+      renders += 1;
+      if (renders === 1) {
+        await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
+        throw signal?.reason;
+      }
+      return Buffer.from('recovered-image');
+    },
+    recycle: async () => { recycles += 1; },
+    warm: async () => undefined,
+    close: async () => undefined,
+  } as unknown as MatchRenderer;
+  const service = new RenderService(renderer, {
+    concurrency: 1,
+    queueLimit: 2,
+    timeoutMs: 50,
+    cacheBytes: 1024,
+    cacheTtlMs: 1000,
+  });
+
+  assert.equal((await service.match(record('recover'))).toString(), 'recovered-image');
+  assert.equal(renders, 2);
+  assert.equal(recycles, 1);
+  assert.equal(service.snapshot().renderRetries, 1);
+  assert.equal(service.snapshot().browserRecoveries, 1);
+});

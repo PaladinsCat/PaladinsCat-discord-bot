@@ -11,7 +11,7 @@ export interface QueueSnapshot {
 
 type Waiting<T> = {
   key: string;
-  work: () => Promise<T>;
+  work: (signal: AbortSignal) => Promise<T>;
   resolve: (value: T) => void;
   reject: (error: unknown) => void;
 };
@@ -32,7 +32,7 @@ export class BoundedWorkQueue<T> {
     private readonly workLabel = 'Render',
   ) {}
 
-  add(key: string, work: () => Promise<T>): Promise<T> {
+  add(key: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const existing = this.inFlight.get(key);
     if (existing) {
       this.deduplicated += 1;
@@ -72,12 +72,18 @@ export class BoundedWorkQueue<T> {
       const item = this.waiting.shift()!;
       this.active += 1;
       const startedAt = performance.now();
-      let timer: NodeJS.Timeout;
+      const controller = new AbortController();
+      let timer: NodeJS.Timeout | undefined;
       const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${this.workLabel} exceeded ${this.timeoutMs}ms`)), this.timeoutMs);
+        timer = setTimeout(() => {
+          const error = new Error(`${this.workLabel} exceeded ${this.timeoutMs}ms`);
+          controller.abort(error);
+          reject(error);
+        }, this.timeoutMs);
         timer.unref();
       });
-      Promise.race([item.work(), timeout])
+      const work = Promise.resolve().then(() => item.work(controller.signal));
+      Promise.race([work, timeout])
         .then((value) => {
           this.recordDuration(startedAt);
           this.completed += 1;
@@ -89,7 +95,7 @@ export class BoundedWorkQueue<T> {
           item.reject(error);
         })
         .finally(() => {
-          clearTimeout(timer);
+          if (timer) clearTimeout(timer);
           this.active -= 1;
           this.inFlight.delete(item.key);
           this.drain();
