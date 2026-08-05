@@ -18,8 +18,15 @@ use twilight_http::Client as HttpClient;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Honor RUST_LOG when set (e.g. DEBUG/TRACE for gateway close diagnostics).
+    // Falls back to a sane default that keeps Discord/HTTP noise quiet.
+    let default_filter =
+        "paladinscat_discord_bot=info,twilight=warn,reqwest=warn,tokio_tungstenite=off";
     tracing_subscriber::fmt()
-        .with_env_filter("paladinscat_discord_bot=info,twilight=warn,reqwest=warn")
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter)),
+        )
         .init();
 
     let cfg = config::Config::load()?;
@@ -31,9 +38,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Spawn health + preview server (shares ApiClient + RenderCache)
     let _handle = health::spawn_server(cfg.health_port, api.clone(), render_cache.clone());
 
-    // Initialize Discord gateway
-    let intents = Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT;
-    let mut shard = Shard::new(ShardId::ONE, cfg.discord_token.clone(), intents);
+    // Initialize Discord gateway. Slash commands arrive via InteractionCreate,
+    // which requires only the GUILDS intent. MESSAGE_CONTENT is a privileged
+    // intent that must be enabled in the developer portal; we don't read raw
+    // message content, so requesting it caused close code 4014 (Disallowed
+    // intent(s)) and was removed.
+    let intents = Intents::GUILDS;
 
     let http = Arc::new(HttpClient::new(cfg.discord_token.clone()));
 
@@ -81,19 +91,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     tracing::info!("Connecting to Discord gateway...");
 
-    while let Some(item) = shard.next_event(EventTypeFlags::all()).await {
-        let Ok(event) = item else {
-            tracing::warn!(error = ?item.unwrap_err(), "gateway event error");
-            continue;
+    // Resilient gateway loop: Twilight auto-reconnects internally on recoverable
+    // close codes, but surfaces `None` (FatalClose) for 4004/4010/4013. Rather
+    // than letting main() exit 0 (which the container interprets as a normal
+    // shutdown and force-restarts), recreate the shard with backoff and log the
+    // reason so fatal conditions are visible and recoverable hiccups don't kill
+    // the process.
+    let mut attempts: u32 = 0;
+    loop {
+        let mut shard = Shard::new(ShardId::ONE, cfg.discord_token.clone(), intents);
+        let stream_ended = loop {
+            match shard.next_event(EventTypeFlags::all()).await {
+                Some(Ok(event)) => {
+                    tokio::spawn(commands::handle_event(
+                        event,
+                        Arc::clone(&api),
+                        Arc::clone(&render_cache),
+                        Arc::clone(&http),
+                    ));
+                }
+                Some(Err(err)) => {
+                    tracing::warn!(error = %err, "gateway event error");
+                }
+                None => break true,
+            }
         };
-
-        tokio::spawn(commands::handle_event(
-            event,
-            Arc::clone(&api),
-            Arc::clone(&render_cache),
-            Arc::clone(&http),
-        ));
+        if stream_ended {
+            attempts += 1;
+            let backoff = (attempts.min(8) as u64) * 2; // 2s, 4s, ... capped at 16s
+            tracing::warn!(
+                gateway_attempts = attempts,
+                backoff_secs = backoff,
+                "Gateway stream ended (fatal close or session loss); reconnecting"
+            );
+            tokio::time::sleep(tokio::time::Duration::from_secs(backoff)).await;
+        }
     }
-
-    Ok(())
 }
