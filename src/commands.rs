@@ -229,30 +229,195 @@ impl Handler {
         let Some(name) = opt_string(opts, "player") else {
             return self.reply_text(interaction, "Provide a player name").await;
         };
-        self.reply_text(interaction, format!("Loading history for {}", name)).await;
+        match self.api.player(&name).await {
+            Ok(val) => {
+                let Some(player_id) = val.get("id") else {
+                    return self.reply_text(interaction, format!("Player '{}' not found", name)).await;
+                };
+                let id = player_id.to_string();
+                match self.api.player_history(&id, 10).await {
+                    Ok(rows) => {
+                        let mut builder = EmbedBuilder::new()
+                            .title(format!("Match History — {}", name))
+                            .color(embeds::color::PRIMARY);
+                        for (i, row) in rows.iter().take(10).enumerate() {
+                            let match_id = row.get("match_id").map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+                            let mode = row.get("mode").map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+                            builder = builder.field(make_field(format!("{}. {}", i + 1, mode), match_id));
+                        }
+                        self.send_embed(interaction, builder.build()).await;
+                    }
+                    Err(_) => {
+                        self.reply_text(interaction, "Failed to fetch match history").await;
+                    }
+                }
+            }
+            Err(_) => {
+                self.reply_text(interaction, format!("Player '{}' not found", name)).await;
+            }
+        }
     }
 
     async fn current(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
         let Some(name) = opt_string(opts, "player") else {
             return self.reply_text(interaction, "Provide a player name").await;
         };
-        self.reply_text(interaction, format!("Checking live match for {}", name)).await;
+        match self.api.live_match(&name).await {
+            Ok(val) => {
+                if val.get("in_game").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    let map = val.get("map").map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+                    let mode = val.get("mode").map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+                    let duration = val.get("duration").map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+                    let mut builder = EmbedBuilder::new()
+                        .title(format!("Currently in Game — {}", name))
+                        .description(format!("Map: {} | Mode: {}", map, mode))
+                        .color(embeds::color::IN_GAME);
+                    builder = builder.field(make_field("Duration".to_string(), duration));
+                    self.send_embed(interaction, builder.build()).await;
+                } else {
+                    self.reply_text(interaction, format!("{} is not currently in a match", name)).await;
+                }
+            }
+            Err(_) => {
+                self.reply_text(interaction, format!("Player '{}' not found", name)).await;
+            }
+        }
     }
 
     async fn loadout(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let c: String = opt_string(opts, "champion").unwrap_or_else(|| "any".to_string());
-        let p: String = opt_string(opts, "player").unwrap_or_else(|| "unknown".to_string());
-        self.reply_text(interaction, format!("Loadout: {} | Player: {}", c, p)).await;
+        let Some(name) = opt_string(opts, "player") else {
+            return self.reply_text(interaction, "Provide a player name").await;
+        };
+        let Some(champion) = opt_string(opts, "champion") else {
+            return self.reply_text(interaction, "Provide a champion name").await;
+        };
+        match self.api.player(&name).await {
+            Ok(val) => {
+                let Some(player_id) = val.get("id") else {
+                    return self.reply_text(interaction, format!("Player '{}' not found", name)).await;
+                };
+                let id = player_id.to_string();
+                match self.api.loadouts(&id).await {
+                    Ok(loadouts) => {
+                        let champ_loadouts: Vec<_> = loadouts
+                            .iter()
+                            .filter(|lo| {
+                                lo.get("champion").map(|v| v.to_string().eq(&champion)).unwrap_or(false)
+                            })
+                            .collect();
+                        if champ_loadouts.is_empty() {
+                            self.reply_text(interaction, format!("No {} loadouts found for {}", champion, name)).await;
+                        } else {
+                            let mut builder = EmbedBuilder::new()
+                                .title(format!("{} Loadouts — {}", champion, name))
+                                .color(embeds::color::PRIMARY);
+                            for lo in champ_loadouts.iter().take(5) {
+                                let l_name = lo.get("loadout_name").map(|v| v.to_string()).unwrap_or_else(|| "Unnamed".into());
+                                let cards: usize = lo.get("card_levels")
+                                    .and_then(|arr| arr.as_array())
+                                    .map(|arr| arr.iter().filter_map(|v| v.as_i64()).sum())
+                                    .unwrap_or(0) as usize;
+                                builder = builder.field(make_field(l_name, format!("{} cards", cards)));
+                            }
+                            self.send_embed(interaction, builder.build()).await;
+                        }
+                    }
+                    Err(_) => {
+                        self.reply_text(interaction, "Failed to fetch loadouts").await;
+                    }
+                }
+            }
+            Err(_) => {
+                self.reply_text(interaction, format!("Player '{}' not found", name)).await;
+            }
+        }
     }
 
     async fn champion(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
         let c: String = opt_string(opts, "champion").unwrap_or_else(|| "any".to_string());
-        let l: String = opt_string(opts, "lobby").unwrap_or_else(|| "all".to_string());
-        self.reply_text(interaction, format!("Champion stats: {} | {}", c, l)).await;
+        let scope: String = opt_string(opts, "lobby").unwrap_or_else(|| "global".to_string());
+        match self.api.champion_page_data(&c.to_lowercase(), &scope).await {
+            Ok(val) => {
+                let mut builder = EmbedBuilder::new()
+                    .title(&c)
+                    .color(embeds::color::PRIMARY);
+                if let Some(wp) = val.get("win_rate") {
+                    builder = builder.field(make_field("Win Rate".to_string(), wp.to_string()));
+                }
+                if let Some(pick) = val.get("pick_rate") {
+                    builder = builder.field(make_field("Pick Rate".to_string(), pick.to_string()));
+                }
+                if let Some(games) = val.get("games") {
+                    builder = builder.field(make_field("Games".to_string(), games.to_string()));
+                }
+                self.send_embed(interaction, builder.build()).await;
+            }
+            Err(_) => {
+                self.reply_text(interaction, format!("No data for champion '{}'", c)).await;
+            }
+        }
     }
 
     async fn stats(&self, interaction: &Interaction, command: &str) {
-        self.reply_text(interaction, format!("{} stats coming soon", command)).await;
+        match command {
+            "maps" => {
+                match self.api.ranked_maps(10).await {
+                    Ok(rows) => {
+                        let mut builder = EmbedBuilder::new()
+                            .title("Ranked Map Stats")
+                            .color(embeds::color::PRIMARY);
+                        for row in rows.iter().take(10) {
+                            let map = row.get("map").map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+                            let games = row.get("games").map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+                            builder = builder.field(make_field(map, games));
+                        }
+                        self.send_embed(interaction, builder.build()).await;
+                    }
+                    Err(_) => {
+                        self.reply_text(interaction, "Failed to fetch map stats").await;
+                    }
+                }
+            }
+            "composition" => {
+                match self.api.ranked_compositions(10).await {
+                    Ok(rows) => {
+                        let mut builder = EmbedBuilder::new()
+                            .title("Top Compositions")
+                            .color(embeds::color::PRIMARY);
+                        for row in rows.iter().take(10) {
+                            let champs = row.get("champions").map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+                            let games = row.get("games").map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+                            builder = builder.field(make_field(champs, games));
+                        }
+                        self.send_embed(interaction, builder.build()).await;
+                    }
+                    Err(_) => {
+                        self.reply_text(interaction, "Failed to fetch composition stats").await;
+                    }
+                }
+            }
+            "items" => {
+                match self.api.ranked_items(10).await {
+                    Ok(rows) => {
+                        let mut builder = EmbedBuilder::new()
+                            .title("Item Stats")
+                            .color(embeds::color::PRIMARY);
+                        for row in rows.iter().take(10) {
+                            let item = row.get("item").map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+                            let pick = row.get("pick_rate").map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+                            builder = builder.field(make_field(item, pick));
+                        }
+                        self.send_embed(interaction, builder.build()).await;
+                    }
+                    Err(_) => {
+                        self.reply_text(interaction, "Failed to fetch item stats").await;
+                    }
+                }
+            }
+            _ => {
+                self.reply_text(interaction, format!("{} stats coming soon", command)).await;
+            }
+        }
     }
 
     // ——— Helpers ———
