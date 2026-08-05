@@ -28,8 +28,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let api = Arc::new(api::ApiClient::new(&cfg.api_base_url));
     let render_cache = Arc::new(cache::RenderCache::new(cfg.cache_bytes, cfg.cache_ttl_secs));
 
-    // Spawn health server
-    let _handle = health::spawn_server(cfg.health_port);
+    // Spawn health + preview server (shares ApiClient + RenderCache)
+    let _handle = health::spawn_server(cfg.health_port, api.clone(), render_cache.clone());
 
     // Initialize Discord gateway
     let intents = Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT;

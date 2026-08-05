@@ -5,6 +5,7 @@ use twilight_model::application::command::{
     Command, CommandOption, CommandOptionChoice, CommandOptionChoiceValue,
     CommandOptionType, CommandType,
 };
+use twilight_model::application::interaction::InteractionContextType;
 use twilight_model::id::Id;
 use twilight_model::id::marker::{ApplicationMarker, GuildMarker};
 
@@ -33,9 +34,13 @@ fn command(name: &str, description: &str, options: Vec<CommandOption>) -> Comman
         name: name.to_string(),
         description: description.to_string(),
         options,
-        contexts: None,
+        contexts: Some(vec![
+            InteractionContextType::Guild,
+            InteractionContextType::PrivateChannel,
+        ]),
         integration_types: None,
         default_member_permissions: None,
+        #[allow(deprecated)]
         dm_permission: None,
         name_localizations: None,
         description_localizations: None,
@@ -150,6 +155,7 @@ pub fn all_command_definitions() -> Vec<Command> {
     ]
 }
 
+#[allow(dead_code)] // Kept for manual registration scenarios
 pub async fn register_global_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,

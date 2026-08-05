@@ -13,10 +13,12 @@ const CHOICE_LEN: usize = 100;
 
 /// Simple in-memory champion list holder.
 /// (External caching via `cache::RenderCache` handles HTTP deduplication.)
+#[allow(dead_code)] // Kept for potential future autocomplete optimization
 pub struct ChampionList {
     names: Option<Vec<String>>,
 }
 
+#[allow(dead_code)] // Kept for potential future autocomplete optimization
 impl ChampionList {
     pub fn new() -> Self {
         Self { names: None }

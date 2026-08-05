@@ -81,7 +81,7 @@ echo ""; echo "--- Environment ---"
 TOK=$(docker exec "$CONTAINER_ID" sh -c 'echo $DISCORD_TOKEN' 2>/dev/null || echo "not-set")
 URL=$(docker exec "$CONTAINER_ID" sh -c 'echo $API_BASE_URL' 2>/dev/null || echo "not-set")
 RL=$(docker exec "$CONTAINER_ID" sh -c 'echo $RUST_LOG' 2>/dev/null || echo "not-set")
-echo "  DISCORD_TOKEN: ${TOK:0:12}..."
+echo "  DISCORD_TOKEN: ${TOK:0:4}...${TOK: -4} (${#TOK} chars)"
 echo "  API_BASE_URL: $URL"
 echo "  RUST_LOG: $RL"
 [[ "$TOK" != "not-set" && "$TOK" != "" ]] && pass "DISCORD_TOKEN set" || fail "DISCORD_TOKEN" "empty"
