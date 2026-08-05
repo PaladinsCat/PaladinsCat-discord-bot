@@ -37,16 +37,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let http = Arc::new(HttpClient::new(cfg.discord_token.clone()));
 
-    // Register slash commands on startup
-    let app_id = match std::env::var("APPLICATION_ID") {
-        Ok(id) => twilight_model::id::Id::new(id.parse::<u64>().unwrap()),
-        Err(_) => {
-            tracing::warn!("APPLICATION_ID not set; skipping command registration");
-            twilight_model::id::Id::new(0)
-        }
+    // Register slash commands on startup (skip for dummy/test mode)
+    let app_id_raw: u64 = std::env::var("APPLICATION_ID")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let should_register = app_id_raw > 0;
+    let app_id: twilight_model::id::Id<twilight_model::id::marker::ApplicationMarker> = if should_register {
+        twilight_model::id::Id::new(app_id_raw)
+    } else {
+        tracing::warn!("APPLICATION_ID not set or zero; skipping command registration");
+        twilight_model::id::Id::new(1) // dummy; never used
     };
 
-    if app_id.get() > 0 {
+    if app_id_raw > 0 {
         let dev_guild = cfg.development_guild_id
             .and_then(|s| s.parse::<u64>().ok().map(|n| twilight_model::id::Id::new(n)));
         match register::register_commands(&http, app_id, dev_guild, &[]).await {
@@ -63,6 +67,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 tracing::error!(error = %e, "Command registration failed");
             }
         }
+    }
+
+    // Check if we should skip gateway (dummy token or missing)
+    let is_dummy = cfg.discord_token.starts_with("dummy") || cfg.discord_token.is_empty();
+    if is_dummy {
+        tracing::warn!("Discord token is dummy — skipping gateway loop. Health server only.");
+        // Keep the health server alive indefinitely
+        tokio::signal::ctrl_c().await.ok();
+        tracing::info!("Shutting down...");
+        return Ok(());
     }
 
     tracing::info!("Connecting to Discord gateway...");

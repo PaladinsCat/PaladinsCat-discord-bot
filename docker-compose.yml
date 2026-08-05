@@ -1,0 +1,16 @@
+services:
+  bot:
+    build: .
+    container_name: paladinscat-bot-rust
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    ports:
+      - "${HEALTH_HOST_PORT:-3020}:3020"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3020/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
