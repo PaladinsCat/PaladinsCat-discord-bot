@@ -267,9 +267,10 @@ impl ApiClient {
     ///
     /// Mirrors TS: playerHistoryById(playerId, limit).
     /// Route: GET /players/{id}/matches?limit={}
+    /// Uses slow client (30s timeout) — large history sets can be slow.
     pub async fn player_history(&self, player_id: &str, limit: usize) -> Result<Vec<serde_json::Value>, reqwest::Error> {
         let url = format!("{}/players/{}/matches?limit={}", self.base, encode(player_id), limit);
-        let val: serde_json::Value = self.get_json(&url).await?;
+        let val: serde_json::Value = self.get_json_slow(&url).await?;
         match &val {
             serde_json::Value::Array(arr) => Ok(arr.to_vec()),
             _ => Ok(vec![val]),
