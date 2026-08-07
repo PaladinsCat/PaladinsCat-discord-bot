@@ -13,6 +13,7 @@ use std::time::Duration;
 #[derive(Clone)]
 pub struct ApiClient {
     inner: HttpClient,
+    inner_slow: HttpClient,
     base: String,
     #[allow(dead_code)] // Used by health server preview endpoints for cache-backed requests
     response_cache: Cache<String, serde_json::Value>,
@@ -23,6 +24,21 @@ fn encode(s: &str) -> String {
     percent_encode(s.as_bytes(), NON_ALPHANUMERIC).to_string()
 }
 
+/// Clamp a value to the given range.
+fn clamp(val: usize, min: usize, max: usize) -> usize {
+    val.max(min).min(max)
+}
+
+/// Map lobby scope string to (tierMin, tierMax) — mirrors ranked-lobby.ts.
+fn lobby_scope_to_tiers(scope: &str) -> Option<(u32, u32)> {
+    match scope {
+        "bronze-gold" => Some((1, 15)),
+        "platinum" => Some((16, 26)),
+        "diamond" => Some((21, 26)),
+        _ => None, // "global" or unknown → no tier filters
+    }
+}
+
 impl ApiClient {
     /// Create new client pointing to PaladinsCat API.
     pub fn new(base: &str) -> Self {
@@ -31,6 +47,10 @@ impl ApiClient {
                 .timeout(Duration::from_secs(15))
                 .build()
                 .expect("build reqwest client"),
+            inner_slow: HttpClient::builder()
+                .timeout(Duration::from_secs(125))
+                .build()
+                .expect("build slow reqwest client"),
             base: base.to_string(),
             response_cache: Cache::builder()
                 .time_to_live(Duration::from_secs(600))
@@ -42,6 +62,15 @@ impl ApiClient {
     /// Send a GET request with exponential backoff on 429 (rate limited).
     /// Retries up to 3 times with 500ms, 1s, 2s delays.
     async fn get_json(&self, url: &str) -> Result<serde_json::Value, reqwest::Error> {
+        self.get_json_impl(&self.inner, url).await
+    }
+
+    /// Send a GET request with slow timeout (125s) — used for match endpoints.
+    async fn get_json_slow(&self, url: &str) -> Result<serde_json::Value, reqwest::Error> {
+        self.get_json_impl(&self.inner_slow, url).await
+    }
+
+    async fn get_json_impl(&self, client: &HttpClient, url: &str) -> Result<serde_json::Value, reqwest::Error> {
         // Check cache first
         if let Some(cached) = self.response_cache.get(url).await {
             return Ok(cached);
@@ -51,7 +80,7 @@ impl ApiClient {
         let delays = [500u64, 1000, 2000];
 
         for &delay_ms in &delays {
-            match self.inner.get(url).send().await {
+            match client.get(url).send().await {
                 Ok(resp) => {
                     if resp.status().as_u16() == 429 {
                         tracing::warn!(url, delay_ms, "Rate limited (429), backing off");
@@ -80,12 +109,11 @@ impl ApiClient {
 
     /// Resolve a player name or numeric ID to the backend player profile.
     ///
-    /// Mirrors the canonical backend-rust contract: `name` is resolved to a
-    /// numeric player ID via `/players/search`, then the profile is fetched
-    /// from `/players/{id}` (the profile object is unwrapped from the
-    /// `{"player": {...}}` envelope so commands can read `id`/`name` directly).
+    /// Mirrors TS: resolvePlayer(input) → playerById(id).
+    /// - Numeric inputs pass through.
+    /// - Names resolved via /players/search?name=...&limit=5, exact match first, then first result.
+    /// - Profile fetched from /players/{id}?include=ratings (unwrapped from {"player": {...}} envelope).
     pub async fn player(&self, name: &str) -> Result<serde_json::Value, reqwest::Error> {
-        // Resolve name -> ID via canonical search endpoint (or numeric passthrough).
         let player_id = match self.resolve_player_id(name).await {
             Ok(id) => id,
             Err(e) => return Err(e),
@@ -94,9 +122,10 @@ impl ApiClient {
             return Ok(serde_json::json!({"error": "player not found"}));
         }
 
-        let url = format!("{}/players/{}", self.base, encode(&player_id));
+        // TS: GET /players/{id}?include=ratings
+        let url = format!("{}/players/{}?include=ratings", self.base, encode(&player_id));
         let val = self.get_json(&url).await?;
-        // Unwrap the `{"player": {...}}` envelope.
+        // Unwrap the {"player": {...}} envelope — TS reads payload.player
         match val.get("player") {
             Some(inner) if inner.is_object() => Ok(inner.clone()),
             _ => Ok(val),
@@ -105,9 +134,11 @@ impl ApiClient {
 
     /// Resolve a player name or numeric ID to a canonical numeric player ID.
     ///
-    /// Numeric inputs pass through unchanged. Names are resolved via the
-    /// `/players/search?name=` endpoint (first hit). Returns an empty string when
-    /// no player matches, mirroring the "not found" contract.
+    /// Mirrors TS: resolvePlayer(input).
+    /// - Numeric inputs pass through unchanged.
+    /// - Names resolved via /players/search?name=...&limit=5.
+    /// - Exact match (case-insensitive) preferred; fallback to first result.
+    /// - Returns empty string when no player matches.
     async fn resolve_player_id(&self, input: &str) -> Result<String, reqwest::Error> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
@@ -116,35 +147,94 @@ impl ApiClient {
         if trimmed.chars().all(|c| c.is_ascii_digit()) {
             return Ok(trimmed.to_string());
         }
-        let search_url = format!("{}/players/search?name={}&limit=1", self.base, encode(trimmed));
+
+        // TS: searchPlayers(input, 5) — limit=5
+        let search_url = format!(
+            "{}/players/search?name={}&limit=5",
+            self.base,
+            encode(trimmed)
+        );
         let val = self.get_json(&search_url).await?;
-        match val.as_array().and_then(|arr| arr.first()) {
+        let rows = match val.as_array() {
+            Some(arr) => arr.to_vec(),
+            _ => vec![],
+        };
+
+        // TS: exact match first (case-insensitive), then first result
+        let exact = rows.iter().find(|row| {
+            row.get("name")
+                .and_then(|v| v.as_str())
+                .map(|n| n.eq_ignore_ascii_case(trimmed))
+                .unwrap_or(false)
+        });
+
+        match exact {
             Some(row) => Ok(row
                 .get("id")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string()),
-            None => Ok(String::new()),
+            None => {
+                // Fallback to first result — TS: exact ?? rows[0]
+                match rows.first() {
+                    Some(row) => Ok(row
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string()),
+                    None => Ok(String::new()),
+                }
+            }
         }
     }
 
     /// Get match details by ID.
     ///
-    /// Canonical backend-rust contract is `/matches/{id}`, which returns a
-    /// `{"count": N, "matches": [{"match": {...}}]}` envelope. This unwraps to
-    /// the inner match object so commands can read `map`/`duration`/etc.
+    /// Mirrors TS: match(id).
+    /// - Primary: GET /matches/{id} with 125s timeout (slow client).
+    /// - Parallel: GET /matches/fact/{id} (best-effort, 15s timeout).
+    /// - Returns hydrated match object with facts merged into players.
+    /// - Envelope: {"count": N, "matches": [{"match": {...}}]} → inner match object.
     pub async fn match_info(&self, match_id: &str) -> Result<serde_json::Value, reqwest::Error> {
-        let url = format!("{}/matches/{}", self.base, encode(match_id));
-        let val = self.get_json(&url).await?;
-        match val.get("matches").and_then(|m| m.as_array()).and_then(|a| a.first()) {
-            Some(wrapper) => {
-                if let Some(m) = wrapper.get("match") {
-                    return Ok(m.clone());
-                }
-                Ok(wrapper.clone())
+        let encoded = encode(match_id);
+
+        // Parallel fetch: match data (125s slow) + facts (15s fast, best-effort)
+        let match_url = format!("{}/matches/{}", self.base, encoded);
+        let fact_url = format!("{}/matches/fact/{}", self.base, encoded);
+
+        let (match_result, fact_result) = tokio::join!(
+            self.get_json_slow(&match_url),
+            async {
+                // Best-effort facts — TS: .catch(() => null)
+                self.get_json(&fact_url).await.ok()
             }
-            _ => Ok(val),
+        );
+
+        let val = match_result?;
+        // Unwrap matches[0].match envelope — TS: payload.matches?.[0]
+        let inner_match = val
+            .get("matches")
+            .and_then(|m| m.as_array())
+            .and_then(|a| a.first())
+            .map(|wrapper| {
+                wrapper
+                    .get("match")
+                    .cloned()
+                    .unwrap_or_else(|| wrapper.clone())
+            })
+            .unwrap_or_else(|| val.clone());
+
+        // Hydrate with facts — TS: merge facts.players into match
+        if let Some(facts) = fact_result {
+            if let Some(mut obj) = inner_match.as_object().cloned() {
+                if let Some(fact_players) = facts.get("players").and_then(|v| v.as_array()) {
+                    obj.insert("facts".to_string(), serde_json::json!(fact_players));
+                }
+                return Ok(serde_json::Value::Object(obj));
+            }
         }
+
+        Ok(inner_match)
     }
 
     /// Get all champion names.
@@ -175,7 +265,8 @@ impl ApiClient {
 
     /// Get player match history.
     ///
-    /// Canonical backend-rust route is `/players/{id}/matches` (returns a bare array).
+    /// Mirrors TS: playerHistoryById(playerId, limit).
+    /// Route: GET /players/{id}/matches?limit={}
     pub async fn player_history(&self, player_id: &str, limit: usize) -> Result<Vec<serde_json::Value>, reqwest::Error> {
         let url = format!("{}/players/{}/matches?limit={}", self.base, encode(player_id), limit);
         let val: serde_json::Value = self.get_json(&url).await?;
@@ -187,13 +278,12 @@ impl ApiClient {
 
     /// Check player live match status.
     ///
-    /// Canonical backend-rust route is `/matches/live/{player_id}`, which returns
-    /// `{"match": {...}, "players": [...]}` when in-game (or `{"message": ...}` /
-    /// `{"match": null}` when not). This normalises to an object with an `in_game`
-    /// boolean so the `current` command can render it.
+    /// Mirrors TS: liveMatch(input) → resolvePlayer → GET /live/players/{id}.
+    /// Returns object with `in_game` boolean.
     pub async fn live_match(&self, player: &str) -> Result<serde_json::Value, reqwest::Error> {
         let player_id = self.resolve_player_id(player).await?;
-        let url = format!("{}/matches/live/{}", self.base, encode(&player_id));
+        // TS: GET /live/players/{id}
+        let url = format!("{}/live/players/{}", self.base, encode(&player_id));
         let val = self.get_json(&url).await?;
         let in_game = val
             .get("match")
@@ -208,8 +298,9 @@ impl ApiClient {
 
     /// Get player champion loadouts.
     ///
-    /// Backend returns `{"loadouts": [...], "freshness": {...}}`; this unwraps the
-    /// `loadouts` array so commands can iterate it directly.
+    /// Mirrors TS: playerLoadoutsById(playerId).
+    /// Route: GET /players/{id}/loadouts
+    /// Backend returns {"loadouts": [...], "freshness": {...}}; unwraps loadouts array.
     pub async fn loadouts(&self, player_id: &str) -> Result<Vec<serde_json::Value>, reqwest::Error> {
         let url = format!("{}/players/{}/loadouts", self.base, encode(player_id));
         let val: serde_json::Value = self.get_json(&url).await?;
@@ -223,14 +314,27 @@ impl ApiClient {
     }
 
     /// Get champion page data for stats.
+    ///
+    /// Mirrors TS: championPageData(idOrSlug, scope).
+    /// - scope maps to tierMin/tierMax via lobby_scope_to_tiers().
+    /// - "global" or unknown scope → no tier filter (no query params).
+    /// Route: GET /champions/{slug}/page-data?tierMin={}&tierMax={}
     pub async fn champion_page_data(&self, slug: &str, scope: &str) -> Result<serde_json::Value, reqwest::Error> {
-        let url = format!("{}/champions/{}/page-data?scope={}", self.base, encode(slug), encode(scope));
+        let url = format!("{}/champions/{}/page-data", self.base, encode(slug));
+        if let Some((tier_min, tier_max)) = lobby_scope_to_tiers(scope) {
+            url.push_str(&format!("?tierMin={}&tierMax={}", tier_min, tier_max));
+        }
         self.get_json(&url).await
     }
 
     /// Get ranked map stats.
+    ///
+    /// Mirrors TS: rankedMaps(limit=100).
+    /// Route: GET /stats/maps?queueId=486&limit={} (clamped 1-100)
     pub async fn ranked_maps(&self, limit: usize) -> Result<Vec<serde_json::Value>, reqwest::Error> {
-        let url = format!("{}/stats/maps?limit={}", self.base, limit);
+        let clamped = clamp(limit, 1, 100);
+        // TS: queueId=486 is the ranked queue
+        let url = format!("{}/stats/maps?queueId=486&limit={}", self.base, clamped);
         let val: serde_json::Value = self.get_json(&url).await?;
         match &val {
             serde_json::Value::Array(arr) => Ok(arr.to_vec()),
@@ -240,10 +344,15 @@ impl ApiClient {
 
     /// Get ranked composition stats.
     ///
-    /// Canonical backend-rust route is `/matches/compositions`, which returns
-    /// `{"total": N, "data": [...]}`. This unwraps the `data` array.
+    /// Mirrors TS: rankedCompositions(limit=5).
+    /// Route: GET /matches/compositions?sortBy=count&order=desc&limit={} (clamped 1-25)
+    /// Backend returns {"total": N, "data": [...]} — unwraps data array.
     pub async fn ranked_compositions(&self, limit: usize) -> Result<Vec<serde_json::Value>, reqwest::Error> {
-        let url = format!("{}/matches/compositions?limit={}", self.base, limit);
+        let clamped = clamp(limit, 1, 25);
+        let url = format!(
+            "{}/matches/compositions?sortBy=count&order=desc&limit={}",
+            self.base, clamped
+        );
         let val: serde_json::Value = self.get_json(&url).await?;
         match val.get("data").and_then(|v| v.as_array()) {
             Some(arr) => Ok(arr.to_vec()),
@@ -255,9 +364,17 @@ impl ApiClient {
     }
 
     /// Get ranked item stats.
+    ///
+    /// Mirrors TS: rankedItems(scope, limit=20).
+    /// Route: GET /stats/items?mode=ranked&limit={} (clamped 1-50).
+    /// "global" scope → no tier filter appended.
     pub async fn ranked_items(&self, limit: usize) -> Result<Vec<serde_json::Value>, reqwest::Error> {
-        let url = format!("{}/stats/items?limit={}", self.base, limit);
-        let val: serde_json::Value = self.get_json(&url).await?;
+        let clamped = clamp(limit, 1, 50);
+        let url = format!(
+            "{}/stats/items?mode=ranked&limit={}",
+            self.base, clamped
+        );
+        let val = self.get_json(&url).await?;
         match &val {
             serde_json::Value::Array(arr) => Ok(arr.to_vec()),
             _ => Ok(vec![val]),
