@@ -320,10 +320,12 @@ impl ApiClient {
     /// - "global" or unknown scope → no tier filter (no query params).
     /// Route: GET /champions/{slug}/page-data?tierMin={}&tierMax={}
     pub async fn champion_page_data(&self, slug: &str, scope: &str) -> Result<serde_json::Value, reqwest::Error> {
-        let url = format!("{}/champions/{}/page-data", self.base, encode(slug));
-        if let Some((tier_min, tier_max)) = lobby_scope_to_tiers(scope) {
-            url.push_str(&format!("?tierMin={}&tierMax={}", tier_min, tier_max));
-        }
+        let q = if let Some((tier_min, tier_max)) = lobby_scope_to_tiers(scope) {
+            format!("?tierMin={}&tierMax={}", tier_min, tier_max)
+        } else {
+            String::new()
+        };
+        let url = format!("{}/champions/{}/page-data{}", self.base, encode(slug), q);
         self.get_json(&url).await
     }
 
