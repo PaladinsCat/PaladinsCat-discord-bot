@@ -248,7 +248,7 @@ impl Handler {
                         self.send_embed(interaction, builder.build()).await;
                     }
                     Err(e) => {
-                        tracing::error!(url = self.api.base.as_str(), player_id = id.as_str(), err = %e, "player_history request failed");
+                        tracing::error!(player_id = id.as_str(), err = %e, "player_history request failed");
                         self.reply_text(interaction, "Failed to fetch match history").await;
                     }
                 }
