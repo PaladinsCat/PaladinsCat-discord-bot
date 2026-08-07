@@ -180,23 +180,28 @@ impl Handler {
         let Some(name) = opt_string(opts, "player") else {
             return self.reply_text(interaction, "Provide a player name or ID").await;
         };
-        match self.api.player(&name).await {
+        match self.api.discord_player(&name).await {
             Ok(val) => {
-                let mut builder = EmbedBuilder::new().title(&name).color(embeds::color::PRIMARY);
-                if let Some(gamertag) = val.get("gamertag") {
-                    let gt = gamertag.as_str().unwrap_or("N/A").to_string();
-                    builder = builder.footer(EmbedFooterBuilder::new(format!("Gamertag: {}", gt)));
+                // /players/discord returns {"player": {...}} — extract inner profile
+                let profile = val.get("player").cloned().unwrap_or(val);
+                let mut builder = EmbedBuilder::new().color(embeds::color::PRIMARY);
+                if let Some(gamertag) = profile.get("gamertag") {
+                    let gt = gamertag.as_str().unwrap_or("N/A");
+                    builder = builder.title(gt).footer(EmbedFooterBuilder::new(format!("Gamertag: {}", gt)));
+                } else {
+                    builder = builder.title(&name);
                 }
-                if let Some(peak) = val.get("peak_rank") {
-                    builder = builder.field(make_field("Peak Rank".to_string(), peak.to_string()));
-                }
-                if let Some(hr) = val.get("headroom") {
+                if let Some(hr) = profile.get("headroom") {
                     builder = builder.field(make_field("Headroom".to_string(), hr.to_string()));
+                }
+                if let Some(peak) = profile.get("peak_rank") {
+                    builder = builder.field(make_field("Peak Rank".to_string(), peak.to_string()));
                 }
                 self.send_embed(interaction, builder.build()).await;
             }
-            Err(_) => {
-                self.reply_text(interaction, format!("Player '{}' not found", name)).await;
+            Err(e) => {
+                tracing::error!(player = %name, err = %e, "discord_player request failed");
+                self.reply_text(interaction, format!("Failed to look up player '{}'", name)).await;
             }
         }
     }

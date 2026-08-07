@@ -32,7 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cfg = config::Config::load()?;
     tracing::info!(bot_mode = %cfg.bot_mode, "Starting PaladinsCat Discord Bot");
 
-    let api = Arc::new(api::ApiClient::new(&cfg.api_base_url));
+    let service_token = std::env::var("PALADINSCAT_SERVICE_TOKEN").ok();
+    let api = Arc::new(api::ApiClient::new(&cfg.api_base_url, service_token.as_deref()));
     let render_cache = Arc::new(cache::RenderCache::new(cfg.cache_bytes, cfg.cache_ttl_secs));
 
     // Spawn health + preview server (shares ApiClient + RenderCache)

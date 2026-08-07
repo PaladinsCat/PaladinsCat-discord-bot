@@ -10,11 +10,14 @@ use std::time::Duration;
 
 /// API client wrapper — stores base URL separately from reqwest client.
 /// All path parameters are percent-encoded. Responses to 429 get exponential backoff.
+/// Mirrors TS: PaladinsCatApi with service token auth.
 #[derive(Clone)]
 pub struct ApiClient {
     inner: HttpClient,
     inner_slow: HttpClient,
     base: String,
+    /// Service token for /players/discord endpoint (mirrors TS: serviceToken)
+    service_token: Option<String>,
     #[allow(dead_code)] // Used by health server preview endpoints for cache-backed requests
     response_cache: Cache<String, serde_json::Value>,
 }
@@ -41,7 +44,10 @@ fn lobby_scope_to_tiers(scope: &str) -> Option<(u32, u32)> {
 
 impl ApiClient {
     /// Create new client pointing to PaladinsCat API.
-    pub fn new(base: &str) -> Self {
+    ///
+    /// Mirrors TS: PaladinsCatApi constructor.
+    /// `service_token` is used for authenticated endpoints (mirrors TS: X-PaladinsCat-Service-Token).
+    pub fn new(base: &str, service_token: Option<&str>) -> Self {
         Self {
             inner: HttpClient::builder()
                 .timeout(Duration::from_secs(15))
@@ -52,6 +58,7 @@ impl ApiClient {
                 .build()
                 .expect("build slow reqwest client"),
             base: base.to_string(),
+            service_token: service_token.map(str::to_string),
             response_cache: Cache::builder()
                 .time_to_live(Duration::from_secs(600))
                 .max_capacity(10_000)
@@ -80,7 +87,12 @@ impl ApiClient {
         let delays = [500u64, 1000, 2000];
 
         for &delay_ms in &delays {
-            match client.get(url).send().await {
+            let mut req = client.get(url);
+            if let Some(token) = &self.service_token {
+                req = req.header(reqwest::header::USER_AGENT, "PaladinsCatDiscordBot/0.1")
+                    .header("X-PaladinsCat-Service-Token", token.as_str());
+            }
+            match req.send().await {
                 Ok(resp) => {
                     if resp.status().as_u16() == 429 {
                         tracing::warn!(url, delay_ms, "Rate limited (429), backing off");
@@ -107,12 +119,20 @@ impl ApiClient {
         Err(last_err.expect("loop runs at least once"))
     }
 
-    /// Resolve a player name or numeric ID to the backend player profile.
+    /// Fetch enriched player profile via authenticated /players/discord endpoint.
     ///
-    /// Mirrors TS: resolvePlayer(input) → playerById(id).
-    /// - Numeric inputs pass through.
-    /// - Names resolved via /players/search?name=...&limit=5, exact match first, then first result.
-    /// - Profile fetched from /players/{id}?include=ratings (unwrapped from {"player": {...}} envelope).
+    /// Mirrors TS: discordPlayer(input) → GET /players/discord?player=<input>.
+    /// This endpoint resolves the player AND returns enriched data including
+    /// Hi-Rez profile info (gamertag, peak rank, headroom).
+    /// Requires PALADINSCAT_SERVICE_TOKEN header.
+    pub async fn discord_player(&self, name: &str) -> Result<serde_json::Value, reqwest::Error> {
+        let url = format!("{}/players/discord?player={}", self.base, encode(name));
+        let val = self.get_json(&url).await?;
+        Ok(val)
+    }
+
+    /// Resolve player name/ID to numeric ID and fetch profile.
+    /// Used by history, loadout, current commands to get player ID.
     pub async fn player(&self, name: &str) -> Result<serde_json::Value, reqwest::Error> {
         let player_id = match self.resolve_player_id(name).await {
             Ok(id) => id,
@@ -121,11 +141,8 @@ impl ApiClient {
         if player_id.is_empty() {
             return Ok(serde_json::json!({"error": "player not found"}));
         }
-
-        // TS: GET /players/{id}?include=ratings
         let url = format!("{}/players/{}?include=ratings", self.base, encode(&player_id));
         let val = self.get_json(&url).await?;
-        // Unwrap the {"player": {...}} envelope — TS reads payload.player
         match val.get("player") {
             Some(inner) if inner.is_object() => Ok(inner.clone()),
             _ => Ok(val),
