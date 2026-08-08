@@ -1,5 +1,6 @@
 //! Discord embed message builders — mirrors TS message-builders.ts 1-to-1.
 
+use chrono::Datelike;
 use twilight_model::channel::message::embed::{Embed, EmbedField};
 use twilight_model::util::Timestamp;
 use twilight_util::builder::embed::{EmbedBuilder, EmbedFieldBuilder, EmbedFooterBuilder, ImageSource};
@@ -902,11 +903,26 @@ fn format_playtime(hours: &Value, minutes: &Value) -> Option<String> {
     }
 }
 
-/// Date label in UTC — mirrors TS formatDate.
+/// Date label in UTC — mirrors TS formatDate (en-US locale, non-zero-padded day).
 fn format_date(value: &Value) -> Option<String> {
     let s = value.as_str()?;
     let dt = chrono::DateTime::parse_from_rfc3339(s).ok()?;
-    Some(dt.format("%b %d, %Y").to_string())
+    // en-US locale: "Aug 7, 2026" (non-zero-padded day)
+    Some(format!(
+        "{} {}, {}",
+        month_short(dt.month0()),
+        dt.day(),
+        dt.year()
+    ))
+}
+
+fn month_short(month: u32) -> &'static str {
+    match month {
+        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
+        5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
+        9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+        _ => "Jan",
+    }
 }
 
 /// Resolve the player avatar URL — mirrors TS playerAvatarUrl.
@@ -1075,6 +1091,52 @@ pub fn build_player_profile(result: &Value, web_url: &str) -> Embed {
     }
 
     builder.build()
+}
+
+/// Build loadout selection payload — mirrors TS buildLoadoutSelectionPayload
+/// Returns embed for displaying loadout choices to user.
+pub fn build_loadout_selection_payload(
+    player_name: &str,
+    champion_name: &str,
+    count: usize,
+    web_url: &str,
+    player_id: &str,
+    refreshed: bool,
+) -> Embed {
+    let description = format!(
+        "Choose one of **{}** saved loadout{} below to generate its image.",
+        count,
+        if count == 1 { "" } else { "s" }
+    );
+    let footer_text = if refreshed {
+        "Saved loadouts refreshed from Paladins before this result."
+    } else {
+        "Served from the PaladinsCat database."
+    };
+
+    let url = format!("{}/players/{}/loadouts", web_url, player_id);
+    EmbedBuilder::new()
+        .color(ACCENT)
+        .title(&format!("{} · {}", player_name, champion_name))
+        .url(&url)
+        .description(&description)
+        .footer(EmbedFooterBuilder::new(footer_text))
+        .build()
+}
+
+/// Build no-loadouts payload — mirrors TS buildNoLoadoutsPayload
+pub fn build_no_loadouts_payload(player_name: &str, champion_name: &str, refresh_error: Option<&str>) -> Embed {
+    let suffix = if let Some(err) = refresh_error {
+        if !err.to_lowercase().contains("cooldown") {
+            "\nThe refresh did not complete, so this result may be stale."
+        } else {
+            ""
+        }
+    } else {
+        ""
+    };
+    let description = format!("No saved loadouts found for this champion.{}", suffix);
+    simple_embed(&format!("{} · {}", player_name, champion_name), &description, None)
 }
 
 #[cfg(test)]
