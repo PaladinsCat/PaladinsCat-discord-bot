@@ -24,6 +24,9 @@ reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
 # Image processing (replaces sharp)
 image = "0.24"
 
+# Base64 decoding for CDP screenshots / cache
+base64 = "0.22"
+
 # In-memory cache (replaces RenderCache)
 moka = { version = "0.12", features = ["future"] }
 

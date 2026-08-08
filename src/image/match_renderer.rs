@@ -10,8 +10,8 @@
 //! 5. Return PNG bytes
 
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex as StdMutex;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -72,6 +72,9 @@ pub struct MatchRenderer {
     cdp_client: StdMutex<Option<Arc<CdpClient>>>,
     /// Actual debug port in use (set after spawn; 0 until spawned).
     active_port: StdMutex<u16>,
+    /// Serializes access to the single shared Chromium page so concurrent
+    /// renders can't corrupt each other's DOM/viewport state.
+    render_lock: tokio::sync::Mutex<()>,
 }
 
 impl MatchRenderer {
@@ -95,6 +98,7 @@ impl MatchRenderer {
             ws_url: StdMutex::new(None),
             cdp_client: StdMutex::new(None),
             active_port: StdMutex::new(initial_port),
+            render_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -114,7 +118,8 @@ impl MatchRenderer {
         record: &Value,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         let document = self.template_engine.match_document(record);
-        self.render_element(&document, "#scoreboard", MATCH_SCALE).await
+        self.render_element(&document, "#scoreboard", MATCH_SCALE)
+            .await
     }
 
     /// Render a loadout card JSON record to PNG bytes.
@@ -123,7 +128,8 @@ impl MatchRenderer {
         record: &Value,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         let document = self.template_engine.loadout_document(record);
-        self.render_element(&document, "#loadout", LOADOUT_SCALE).await
+        self.render_element(&document, "#loadout", LOADOUT_SCALE)
+            .await
     }
 
     /// Close the browser and release all resources.
@@ -210,20 +216,7 @@ impl MatchRenderer {
         } else {
             // Discover the debug port
             let port = self.discover_debug_port();
-            let ws_url = format!("http://127.0.0.1:{}/json/version", port);
-            let json_str = reqwest::get(&ws_url)
-                .await
-                .map_err(|e| format!("Failed to fetch browser JSON: {}", e))?
-                .text()
-                .await
-                .map_err(|e| format!("Failed to parse browser JSON: {}", e))?;
-
-            let json: Value = serde_json::from_str(&json_str)
-                .map_err(|e| format!("Browser JSON parse error: {}", e))?;
-
-            let debug_url = json["webSocketDebuggerUrl"]
-                .as_str()
-                .ok_or("No webSocketDebuggerUrl in browser JSON")?;
+            let debug_url = resolve_page_ws_url(port).await?;
 
             // Set the ws_url, then drop the guard before awaiting
             {
@@ -350,13 +343,22 @@ impl MatchRenderer {
         selector: &str,
         scale: f64,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        // Serialize all CDP page work onto the single shared page.
+        let _render_guard = self.render_lock.lock().await;
+
         let client = self.ensure_browser().await?;
 
-        // Navigate to the document
-        let html_url = format!("data:text/html,{}", url_escape(document_html));
-        client.send("Page.navigate", json!({
-            "url": &html_url,
-        })).await?;
+        // Navigate to the document. Base64-encode the HTML into a data URI so
+        // `#` (present in CSS hex colors) isn't interpreted as a URL fragment.
+        let html_url = html_data_uri(document_html);
+        client
+            .send(
+                "Page.navigate",
+                json!({
+                    "url": &html_url,
+                }),
+            )
+            .await?;
 
         // Set viewport and device scale factor
         client.set_device_scale_factor(scale, WIDTH, HEIGHT).await?;
@@ -386,8 +388,67 @@ impl MatchRenderer {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: find default Chromium/chrome executable
+// Helpers: browser page-target discovery & URL escaping
 // ---------------------------------------------------------------------------
+
+/// Resolve the CDP WebSocket URL of a *page* target (not the browser-level
+/// /json/version target). Page.*, Runtime.* and Emulation.* commands only work
+/// on a page target, so we reuse an existing tab or create a fresh about:blank
+/// tab via `PUT /json/new`, then connect to that tab's webSocketDebuggerUrl.
+async fn resolve_page_ws_url(
+    port: u16,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let base = format!("http://127.0.0.1:{}", port);
+
+    // 1) Look for an existing page target.
+    let list_url = format!("{}/json/list", base);
+    let list_str = reqwest::get(&list_url)
+        .await
+        .map_err(|e| format!("Failed to fetch /json/list: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read /json/list: {}", e))?;
+
+    if let Ok(list) = serde_json::from_str::<Value>(&list_str) {
+        if let Some(targets) = list.as_array() {
+            for t in targets {
+                let ty = t.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                if ty == "page" {
+                    if let Some(ws) = t.get("webSocketDebuggerUrl").and_then(|v| v.as_str()) {
+                        return Ok(ws.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // 2) No page target — create a fresh about:blank tab.
+    let new_url = format!("{}/json/new?about:blank", base);
+    let resp = reqwest::Client::new()
+        .put(&new_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to create page via /json/new: {}", e))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read /json/new response: {}", e))?;
+    let json: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("Failed to parse /json/new response: {}", e))?;
+    let ws = json["webSocketDebuggerUrl"]
+        .as_str()
+        .ok_or("No webSocketDebuggerUrl in /json/new response")?;
+    Ok(ws.to_string())
+}
+
+/// Build a base64 `data:text/html;base64,...` URI from raw HTML. Base64-encoding
+/// (vs percent-encoding) guarantees `#` from CSS hex colors is never parsed as a
+/// URL fragment, which would truncate the document.
+fn html_data_uri(document_html: &str) -> String {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(document_html.as_bytes());
+    format!("data:text/html;base64,{}", b64)
+}
 
 fn default_chromium_path() -> String {
     // Check Playwright-installed Chromium
@@ -396,11 +457,17 @@ fn default_chromium_path() -> String {
         if let Ok(entries) = std::fs::read_dir(&root) {
             let mut shells: Vec<_> = entries
                 .filter_map(|e| e.ok())
-                .filter(|e| e.file_name().to_string_lossy().starts_with("chromium_headless_shell-"))
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with("chromium_headless_shell-")
+                })
                 .collect();
             shells.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
             for entry in shells {
-                let exe = entry.path().join("chrome-headless-shell-win64/chrome-headless-shell.exe");
+                let exe = entry
+                    .path()
+                    .join("chrome-headless-shell-win64/chrome-headless-shell.exe");
                 if exe.exists() {
                     return exe.to_string_lossy().to_string();
                 }
@@ -421,24 +488,138 @@ fn default_chromium_path() -> String {
     "/usr/bin/chromium-browser".into()
 }
 
-/// URL-escape a string for data URIs.
-fn url_escape(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '.' | '_' | '~' | '/' | ':' | '@'
-            | '?' | '#' | '=' | '&' | '$' | '!' | '+' => {
-                result.push(c);
-            }
-            ' ' => result.push_str("%20"),
-            '\n' => result.push_str("%0A"),
-            '\r' => result.push_str("%0D"),
-            _ => {
-                for byte in c.to_string().as_bytes() {
-                    result.push_str(&format!("%{:02X}", *byte));
-                }
-            }
+#[cfg(test)]
+mod tests {
+    use super::html_data_uri;
+
+    #[test]
+    fn html_data_uri_is_base64_and_preserves_css_hex_colors() {
+        let html = "<style>.x{color:#123456;background:#abcdef}</style><div>hi</div>";
+        let uri = html_data_uri(html);
+        assert!(uri.starts_with("data:text/html;base64,"), "got: {}", uri);
+
+        use base64::Engine as _;
+        let payload = &uri["data:text/html;base64,".len()..];
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .unwrap();
+        let decoded = String::from_utf8(decoded).unwrap();
+        // The `#` hex colors must round-trip unchanged (no URL-fragment truncation).
+        assert_eq!(decoded, html);
+        assert!(decoded.contains("#123456"));
+        assert!(decoded.contains("#abcdef"));
+        // No raw '#' appears in the URI itself.
+        assert!(!payload.contains('#'));
+    }
+
+    #[test]
+    fn html_data_uri_encodes_arbitrary_bytes() {
+        let uri = html_data_uri("héllo ← wörld");
+        assert!(uri.starts_with("data:text/html;base64,"));
+    }
+
+    /// Returns true when the caller opted into the real-browser integration test
+    /// by setting PALADINSCAT_RENDER_IT=1. Enabled via an env var so the default
+    /// suite stays hermetic; set it in the container render smoke test.
+    fn integration_enabled() -> bool {
+        std::env::var("PALADINSCAT_RENDER_IT")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    fn chromium_path() -> String {
+        std::env::var("CHROME_PATH").unwrap_or_else(|_| super::default_chromium_path())
+    }
+
+    fn test_renderer() -> crate::image::match_renderer::MatchRenderer {
+        use crate::image::match_renderer::MatchRendererConfig;
+        use crate::image::template::{TemplateConfig, TemplateEngine};
+        // `dev_defaults()` uses repo-root-relative paths; the test harness runs
+        // from the crate dir, so resolve them to the repo root explicitly.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("repo root");
+        let cfg = TemplateConfig {
+            match_template_path: root
+                .join("dev/prototypes/match-result-scoreboard.html")
+                .to_string_lossy()
+                .into_owned(),
+            loadout_template_path: root
+                .join("dev/prototypes/loadout-card-layout.html")
+                .to_string_lossy()
+                .into_owned(),
+            cheater_pattern_path: root
+                .join("dev/prototypes/cheater-police-line.svg")
+                .to_string_lossy()
+                .into_owned(),
+        };
+        let te = TemplateEngine::load(&cfg).unwrap();
+        crate::image::match_renderer::MatchRenderer::new(
+            te,
+            MatchRendererConfig {
+                chromium_path: chromium_path(),
+                debug_port: 0,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn chromium_integration_render_produces_valid_png() {
+        if !integration_enabled() {
+            return;
+        }
+        let renderer = test_renderer();
+        // Self-contained doc with a real id element — validates the full CDP
+        // pipeline (page-target connect -> navigate -> evaluate -> screenshot ->
+        // PNG decode) independent of the Ruby-idea template's own selector setup.
+        let doc = r#"<!doctype html><html><head><meta charset="utf-8"/>
+<style>#scoreboard{width:600px;height:200px;background:#10151c;color:#fff;font:600 24px sans-serif;display:flex;align-items:center;justify-content:center;border:2px solid #2a3340;color:#ff6b6b}</style>
+</head><body><div id="scoreboard">MATCH 1281311346</div></body></html>"#;
+        let png = renderer
+            .render_element(doc, "#scoreboard", 1.0)
+            .await
+            .expect("render");
+        const SIG: &[u8] = b"\x89PNG\r\n\x1a\n";
+        assert!(png.starts_with(SIG), "output must start with PNG signature");
+        // Round-trips through the crate decoder (valid PNG header + body).
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        let decoded = crate::image::cdp_client::decode_base64_png(&b64).expect("decodable PNG");
+        assert_eq!(decoded.len(), png.len());
+    }
+
+    #[tokio::test]
+    async fn concurrent_renders_do_not_corrupt_page_state() {
+        if !integration_enabled() {
+            return;
+        }
+        let renderer = std::sync::Arc::new(test_renderer());
+        let doc = |kills: u64| -> String {
+            format!(
+                r#"<!doctype html><html><head><meta charset="utf-8"/>
+<style>#scoreboard{{width:400px;height:120px;background:#10151c;color:#fff;font:700 28px sans-serif}}</style>
+</head><body><div id="scoreboard">KILLS {}</div></body></html>"#,
+                kills
+            )
+        };
+        let mut handles = Vec::new();
+        for i in 0..4u64 {
+            let r = std::sync::Arc::clone(&renderer);
+            handles.push(tokio::spawn(async move {
+                let html = doc(i);
+                let png = r
+                    .render_element(&html, "#scoreboard", 1.0)
+                    .await
+                    .expect("render");
+                let sig: &[u8] = b"\x89PNG\r\n\x1a\n";
+                assert!(png.starts_with(sig), "render {} produced non-PNG", i);
+                png.len()
+            }));
+        }
+        for (i, h) in handles.into_iter().enumerate() {
+            let len = h.await.unwrap();
+            assert!(len > 100, "render {} produced suspiciously small image", i);
         }
     }
-    result
 }
