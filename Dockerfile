@@ -28,5 +28,5 @@ COPY dev/prototypes/ dev/prototypes/
 EXPOSE 3020
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -sf http://localhost:3020/health || exit 1
-ENV RUST_LOG=info HEALTH_PORT=3020 CHROME_PATH=/usr/bin/chromium-browser
+ENV RUST_LOG=info HEALTH_PORT=3020 CHROME_PATH=/usr/bin/chromium
 ENTRYPOINT ["./paladinscat-discord-bot"]
