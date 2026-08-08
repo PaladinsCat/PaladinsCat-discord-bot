@@ -43,7 +43,7 @@
 ### ✅ `/help` → `help()` — embed builder called
 ### ✅ `/player` → `player()` — calls `api.discord_player()` + `build_player_profile()`
 ### ✅ `/save` → `save()` — calls `api.save_discord_player()`
-### ❌ `/match` → `match_cmd()` — **IMAGE GENERATION MISSING** (no RenderService)
+### ❌ `/match` → `match_cmd()` — **IMAGE GENERATION IN PROGRESS** (CDP pipeline, subagent deleg_0dde8af5)
 ### ✅ `/history` → `history()` — calls `build_history_payload()`
 ### ✅ `/current` → `current()` — calls `build_current_payload()`
 ### ✅ `/loadout` → `loadout()` — **SELECT MENU + SESSIONS ADDED + VERIFIED**, image generation pending
