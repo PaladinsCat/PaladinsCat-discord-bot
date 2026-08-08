@@ -10,6 +10,7 @@ mod commands;
 mod config;
 mod embeds;
 mod health;
+mod image;
 mod register;
 
 use std::sync::Arc;

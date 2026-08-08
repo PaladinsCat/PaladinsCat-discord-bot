@@ -2,7 +2,7 @@
 name = "paladinscat-discord-bot"
 version = "0.1.0"
 edition = "2021"
-description = "High-performance PaladinsCat Discord bot — Twilight + Tokio"
+description = "High-performance PaladinsCat Discord bot -- Twilight + Tokio"
 
 [dependencies]
 # Discord gateway & REST
@@ -14,9 +14,11 @@ twilight-util = { version = "0.16", features = ["builder"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 futures = "0.3"
+futures-util = "0.3"
 
-# HTTP client (PaladinsCat API)
+# HTTP client (PaladinsCat API + browser discovery)
 reqwest = { version = "0.12", features = ["json"] }
 
 # Image processing (replaces sharp)
@@ -48,8 +50,11 @@ chrono = { version = "0.4", features = ["serde"] }
 # Hashing
 sha2 = "0.10"
 
-# URL percent-encoding
+# URL encoding (mirrors percent-encoding from Node)
 percent-encoding = "2"
 
-# Unicode normalization (NFKD for champion name matching)
+# Unicode normalization for champion name search
 unicode-normalization = "0.1"
+
+# CDP WebSocket (Chrome DevTools Protocol for image rendering)
+tokio-tungstenite = "0.26"
