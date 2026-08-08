@@ -9,7 +9,6 @@
 //! 4. Wait for fonts/images, then screenshot the target element
 //! 5. Return PNG bytes
 
-use std::os::windows::process::ExitStatusExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex as StdMutex;
 use std::sync::Arc;
