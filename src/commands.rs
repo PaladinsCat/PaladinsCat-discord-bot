@@ -41,7 +41,7 @@ const LOADOUT_SESSION_TTL_SECS: u64 = 5 * 60;
 /// Maximum time to wait for an image render before falling back to an embed.
 /// The interaction is deferred first, so this bounds only how long the user
 /// waits for the image (or the embed fallback), not Discord's 3s ACK window.
-const RENDER_TIMEOUT: Duration = Duration::from_secs(8);
+const RENDER_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// Module-level session store.  Shared between command and component handlers.
 static LOADOUT_SESSIONS: LazyLock<RwLock<HashMap<String, LoadoutSession>>> =
@@ -377,10 +377,11 @@ impl Handler {
 
                 if let Some(img) = &self.image_service {
                     let img = Arc::clone(img);
-                    let val = val.clone();
+                    let match_id = id.clone();
+                    let match_url = url.clone();
                     let token = interaction.token.clone();
                     let embed_for_img = embed.clone();
-                    let render = async move { img.render_match(&val).await };
+                    let render = async move { img.render_web_match(&match_id, &match_url).await };
                     match tokio::time::timeout(RENDER_TIMEOUT, render).await {
                         Ok(Ok(png)) => {
                             self.send_followup_image(embed_for_img, png, "match.png", &token)

@@ -195,6 +195,19 @@ impl CdpClient {
         .await
     }
 
+    pub async fn execute_await(
+        &self,
+        expression: &str,
+    ) -> Result<CdpResponse, Box<dyn std::error::Error + Send + Sync>> {
+        self.send(
+            "Runtime.evaluate",
+            json!({
+                "expression": expression, "returnByValue": true, "awaitPromise": true,
+            }),
+        )
+        .await
+    }
+
     pub async fn set_device_scale_factor(
         &self,
         factor: f64,

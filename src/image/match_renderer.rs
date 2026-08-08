@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::image::cdp_client::CdpClient;
+use crate::image::cdp_client::{decode_base64_png, CdpClient};
 use crate::image::template::TemplateEngine;
 
 /// Page dimensions for rendering.
@@ -30,7 +30,7 @@ const MATCH_SCALE: f64 = 1.6;
 const LOADOUT_SCALE: f64 = 1.0;
 
 /// Template version for cache invalidation keys.
-const TEMPLATE_VERSION: u32 = 14;
+const TEMPLATE_VERSION: u32 = 16;
 
 /// Loadout template version for cache invalidation keys.
 const LOADOUT_TEMPLATE_VERSION: u32 = 9;
@@ -120,6 +120,45 @@ impl MatchRenderer {
         let document = self.template_engine.match_document(record);
         self.render_element(&document, "#scoreboard", MATCH_SCALE)
             .await
+    }
+
+    /// Render the canonical web scoreboard and use its own PNG exporter.
+    pub async fn render_web_match(
+        &self,
+        url: &str,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        let _render_guard = self.render_lock.lock().await;
+        let client = self.ensure_browser().await?;
+        client.set_device_scale_factor(1.0, WIDTH, HEIGHT).await?;
+        client.send("Page.navigate", json!({ "url": url })).await?;
+
+        let deadline = Instant::now() + Duration::from_secs(6);
+        loop {
+            match client
+                .execute("typeof window.__paladinscatMatchScoreboardPng === 'function'")
+                .await
+            {
+                Ok(response) if response.result["result"]["value"] == Value::Bool(true) => break,
+                _ if Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(100)).await
+                }
+                _ => return Err(format!("Web scoreboard did not load: {url}").into()),
+            }
+        }
+
+        let response = client
+            .execute_await("window.__paladinscatMatchScoreboardPng()")
+            .await?;
+        if let Some(error) = response.error {
+            return Err(format!("Web scoreboard export failed: {error}").into());
+        }
+        let data_url = response.result["result"]["value"]
+            .as_str()
+            .ok_or("Web scoreboard exporter returned no PNG")?;
+        let payload = data_url
+            .strip_prefix("data:image/png;base64,")
+            .ok_or("Web scoreboard exporter returned an invalid data URL")?;
+        decode_base64_png(payload).map_err(|error| error.into())
     }
 
     /// Render a loadout card JSON record to PNG bytes.
@@ -587,6 +626,28 @@ mod tests {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
         let decoded = crate::image::cdp_client::decode_base64_png(&b64).expect("decodable PNG");
         assert_eq!(decoded.len(), png.len());
+    }
+
+    #[tokio::test]
+    async fn chromium_integration_web_scoreboard_is_canonical() {
+        if !integration_enabled() {
+            return;
+        }
+        let Ok(url) = std::env::var("PALADINSCAT_WEB_MATCH_URL") else {
+            return;
+        };
+        let renderer = test_renderer();
+        let png = renderer
+            .render_web_match(&url)
+            .await
+            .expect("render web scoreboard");
+        if let Ok(path) = std::env::var("MATCH_PNG_OUT") {
+            std::fs::write(path, &png).expect("write MATCH_PNG_OUT");
+        }
+        let image = image::load_from_memory(&png).expect("decode PNG");
+        let dimensions = (image.width(), image.height());
+        renderer.close().await;
+        assert_eq!(dimensions, (2048, 1152));
     }
 
     #[tokio::test]

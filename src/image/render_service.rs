@@ -95,6 +95,22 @@ impl ImageService {
         Ok(result)
     }
 
+    pub async fn render_web_match(
+        &self,
+        match_id: &str,
+        url: &str,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        let cache_key = format!("match:{}:summary:v{}", match_id, self.renderer.template_version());
+        if let Some(cached) = self.cache.get(&cache_key).await {
+            return Ok(decode_b64(&cached));
+        }
+        let result = self.render_with_dedup(match_id, || async {
+            self.render_with_recovery(|| async { self.renderer.render_web_match(url).await }).await
+        }).await?;
+        self.cache.set(cache_key, encode_b64(&result)).await;
+        Ok(result)
+    }
+
     pub async fn render_loadout(&self, record: &Value) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         let player_id = record["player"]["id"].as_str().unwrap_or("unknown");
         let loadout_id = record["loadout"]["id"].as_str().unwrap_or("unknown");
