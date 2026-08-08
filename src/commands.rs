@@ -371,8 +371,8 @@ impl Handler {
                         Ok(png) => {
                             self.defer_response(interaction).await;
                             self.send_followup_image(
-                                &embed,
-                                &png,
+                                embed,
+                                png,
                                 "match.png",
                                 &interaction.token,
                             )
@@ -715,8 +715,8 @@ impl Handler {
     /// Uses multipart form data: embed in the `payload_json` field, image as `FILE`.
     async fn send_followup_image(
         &self,
-        embed: &Embed,
-        png: &[u8],
+        embed: Embed,
+        png: Vec<u8>,
         filename: &str,
         token: &str,
     ) {

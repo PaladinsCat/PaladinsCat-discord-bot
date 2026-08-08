@@ -157,8 +157,9 @@ impl MatchRenderer {
             }
         }
         {
-            let mut client = self.cdp_client.lock().unwrap();
-            if let Some(c) = client.take() {
+            // Extract the client, drop the guard, then await — std::sync::MutexGuard is !Send
+            let maybe_client = self.cdp_client.lock().unwrap().take();
+            if let Some(c) = maybe_client {
                 c.close().await;
             }
         }
@@ -204,8 +205,9 @@ impl MatchRenderer {
         self.wait_for_browser_ready().await?;
 
         // Resolve the ws_url if we haven't already
-        if let Some(ref url) = *self.ws_url.lock().unwrap() {
-            self.connect_client(url.clone()).await?;
+        let maybe_url = self.ws_url.lock().unwrap().clone();
+        if let Some(url) = maybe_url {
+            self.connect_client(url).await?;
         } else {
             // Discover the debug port
             let port = self.discover_debug_port();
@@ -224,10 +226,11 @@ impl MatchRenderer {
                 .as_str()
                 .ok_or("No webSocketDebuggerUrl in browser JSON")?;
 
-            let mut ws = self.ws_url.lock().unwrap();
-            *ws = Some(debug_url.to_string());
-
-            drop(ws);
+            // Set the ws_url, then drop the guard before awaiting
+            {
+                let mut ws = self.ws_url.lock().unwrap();
+                *ws = Some(debug_url.to_string());
+            }
             self.connect_client(debug_url.to_string()).await?;
         }
 
