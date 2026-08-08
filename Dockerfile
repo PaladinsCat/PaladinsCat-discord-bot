@@ -14,17 +14,19 @@ COPY src/discord-bot-rust/Cargo.lock .
 COPY src/discord-bot-rust/src/ src/
 RUN cargo build --release
 
-# Runtime stage
-FROM debian:bookworm-slim
+# Runtime stage — trixie to match builder's GLIBC 2.39
+FROM debian:trixie-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl chromium && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /app/target/release/paladinscat-discord-bot .
+COPY dev/prototypes/ dev/prototypes/
 
 EXPOSE 3020
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -sf http://localhost:3020/health || exit 1
-ENV RUST_LOG=info HEALTH_PORT=3020
+ENV RUST_LOG=info HEALTH_PORT=3020 CHROME_PATH=/usr/bin/chromium-browser
 ENTRYPOINT ["./paladinscat-discord-bot"]
