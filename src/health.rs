@@ -216,7 +216,7 @@ async fn preview_history(
                     let Some(player_id) = val.get("id") else {
                         return serde_json::json!({ "type": "history", "error": format!("Player '{}' not found", n) });
                     };
-                    let id = player_id.to_string();
+                    let id = player_id.as_str().unwrap_or("");
                     match state.api.player_history(&id, 10).await {
                         Ok(rows) => serde_json::json!({
                             "type": "history",
@@ -286,7 +286,7 @@ async fn preview_loadout(
                     let Some(player_id) = val.get("id") else {
                         return serde_json::json!({ "type": "loadout", "error": format!("Player '{}' not found", n) });
                     };
-                    let id = player_id.to_string();
+                    let id = player_id.as_str().unwrap_or("");
                     match state.api.loadouts(&id).await {
                         Ok(loadouts) => {
                             let champ_loadouts: Vec<_> = loadouts

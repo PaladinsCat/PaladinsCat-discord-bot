@@ -239,7 +239,7 @@ impl Handler {
                 let Some(player_id) = val.get("id") else {
                     return self.reply_text(interaction, format!("Player '{}' not found", name)).await;
                 };
-                let id = player_id.to_string();
+                let id = player_id.as_str().unwrap_or("");
                 match self.api.player_history(&id, 10).await {
                     Ok(rows) => {
                         let mut builder = EmbedBuilder::new()
@@ -253,7 +253,7 @@ impl Handler {
                         self.send_embed(interaction, builder.build()).await;
                     }
                     Err(e) => {
-                        tracing::error!(player_id = id.as_str(), err = %e, "player_history request failed");
+                        tracing::error!(player_id = id, err = %e, "player_history request failed");
                         self.reply_text(interaction, "Failed to fetch match history").await;
                     }
                 }
@@ -303,7 +303,7 @@ impl Handler {
                 let Some(player_id) = val.get("id") else {
                     return self.reply_text(interaction, format!("Player '{}' not found", name)).await;
                 };
-                let id = player_id.to_string();
+                let id = player_id.as_str().unwrap_or("");
                 match self.api.loadouts(&id).await {
                     Ok(loadouts) => {
                         let champ_loadouts: Vec<_> = loadouts
