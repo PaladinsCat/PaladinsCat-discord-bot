@@ -12,6 +12,7 @@ pub struct Config {
     pub health_port: u16,
     pub development_guild_id: Option<String>,
     pub web_url: String,
+    pub chrome_path: String,
 }
 
 impl Config {
@@ -27,6 +28,7 @@ impl Config {
             development_guild_id: std::env::var("DEVELOPMENT_GUILD_ID").ok(),
             web_url: std::env::var("PALADINSCAT_WEB_URL")
                 .unwrap_or_else(|_| "https://paladinscat.com".into()),
+            chrome_path: std::env::var("CHROME_PATH").ok().unwrap_or_default(),
         })
     }
 }

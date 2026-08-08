@@ -56,9 +56,8 @@
 
 | Gap | Severity | Impact |
 |-----|----------|--------|
-| Image generation wiring (commands → ImageService) | 🟡 | Module exists, not yet wired to command handlers |
-| Image cooldown system | 🟡 | Rate limiting for renders |
-| CDP browser lifecycle in production | 🟡 | Chromium spawn/release in container environment |
+| CDP browser lifecycle in production | 🟡 | Chromium spawn/release in container environment — image service is optional/degraded |
+| Image cooldown system | 🟢 | Implemented in `ImageService` via `moka` LRU cache with TTL |
 
 ## Helper Function Parity
 

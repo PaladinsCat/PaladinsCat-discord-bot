@@ -40,6 +40,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Spawn health + preview server (shares ApiClient + RenderCache)
     let _handle = health::spawn_server(cfg.health_port, api.clone(), render_cache.clone());
 
+    // Initialize image service (optional — requires Chrome/Chromium on the host).
+    // If CHROME_PATH is empty or browser fails to start, image rendering will be
+    // unavailable but commands will continue to work with embed-only responses.
+    let template_engine = image::TemplateEngine::load(&image::TemplateConfig::dev_defaults());
+    let image_service: Option<Arc<image::ImageService>> = match template_engine {
+        Ok(te) if !cfg.chrome_path.is_empty() => {
+            let renderer = image::MatchRenderer::new(te, image::MatchRendererConfig {
+                chromium_path: cfg.chrome_path.clone(),
+                debug_port: 0,
+            });
+            let service = image::ImageService::new(
+                Arc::new(renderer),
+                image::ImageServiceConfig::default(),
+            );
+            tracing::info!("Image service initialized");
+            Some(Arc::new(service))
+        }
+        Ok(te) => {
+            tracing::warn!("CHROME_PATH not set — image rendering disabled (commands fall back to embeds)");
+            drop(te);
+            None
+        }
+        Err(e) => {
+            tracing::warn!(err = %e, "Template loading failed — image rendering disabled");
+            None
+        }
+    };
+
     // Initialize Discord gateway. Slash commands arrive via InteractionCreate,
     // which requires only the GUILDS intent. MESSAGE_CONTENT is a privileged
     // intent that must be enabled in the developer portal; we don't read raw
@@ -111,6 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         Arc::clone(&render_cache),
                         Arc::clone(&http),
                         cfg.web_url.clone(),
+                        image_service.clone(),
                     ));
                 }
                 Some(Err(err)) => {

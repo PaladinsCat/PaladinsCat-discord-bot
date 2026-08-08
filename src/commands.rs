@@ -21,6 +21,7 @@ use twilight_model::http::interaction::{
 use crate::api::ApiClient;
 use crate::cache::RenderCache;
 use crate::embeds;
+use crate::image::ImageService;
 
 /// Loadout session — maps a token to player/loadout data with an expiration.
 #[derive(Clone)]
@@ -46,6 +47,7 @@ struct Handler {
     http: Arc<HttpClient>,
     app_id: twilight_model::id::Id<twilight_model::id::marker::ApplicationMarker>,
     web_url: String,
+    image_service: Option<Arc<ImageService>>,
 }
 
 /// Main event dispatcher — routes gateway events to command handlers.
@@ -55,6 +57,7 @@ pub async fn handle_event(
     render_cache: Arc<RenderCache>,
     http: Arc<HttpClient>,
     web_url: String,
+    image_service: Option<Arc<ImageService>>,
 ) {
     match event {
         Event::Ready(_) => {
@@ -70,6 +73,7 @@ pub async fn handle_event(
                         http: http.clone(),
                         app_id: interaction.application_id,
                         web_url: web_url.clone(),
+                        image_service: image_service.clone(),
                     });
                     tokio::spawn(async move { h.handle_command(interaction).await });
                 }
@@ -80,6 +84,7 @@ pub async fn handle_event(
                         http: http.clone(),
                         app_id: interaction.application_id,
                         web_url: web_url.clone(),
+                        image_service: image_service.clone(),
                     });
                     tokio::spawn(async move { h.handle_autocomplete(interaction).await });
                 }
@@ -90,6 +95,7 @@ pub async fn handle_event(
                         http: http.clone(),
                         app_id: interaction.application_id,
                         web_url: web_url.clone(),
+                        image_service: image_service.clone(),
                     });
                     tokio::spawn(async move { h.handle_component(interaction).await });
                 }
@@ -358,6 +364,27 @@ impl Handler {
                     mode, map, duration, url
                 );
                 let embed = embeds::simple_embed(&format!("Match {}", id), &description, Some(&url));
+
+                // Try to render image; fall back to embed-only on error or if service unavailable.
+                if let Some(ref img) = self.image_service {
+                    match img.render_match(&val).await {
+                        Ok(png) => {
+                            self.defer_response(interaction).await;
+                            self.send_followup_image(
+                                &embed,
+                                &png,
+                                "match.png",
+                                &interaction.token,
+                            )
+                            .await;
+                            return;
+                        }
+                        Err(e) => {
+                            tracing::warn!(err = %e, "match image render failed — falling back to embed");
+                        }
+                    }
+                }
+
                 self.send_embed(interaction, embed).await;
             }
             Err(_) => {
@@ -680,6 +707,39 @@ impl Handler {
             Ok(_) => {}
             Err(e) => {
                 tracing::error!(url = %url, err = %e, "webhook PATCH failed");
+            }
+        }
+    }
+
+    /// Send an embed + PNG image attachment via the webhook follow-up endpoint.
+    /// Uses multipart form data: embed in the `payload_json` field, image as `FILE`.
+    async fn send_followup_image(
+        &self,
+        embed: &Embed,
+        png: &[u8],
+        filename: &str,
+        token: &str,
+    ) {
+        let webhook_id = self.app_id.get();
+        let url = format!(
+            "https://discord.com/api/v9/webhooks/{}/{}",
+            webhook_id, token
+        );
+        let payload = serde_json::json!({
+            "embeds": [embed],
+        });
+        let client = reqwest::Client::new();
+        let body = reqwest::multipart::Form::new()
+            .text("payload_json", serde_json::to_string(&payload).unwrap_or_default())
+            .part(
+                "FILE",
+                reqwest::multipart::Part::bytes(png.to_vec())
+                    .file_name(filename.to_string()),
+            );
+        match client.post(&url).multipart(body).send().await {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::error!(url = %url, err = %e, "follow-up image POST failed");
             }
         }
     }
