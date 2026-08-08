@@ -11,6 +11,7 @@ pub struct Config {
     pub cache_ttl_secs: u64,
     pub health_port: u16,
     pub development_guild_id: Option<String>,
+    pub web_url: String,
 }
 
 impl Config {
@@ -24,6 +25,8 @@ impl Config {
             cache_ttl_secs: parse_env("CACHE_TTL_SECS", 600),
             health_port: parse_env("HEALTH_PORT", 3020),
             development_guild_id: std::env::var("DEVELOPMENT_GUILD_ID").ok(),
+            web_url: std::env::var("PALADINSCAT_WEB_URL")
+                .unwrap_or_else(|_| "https://paladinscat.com".into()),
         })
     }
 }

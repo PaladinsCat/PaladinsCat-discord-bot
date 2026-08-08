@@ -109,6 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         Arc::clone(&api),
                         Arc::clone(&render_cache),
                         Arc::clone(&http),
+                        cfg.web_url.clone(),
                     ));
                 }
                 Some(Err(err)) => {
