@@ -55,7 +55,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 image::ImageServiceConfig::default(),
             );
             tracing::info!("Image service initialized");
-            Some(Arc::new(service))
+            let service = Arc::new(service);
+            // Warm the browser in the background so the first render is fast and
+            // startup failures surface in the logs instead of on the first /match.
+            {
+                let svc = Arc::clone(&service);
+                tokio::spawn(async move {
+                    match svc.warm().await {
+                        Ok(()) => tracing::info!("Browser warmed up"),
+                        Err(e) => tracing::warn!(
+                            err = %e,
+                            "Browser warm-up failed — first render will cold-start"
+                        ),
+                    }
+                });
+            }
+            Some(service)
         }
         Ok(te) => {
             tracing::warn!("CHROME_PATH not set — image rendering disabled (commands fall back to embeds)");

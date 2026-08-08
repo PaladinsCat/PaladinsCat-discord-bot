@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
+use std::time::Duration;
 
 use serde_json::Value;
 use twilight_gateway::Event;
@@ -36,6 +37,11 @@ struct LoadoutSession {
 
 /// 5-minute TTL for loadout sessions.
 const LOADOUT_SESSION_TTL_SECS: u64 = 5 * 60;
+
+/// Maximum time to wait for an image render before falling back to an embed.
+/// The interaction is deferred first, so this bounds only how long the user
+/// waits for the image (or the embed fallback), not Discord's 3s ACK window.
+const RENDER_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Module-level session store.  Shared between command and component handlers.
 static LOADOUT_SESSIONS: LazyLock<RwLock<HashMap<String, LoadoutSession>>> =
@@ -365,27 +371,33 @@ impl Handler {
                 );
                 let embed = embeds::simple_embed(&format!("Match {}", id), &description, Some(&url));
 
-                // Try to render image; fall back to embed-only on error or if service unavailable.
-                if let Some(ref img) = self.image_service {
-                    match img.render_match(&val).await {
-                        Ok(png) => {
-                            self.defer_response(interaction).await;
-                            self.send_followup_image(
-                                embed,
-                                png,
-                                "match.png",
-                                &interaction.token,
-                            )
-                            .await;
+                // Acknowledge immediately so Discord's 3s window is never exceeded,
+                // then render in the background with a bounded timeout.
+                self.defer_response(interaction).await;
+
+                if let Some(img) = &self.image_service {
+                    let img = Arc::clone(img);
+                    let val = val.clone();
+                    let token = interaction.token.clone();
+                    let embed_for_img = embed.clone();
+                    let render = async move { img.render_match(&val).await };
+                    match tokio::time::timeout(RENDER_TIMEOUT, render).await {
+                        Ok(Ok(png)) => {
+                            self.send_followup_image(embed_for_img, png, "match.png", &token)
+                                .await;
                             return;
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             tracing::warn!(err = %e, "match image render failed — falling back to embed");
+                        }
+                        Err(_) => {
+                            tracing::warn!("match image render timed out — falling back to embed");
                         }
                     }
                 }
 
-                self.send_embed(interaction, embed).await;
+                // Fallback: edit the deferred response with the embed via webhook.
+                self.send_webhook(&embed, &[], &interaction.token).await;
             }
             Err(_) => {
                 self.reply_text(interaction, format!("Match '{}' not found", id)).await;

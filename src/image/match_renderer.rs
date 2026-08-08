@@ -36,7 +36,7 @@ const TEMPLATE_VERSION: u32 = 14;
 const LOADOUT_TEMPLATE_VERSION: u32 = 9;
 
 /// Maximum time to wait for the browser debug port to appear.
-const BROWSER_START_TIMEOUT: Duration = Duration::from_secs(15);
+const BROWSER_START_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Configuration for the match renderer.
 #[derive(Debug, Clone)]
@@ -70,6 +70,8 @@ pub struct MatchRenderer {
     ws_url: StdMutex<Option<String>>,
     /// Current CDP client (wrapped in Arc for cloning across tasks).
     cdp_client: StdMutex<Option<Arc<CdpClient>>>,
+    /// Actual debug port in use (set after spawn; 0 until spawned).
+    active_port: StdMutex<u16>,
 }
 
 impl MatchRenderer {
@@ -85,12 +87,14 @@ impl MatchRenderer {
 
     /// Create a new renderer with the given template engine and config.
     pub fn new(template_engine: TemplateEngine, config: MatchRendererConfig) -> Self {
+        let initial_port = config.debug_port;
         Self {
             template_engine,
             config,
             browser_process: StdMutex::new(None),
             ws_url: StdMutex::new(None),
             cdp_client: StdMutex::new(None),
+            active_port: StdMutex::new(initial_port),
         }
     }
 
@@ -182,21 +186,17 @@ impl MatchRenderer {
             }
         }
 
-        // Check if we already have a child process (might just need reconnect)
-        // Use ref pattern to get mutable access for try_wait
-        let needs_spawn = {
+        // Spawn a fresh browser unless we already have a live child process.
+        // try_wait requires &mut Child, so check pid existence instead.
+        let has_live_child = {
             let proc = self.browser_process.lock().unwrap();
             match proc.as_ref() {
-                Some(child) => {
-                    // try_wait requires &mut Child, but we have &Child behind a RefGuard.
-                    // Work around by checking pid existence instead.
-                    child.id() != 0
-                }
-                None => true,
+                Some(child) => child.id() != 0,
+                None => false,
             }
         };
 
-        if !needs_spawn {
+        if !has_live_child {
             self.spawn_browser()?;
         }
 
@@ -256,6 +256,17 @@ impl MatchRenderer {
             self.config.debug_port
         };
 
+        // Record the actual port so wait_for_browser_ready can probe it.
+        {
+            let mut ap = self.active_port.lock().unwrap();
+            *ap = debug_port;
+        }
+
+        // Capture Chromium stderr to a temp file so startup failures are diagnosable.
+        let stderr_path = std::env::temp_dir().join("paladinscat-chromium-stderr.log");
+        let stderr_file = std::fs::File::create(&stderr_path)
+            .map_err(|e| format!("Failed to create Chromium stderr log: {}", e))?;
+
         let child = Command::new(&self.config.chromium_path)
             .args([
                 "--headless",
@@ -269,7 +280,7 @@ impl MatchRenderer {
                 "--remote-debugging-address=127.0.0.1",
             ])
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::from(stderr_file))
             .spawn()
             .map_err(|e| format!("Failed to spawn Chromium: {}", e))?;
 
@@ -285,7 +296,7 @@ impl MatchRenderer {
 
     /// Discover the debug port from the config or child process.
     fn discover_debug_port(&self) -> u16 {
-        self.config.debug_port
+        *self.active_port.lock().unwrap()
     }
 
     /// Wait for the browser debug port to accept connections.
@@ -295,9 +306,17 @@ impl MatchRenderer {
 
         loop {
             if Instant::now() > deadline {
+                let stderr_path = std::env::temp_dir().join("paladinscat-chromium-stderr.log");
+                let stderr_tail = std::fs::read_to_string(&stderr_path)
+                    .map(|s| {
+                        let bytes = s.as_bytes();
+                        let start = bytes.len().saturating_sub(2000);
+                        String::from_utf8_lossy(&bytes[start..]).into_owned()
+                    })
+                    .unwrap_or_default();
                 return Err(format!(
-                    "Browser debug port {} did not become ready in {:?}",
-                    port, BROWSER_START_TIMEOUT
+                    "Browser debug port {} did not become ready in {:?}. Chromium stderr: {}",
+                    port, BROWSER_START_TIMEOUT, stderr_tail
                 )
                 .into());
             }
