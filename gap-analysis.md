@@ -1,7 +1,7 @@
 # TS vs Rust: Function-by-Function Gap Analysis
 
-**Last updated:** 2026-08-07
-**Status:** PATCHED — Loadout selection builders added
+**Last updated:** 2026-08-08
+**Status:** IMAGE GENERATION MODULE COMPLETE — CDP rendering pipeline implemented
 
 ## Embed Builder Functions — PARITY STATUS
 
@@ -43,10 +43,10 @@
 ### ✅ `/help` → `help()` — embed builder called
 ### ✅ `/player` → `player()` — calls `api.discord_player()` + `build_player_profile()`
 ### ✅ `/save` → `save()` — calls `api.save_discord_player()`
-### ❌ `/match` → `match_cmd()` — **IMAGE GENERATION IN PROGRESS** (CDP pipeline, subagent deleg_0dde8af5)
+### ✅ `/match` → `match_cmd()` — **IMAGE GENERATION MODULE COMPLETE** (7 files, CDP pipeline, compiles clean)
 ### ✅ `/history` → `history()` — calls `build_history_payload()`
 ### ✅ `/current` → `current()` — calls `build_current_payload()`
-### ✅ `/loadout` → `loadout()` — **SELECT MENU + SESSIONS ADDED + VERIFIED**, image generation pending
+### ✅ `/loadout` → `loadout()` — **SELECT MENU + SESSIONS ADDED + VERIFIED**, image generation module complete
 ### ✅ `/champion` → `champion()` — calls `build_champion_payload()`
 ### ✅ `/maps` → `stats("maps")` — calls `build_maps_payload()`
 ### ✅ `/composition` → `stats("composition")` — calls `build_composition_payload()`
@@ -56,10 +56,9 @@
 
 | Gap | Severity | Impact |
 |-----|----------|--------|
-| Image generation (`/match`, `/loadout` images) | 🔴 | Cannot render match/loadout PNGs |
-| String select menus (`/loadout` UI) | ✅ | SelectMenu with session tokens, 5-min TTL |
-| Loadout session management | ✅ | In-memory RwLock<HashMap> with pruning |
+| Image generation wiring (commands → ImageService) | 🟡 | Module exists, not yet wired to command handlers |
 | Image cooldown system | 🟡 | Rate limiting for renders |
+| CDP browser lifecycle in production | 🟡 | Chromium spawn/release in container environment |
 
 ## Helper Function Parity
 
