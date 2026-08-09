@@ -276,7 +276,10 @@ impl ApiClient {
                 if payload
                     .get("matches")
                     .and_then(|matches| matches.as_array())
-                    .is_some_and(|matches| !matches.is_empty()) => payload,
+                    .is_some_and(|matches| !matches.is_empty()) =>
+            {
+                payload
+            }
             _ => {
                 let payload = self.get_json_slow(&match_url).await?;
                 if fact_result.is_none() {
