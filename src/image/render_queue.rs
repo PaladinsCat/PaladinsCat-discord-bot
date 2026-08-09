@@ -29,6 +29,14 @@ impl std::fmt::Display for QueueFullError {
 
 impl std::error::Error for QueueFullError {}
 
+impl QueueFullError {
+    /// True only when the producer's work timed out, not when the queue
+    /// rejected admission.
+    pub fn is_work_timeout(&self) -> bool {
+        self.message.contains(" exceeded ")
+    }
+}
+
 /// Duration metrics for queue monitoring.
 #[derive(Debug, Clone, Default)]
 pub struct DurationMetrics {
@@ -176,22 +184,15 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
     }
 
     async fn wait_for_result(&self, holder: Arc<SharedResult<T>>) -> Result<T, QueueFullError> {
-        tokio::time::timeout(Duration::from_millis(self.timeout_ms), async {
-            loop {
-                let notified = holder.ready.notified();
-                if let Some(result) = holder.result.lock().await.clone() {
-                    return result.map_err(|message| QueueFullError { message });
-                }
-                notified.await;
+        // This is the same logical request as the producer, so share its
+        // bounded result instead of racing it with a second timeout clock.
+        loop {
+            let notified = holder.ready.notified();
+            if let Some(result) = holder.result.lock().await.clone() {
+                return result.map_err(|message| QueueFullError { message });
             }
-        })
-        .await
-        .map_err(|_| QueueFullError {
-            message: format!(
-                "{} dedup wait exceeded {}ms",
-                self.work_label, self.timeout_ms
-            ),
-        })?
+            notified.await;
+        }
     }
 
     /// Get a snapshot of queue state.

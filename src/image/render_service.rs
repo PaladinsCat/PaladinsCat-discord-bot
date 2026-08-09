@@ -96,7 +96,7 @@ impl ImageService {
         &self,
         record: &Value,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-        let match_id = record["match"]["match_id"].as_str().unwrap_or("unknown");
+        let match_id = value_id(record["match"].get("match_id"));
         let cache_key = format!(
             "match:{}:summary:v{}",
             match_id,
@@ -109,12 +109,12 @@ impl ImageService {
 
         let result = self
             .queue
-            .add(match_id.to_string(), || async {
+            .add(match_id.clone(), || async {
                 self.render_with_recovery(|| async { self.renderer.render(record).await })
                     .await
             })
-            .await
-            .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)?;
+            .await;
+        let result = self.finish_queued_render(result).await?;
 
         self.cache.set(cache_key, encode_b64(&result)).await;
         Ok(result)
@@ -139,8 +139,8 @@ impl ImageService {
                 self.render_with_recovery(|| async { self.renderer.render_web_match(url).await })
                     .await
             })
-            .await
-            .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)?;
+            .await;
+        let result = self.finish_queued_render(result).await?;
         self.cache.set(cache_key, encode_b64(&result)).await;
         Ok(result)
     }
@@ -149,8 +149,8 @@ impl ImageService {
         &self,
         record: &Value,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-        let player_id = record["player"]["id"].as_str().unwrap_or("unknown");
-        let loadout_id = record["loadout"]["id"].as_str().unwrap_or("unknown");
+        let player_id = value_id(record["player"].get("id"));
+        let loadout_id = value_id(record["loadout"].get("id"));
         let updated_at = record["loadout"]["updated_at"].as_str().unwrap_or(
             record["loadout"]["fetched_at"]
                 .as_str()
@@ -174,8 +174,8 @@ impl ImageService {
                 self.render_with_recovery(|| async { self.renderer.render_loadout(record).await })
                     .await
             })
-            .await
-            .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)?;
+            .await;
+        let result = self.finish_queued_render(result).await?;
 
         self.cache.set(cache_key, encode_b64(&result)).await;
         Ok(result)
@@ -256,6 +256,25 @@ impl ImageService {
         }
     }
 
+    async fn finish_queued_render(
+        &self,
+        result: Result<Vec<u8>, crate::image::render_queue::QueueFullError>,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                // Queue timeout drops the renderer future before its own
+                // recovery loop can observe the failure. Reset the shared CDP
+                // page so the next command never inherits that pending call.
+                if error.is_work_timeout() {
+                    self.renderer.recycle().await;
+                    self.stats.lock().unwrap().browser_recoveries += 1;
+                }
+                Err(Box::new(error))
+            }
+        }
+    }
+
     async fn render_with_recovery<F, Fut>(
         &self,
         mut render: F,
@@ -269,12 +288,13 @@ impl ImageService {
             match render().await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
+                    self.renderer.recycle().await;
+                    let mut s = self.stats.lock().unwrap();
+                    s.browser_recoveries += 1;
                     if attempt == 0 {
-                        self.renderer.recycle().await;
-                        let mut s = self.stats.lock().unwrap();
-                        s.browser_recoveries += 1;
                         s.render_retries += 1;
                     } else {
+                        drop(s);
                         return Err(e);
                     }
                 }
@@ -335,6 +355,14 @@ fn decode_b64(s: &str) -> Vec<u8> {
         .unwrap_or_default()
 }
 
+fn value_id(value: Option<&serde_json::Value>) -> String {
+    match value {
+        Some(serde_json::Value::String(value)) => value.clone(),
+        Some(serde_json::Value::Number(value)) => value.to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,5 +378,17 @@ mod tests {
             let decoded = decode_b64(&encoded);
             assert_eq!(decoded, data, "round-trip failed for len {len}");
         }
+    }
+
+    #[test]
+    fn cache_ids_accept_json_strings_and_numbers() {
+        assert_eq!(
+            value_id(Some(&serde_json::json!(1281335238u64))),
+            "1281335238"
+        );
+        assert_eq!(
+            value_id(Some(&serde_json::json!("1281335238"))),
+            "1281335238"
+        );
     }
 }
