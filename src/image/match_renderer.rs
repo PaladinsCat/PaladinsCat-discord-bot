@@ -44,7 +44,8 @@ const WEB_SCOREBOARD_ERROR_TITLE: &str = "PALADINSCAT_SCOREBOARD_EXPORT_ERROR:";
 const WEB_SCOREBOARD_BOOTSTRAP: &str = r#"(() => {
   const timer = setInterval(async () => {
     if (window.__paladinscatExportStarted) return;
-    if (typeof window.__paladinscatMatchScoreboardPng !== 'function') {
+    const scoreboard = document.querySelector('#browser-scoreboard .scoreboard');
+    if (!scoreboard || scoreboard.querySelectorAll('.player-row').length < 10) {
       document.title = 'PALADINSCAT_SCOREBOARD_EXPORT_WAITING';
       return;
     }
@@ -52,18 +53,32 @@ const WEB_SCOREBOARD_BOOTSTRAP: &str = r#"(() => {
     clearInterval(timer);
     document.title = 'PALADINSCAT_SCOREBOARD_EXPORTING';
     try {
-      const href = await window.__paladinscatMatchScoreboardPng();
-      document.title = 'PALADINSCAT_SCOREBOARD_DATA_READY';
-      const image = new Image();
-      image.onload = () => {
-        document.documentElement.style.cssText = 'margin:0;width:2048px;height:1152px;overflow:hidden;background:#161618';
-        document.body.style.cssText = 'margin:0;width:2048px;height:1152px;overflow:hidden';
-        image.style.cssText = 'display:block;width:2048px;height:1152px';
-        document.body.replaceChildren(image);
-        document.title = 'PALADINSCAT_SCOREBOARD_EXPORT_READY';
-      };
-      image.onerror = () => { document.title = 'PALADINSCAT_SCOREBOARD_EXPORT_ERROR:image-load'; };
-      image.src = href;
+      const assetDeadline = performance.now() + 2000;
+      while (scoreboard.querySelector('span.talent-icon[role="img"]') && performance.now() < assetDeadline) {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      }
+      await Promise.race([document.fonts.ready, new Promise(resolve => setTimeout(resolve, 2000))]);
+      await Promise.all(Array.from(scoreboard.querySelectorAll('img')).map(image => {
+        if (image.complete) return image.decode?.().catch(() => undefined) ?? Promise.resolve();
+        return Promise.race([
+          new Promise(resolve => {
+            image.addEventListener('load', resolve, { once: true });
+            image.addEventListener('error', resolve, { once: true });
+          }),
+          new Promise(resolve => setTimeout(resolve, 2000)),
+        ]);
+      }));
+      scoreboard.setAttribute('data-image-export', 'true');
+      const browser = document.querySelector('#browser-scoreboard');
+      const viewport = browser?.querySelector('.viewport');
+      const controls = browser?.firstElementChild;
+      document.documentElement.style.cssText = 'margin:0;width:2048px;height:1152px;overflow:hidden;background:#161618';
+      document.body.style.cssText = 'margin:0;width:2048px;height:1152px;overflow:hidden';
+      if (browser) browser.style.cssText = 'position:fixed;inset:0;width:2048px;height:1152px;margin:0;padding:0;overflow:hidden';
+      if (controls) controls.style.display = 'none';
+      if (viewport) viewport.style.cssText = 'width:2048px;max-width:none;transform:none;transform-origin:top left';
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      document.title = 'PALADINSCAT_SCOREBOARD_EXPORT_READY';
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       document.title = 'PALADINSCAT_SCOREBOARD_EXPORT_ERROR:' + message.slice(0, 120);
