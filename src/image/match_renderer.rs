@@ -463,19 +463,30 @@ impl MatchRenderer {
 
         let client = self.ensure_browser().await?;
 
-        // Navigate to the document. Base64-encode the HTML into a data URI so
-        // `#` (present in CSS hex colors) isn't interpreted as a URL fragment.
+        // Inject the generated document directly into the existing page frame.
+        // This avoids base64-encoding an HTML document whose AVIF assets are
+        // already base64 data URLs (a large, redundant cold-path copy).
         let render_id = RENDER_DOCUMENT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let tagged_html = tagged_render_document(document_html, render_id);
-        let html_url = html_data_uri(&tagged_html);
-        client
+        let frame_tree = client.send("Page.getFrameTree", json!({})).await?;
+        if let Some(error) = frame_tree.error {
+            return Err(format!("get render frame failed: {error}").into());
+        }
+        let frame_id = frame_tree.result["frameTree"]["frame"]["id"]
+            .as_str()
+            .ok_or("render page frame is unavailable")?;
+        let injected = client
             .send(
-                "Page.navigate",
+                "Page.setDocumentContent",
                 json!({
-                    "url": &html_url,
+                    "frameId": frame_id,
+                    "html": tagged_html,
                 }),
             )
             .await?;
+        if let Some(error) = injected.error {
+            return Err(format!("inject render document failed: {error}").into());
+        }
 
         // Page.navigate acknowledges the request before the new data document's
         // JavaScript context is guaranteed to be active. Confirm this exact
@@ -507,7 +518,13 @@ impl MatchRenderer {
                         img.addEventListener('error', resolve, { once: true });
                     });
                 }
-                await img.decode().catch(() => {});
+                // A completed image with intrinsic dimensions is already ready
+                // for layout; calling decode() again is costly for AVIF on the
+                // production CPU quota. Keep the fallback for incomplete or
+                // failed images so capture never races their first decode.
+                if (!img.complete || img.naturalWidth === 0) {
+                    await img.decode().catch(() => {});
+                }
             }));
             await new Promise((resolve) => {
                 requestAnimationFrame(() => requestAnimationFrame(resolve));
@@ -526,8 +543,7 @@ impl MatchRenderer {
 
 fn tagged_render_document(document_html: &str, render_id: u64) -> String {
     let marker = format!(r#"<meta name="paladinscat-render-id" content="{render_id}">"#);
-    if let Some(head) = document_html.find("<head>") {
-        let insert_at = head + "<head>".len();
+    if let Some(insert_at) = document_html.rfind("</body>") {
         let mut tagged = String::with_capacity(document_html.len() + marker.len());
         tagged.push_str(&document_html[..insert_at]);
         tagged.push_str(&marker);
