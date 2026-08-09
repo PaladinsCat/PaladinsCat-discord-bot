@@ -819,6 +819,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chromium_integration_loadout_is_data_bound_and_styled() {
+        if !integration_enabled() {
+            return;
+        }
+        let renderer = test_renderer();
+        let record = serde_json::json!({
+            "player": {"id": "16706730", "name": "NabiCookTV"},
+            "loadout": {
+                "id": "7968",
+                "champion_id": 2205,
+                "champion_name": "Androxus",
+                "loadout_name": "New Loadout",
+                "card_ids": [11928, 13316, 13293, 13290, 13322],
+                "card_levels": [5, 5, 2, 2, 1]
+            }
+        });
+        let png = renderer
+            .render_loadout(&record)
+            .await
+            .expect("render data-bound loadout");
+        if let Ok(path) = std::env::var("LOADOUT_PNG_OUT") {
+            std::fs::write(path, &png).expect("write LOADOUT_PNG_OUT");
+        }
+        let image = image::load_from_memory(&png).expect("decode PNG").to_rgb8();
+        assert_eq!((image.width(), image.height()), (1280, 720));
+        let near_white = image
+            .pixels()
+            .filter(|pixel| pixel.0.iter().all(|channel| *channel > 245))
+            .count();
+        let white_ratio = near_white as f64 / (image.width() as f64 * image.height() as f64);
+        assert!(
+            white_ratio < 0.25,
+            "loadout is unexpectedly white: {white_ratio:.1}"
+        );
+        renderer.close().await;
+    }
+
+    #[tokio::test]
     async fn chromium_integration_real_match_from_env_is_styled() {
         if !integration_enabled() {
             return;
