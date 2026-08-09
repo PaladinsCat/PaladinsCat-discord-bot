@@ -321,9 +321,12 @@ impl AssetCatalog {
     }
 
     fn public_image_path(&self, url: &str) -> Option<PathBuf> {
-        let relative = url.strip_prefix("/images/")?;
-        let path = self.root.join(relative);
-        path.exists().then_some(path)
+        self.resolve_public_image_path(url)
+            .filter(|path| path.exists())
+    }
+
+    fn resolve_public_image_path(&self, url: &str) -> Option<PathBuf> {
+        Some(self.root.join(url.strip_prefix("/images/")?))
     }
 
     fn load_card_reference(&self) -> HashMap<u32, LoadoutCardAsset> {
@@ -353,11 +356,12 @@ impl AssetCatalog {
                 let canonical = row
                     .get("iconUrl")
                     .and_then(|v| v.as_str())
-                    .and_then(|url| self.public_image_path(url));
+                    .and_then(|url| self.resolve_public_image_path(url));
                 let png = canonical
                     .as_ref()
                     .map(|path| path.with_extension("png"))
                     .filter(|path| path.exists());
+                let canonical = canonical.filter(|path| path.exists());
                 Some((
                     id,
                     LoadoutCardAsset {
@@ -546,5 +550,32 @@ impl AssetCatalog {
             Err(_) => {}
         }
         files
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AssetCatalog;
+
+    #[test]
+    fn resolves_packaged_png_when_referenced_avif_is_absent() {
+        let fixture =
+            std::env::temp_dir().join(format!("paladinscat-card-catalog-{}", uuid::Uuid::new_v4()));
+        let images = fixture.join("images");
+        let cards = images.join("cards");
+        let data = fixture.join("data");
+        std::fs::create_dir_all(&cards).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(cards.join("Card_Test.png"), b"png-only-fixture").unwrap();
+        std::fs::write(
+            data.join("paladins-card-reference.json"),
+            br#"[{"id":42,"name":"Test","iconUrl":"/images/cards/Card_Test.avif"}]"#,
+        )
+        .unwrap();
+
+        let asset = AssetCatalog::new(&images).loadout_card(42).unwrap();
+        assert_eq!(asset.icon_path, Some(cards.join("Card_Test.png")));
+
+        std::fs::remove_dir_all(fixture).unwrap();
     }
 }
