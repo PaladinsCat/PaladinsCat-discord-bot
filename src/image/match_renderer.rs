@@ -145,6 +145,11 @@ impl MatchRenderer {
             .send("Page.navigate", json!({ "url": render_url }))
             .await?;
 
+        // Page.navigate acknowledges the request before Chromium swaps the
+        // execution context. Evaluating immediately can target the outgoing
+        // context and hang until the CDP command timeout on slower hosts.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
         let deadline = Instant::now() + WEB_SCOREBOARD_READY_TIMEOUT;
         loop {
             match client
