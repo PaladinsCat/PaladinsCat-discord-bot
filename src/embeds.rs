@@ -1,6 +1,7 @@
 //! Discord embed message builders — mirrors TS message-builders.ts 1-to-1.
 
 use chrono::Datelike;
+use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use twilight_model::channel::message::embed::{Embed, EmbedField};
 use twilight_model::util::Timestamp;
 use twilight_util::builder::embed::{
@@ -15,6 +16,10 @@ const ACCENT: u32 = 0x2dd4a3;
 const PENDING: u32 = 0xf0b232;
 /// Not in match gray
 const NOT_IN_MATCH: u32 = 0x77808d;
+
+fn url_encode(value: &str) -> String {
+    percent_encode(value.as_bytes(), NON_ALPHANUMERIC).to_string()
+}
 
 /// Queue labels — matches TS QUEUE_LABELS
 pub const QUEUE_LABELS: &[(i32, &str)] = &[
@@ -136,15 +141,19 @@ fn format_grouped(n: i64) -> String {
 
 /// Format number with decimals — mirrors TS formattedNumber
 pub fn format_number_dec(value: Option<f64>, decimals: usize) -> String {
-    match value {
-        Some(n) => format!("{:.prec$}", n, prec = decimals),
-        None => "—".to_string(),
-    }
+    let Some(value) = value else { return "—".to_string() };
+    // `toLocaleString` groups the integer part even when a fixed fractional
+    // precision is requested (including precision zero).
+    let formatted = format!("{:.prec$}", value, prec = decimals);
+    let (sign, digits) = formatted.strip_prefix('-').map_or(("", formatted.as_str()), |v| ("-", v));
+    let (integer, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    let grouped = format_grouped(integer.parse::<i64>().unwrap_or(0));
+    if decimals == 0 { format!("{}{}", sign, grouped) } else { format!("{}{}.{}", sign, grouped, fraction) }
 }
 
 /// Duration label — mirrors TS durationLabel
 pub fn duration_label(value: &Value) -> String {
-    let seconds = numeric_metric(value).unwrap_or(0.0).max(0.0) as i64;
+    let seconds = numeric_metric(value).unwrap_or(0.0).max(0.0).round() as i64;
     let mins = seconds / 60;
     let secs = (seconds % 60) as u32;
     format!("{}m {:02}s", mins, secs)
@@ -162,6 +171,14 @@ pub fn queue_label(queue_id: i32) -> String {
     } else {
         "Unknown queue".to_string()
     }
+}
+
+fn json_id(value: Option<&Value>) -> Option<String> {
+    value.and_then(|value| match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    })
 }
 
 /// Strip leading "Live ", "Ranked ", "WIP " prefixes (repeated) — mirrors TS
@@ -250,7 +267,7 @@ pub fn build_history_payload(player_name: &str, history: &[Value], web_url: &str
                     .and_then(|v| numeric_metric(v))
                     .unwrap_or(0.0) as i64,
             );
-            let id = obj.get("match_id").and_then(|v| v.as_str()).unwrap_or("");
+            let id = json_id(obj.get("match_id")).unwrap_or_default();
             let parts: Vec<&str> = vec![w, map, &dur, region, champ, &kda]
                 .iter()
                 .filter(|s| !s.is_empty())
@@ -277,11 +294,9 @@ pub fn build_current_payload(result: &Value, web_url: &str) -> Embed {
         .get("players")
         .and_then(|v| v.as_array())
         .unwrap_or(&empty_players);
-    let player_id = result
-        .get("player_id")
-        .and_then(|v| v.as_str())
-        .or_else(|| match_data.get("source_player_id").and_then(|v| v.as_str()))
-        .unwrap_or("");
+    let player_id = json_id(result.get("player_id"))
+        .or_else(|| json_id(match_data.get("source_player_id")))
+        .unwrap_or_default();
 
     // Pending state
     if result.get("pending") == Some(&Value::Bool(true)) {
@@ -305,8 +320,8 @@ pub fn build_current_payload(result: &Value, web_url: &str) -> Embed {
     else {
         let match_id = match_data
             .get("match_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .and_then(|v| json_id(Some(v)))
+            .unwrap_or_default();
         let queue_id = match_data
             .get("queue_id")
             .and_then(|v| numeric_metric(v))
@@ -334,7 +349,7 @@ pub fn build_current_payload(result: &Value, web_url: &str) -> Embed {
                     .get("task_force")
                     .and_then(|v| numeric_metric(v))
                     .unwrap_or(0.0) as i32;
-                let line = current_player_line(player, player_id, web_url);
+                let line = current_player_line(player, &player_id, web_url);
                 if tf == 1 {
                     team1_players.push(line);
                 } else {
@@ -397,8 +412,8 @@ pub fn build_current_payload(result: &Value, web_url: &str) -> Embed {
 fn current_player_line(player: &Value, source_player_id: &str, web_url: &str) -> String {
     let player_id = player
         .get("player_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+        .and_then(|v| json_id(Some(v)))
+        .unwrap_or_default();
     let player_name = clean_discord_text(
         player.get("player_name").unwrap_or(&Value::Null),
         "Private Account",
@@ -443,7 +458,7 @@ fn current_player_line(player: &Value, source_player_id: &str, web_url: &str) ->
         details.push(format!("Global {:.1}% WR", wr));
     }
     if let Some(elo) = queue_elo {
-        details.push(format!("{} ELO", (elo.round() as i64).to_string()));
+        details.push(format!("{} ELO", format_number(elo.round())));
     }
 
     let detail_str = if details.is_empty() {
@@ -512,9 +527,9 @@ fn estimate_live_team_win_chance(players: &[Value]) -> Option<TeamWinEstimate> {
             None
         };
 
-        avg_elo.zip(avg_wr).map(|(e, w)| TeamMetrics {
-            average_elo: Some(e),
-            average_wr: Some(w),
+        avg_elo.map(|average_elo| TeamMetrics {
+            average_elo: Some(average_elo),
+            average_wr: avg_wr,
         })
     };
 
@@ -595,7 +610,7 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
 
     // Tier
     let avg_tier = stats.get("avg_league_tier").and_then(|v| numeric_metric(v));
-    let tier_value = if let Some(t) = avg_tier {
+    let tier_value = if let Some(t) = avg_tier.filter(|t| *t > 0.0) {
         let rounded = t.round() as i32;
         let clamped = rounded.max(0).min((TIER_NAMES.len() - 1) as i32);
         let tier_name = TIER_NAMES[clamped as usize];
@@ -609,24 +624,24 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
     let wins = stats
         .get("wins")
         .and_then(|v| numeric_metric(v))
-        .unwrap_or(0.0) as i64;
+        .unwrap_or(0.0);
     let losses = stats
         .get("losses")
         .and_then(|v| numeric_metric(v))
-        .unwrap_or(0.0) as i64;
+        .unwrap_or(0.0);
     let total = stats
         .get("total_plays")
         .or_else(|| stats.get("total_matches"))
         .and_then(|v| numeric_metric(v))
-        .unwrap_or(0.0) as i64;
+        .unwrap_or(0.0);
     let record_value = format!(
         "{}\n{} W · {} L\n{} total plays",
         win_rate
             .map(|w| format!("**{:.1}%** win rate", w))
             .unwrap_or("**—** win rate".to_string()),
-        wins,
-        losses,
-        total,
+        format_number(wins.round()),
+        format_number(losses.round()),
+        format_number(total.round()),
     );
 
     // Metric fields
@@ -688,9 +703,9 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
             let plays = talent
                 .get("totalPlays")
                 .and_then(|v| numeric_metric(v))
-                .unwrap_or(0.0) as i64;
+                .unwrap_or(0.0);
             let pick_rate = if talent_coverage > 0 {
-                format!("{:.1}%", 100.0 * (plays as f64) / talent_coverage as f64)
+                format!("{:.1}%", 100.0 * plays / talent_coverage as f64)
             } else {
                 "—".to_string()
             };
@@ -700,9 +715,10 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
             format!(
                 "**{}** · {:.1}% WR · {} pick · {} plays",
                 name,
-                wr.unwrap_or(0.0),
+                wr.map(|value| format!("{:.1}", value))
+                    .unwrap_or_else(|| "—".into()),
                 pick_rate,
-                plays,
+                format_number(plays.round()),
             )
         })
         .collect();
@@ -729,7 +745,7 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
         inline: true,
     };
 
-    let url = format!("{}/champions/{}", web_url, name.to_lowercase());
+    let url = format!("{}/champions/{}", web_url, url_encode(&name.to_lowercase()));
     let description = format!(
         "**{}** · Served from the PaladinsCat champion database.",
         lobby_label
@@ -743,13 +759,13 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
         .field(class_field)
         .field(tier_field)
         .field(record_field)
-        .field(EmbedFieldBuilder::new("Most played talents", talent_value))
         .footer(EmbedFooterBuilder::new(
             "Lobby filters use the ranked match database; global is the default.",
         ));
     for field in fields {
         builder = builder.field(field);
     }
+    builder = builder.field(EmbedFieldBuilder::new("Most played talents", talent_value));
     builder.build()
 }
 
@@ -766,16 +782,22 @@ pub fn build_maps_payload(rows: &[Value], web_url: &str) -> Embed {
             .get("total_matches")
             .and_then(|v| numeric_metric(v))
             .unwrap_or(0.0)
-            .max(0.0) as i64;
+            .max(0.0)
+            .round() as i64;
         let share = row.get("distribution_rate").and_then(|v| numeric_metric(v));
-        let share_str = format_number_dec(share, 1);
+        let share_str = share
+            .map(|value| format!("{:.1}%", value))
+            .unwrap_or_else(|| "—".into());
         let duration = duration_label(row.get("avg_duration_seconds").unwrap_or(&Value::Null));
-        let wr = row.get("win_rate").and_then(|v| numeric_metric(v));
-        let wr_str = format_number_dec(wr, 1);
 
         lines.push(format!(
-            "**[{}]({}/game/maps/{})** · {} matches · {} of pool · {} avg duration · {} WR",
-            safe_name, web_url, name, matches, share_str, duration, wr_str,
+            "**[{}]({}/game/maps/{})** · {} matches · {} of pool · {} avg",
+            safe_name,
+            web_url,
+            url_encode(name),
+            format_number(matches as f64),
+            share_str,
+            duration,
         ));
     }
 
@@ -822,31 +844,41 @@ pub fn build_composition_payload(rows: &[Value], web_url: &str) -> Embed {
             let frontline = row
                 .get("frontline")
                 .and_then(|v| numeric_metric(v))
-                .unwrap_or(0.0) as i32;
+                .unwrap_or(0.0)
+                .round() as i32;
             let damage = row
                 .get("damage")
                 .and_then(|v| numeric_metric(v))
-                .unwrap_or(0.0) as i32;
+                .unwrap_or(0.0)
+                .round() as i32;
             let flank = row
                 .get("flank")
                 .and_then(|v| numeric_metric(v))
-                .unwrap_or(0.0) as i32;
+                .unwrap_or(0.0)
+                .round() as i32;
             let support = row
                 .get("support")
                 .and_then(|v| numeric_metric(v))
-                .unwrap_or(0.0) as i32;
+                .unwrap_or(0.0)
+                .round() as i32;
             let count = row
                 .get("count")
                 .and_then(|v| numeric_metric(v))
                 .unwrap_or(0.0)
-                .max(0.0) as i64;
+                .max(0.0)
+                .round() as i64;
             let wr = row.get("winrate").and_then(|v| numeric_metric(v));
             let roles = format!(
                 "{} Frontline · {} Damage · {} Flank · {} Support",
                 frontline, damage, flank, support
             );
             let name = format!("{}. {}", i + 1, roles);
-            let value = format!("{} matches · {} win rate", count, format_number_dec(wr, 1),);
+            let value = format!(
+                "{} matches · {} win rate",
+                format_number(count as f64),
+                wr.map(|value| format!("{:.1}%", value))
+                    .unwrap_or_else(|| "—".into())
+            );
             EmbedField {
                 name,
                 value,
@@ -887,11 +919,12 @@ pub fn build_items_payload(rows: &[Value], web_url: &str, lobby_label: &str) -> 
             .or_else(|| row.get("total_usage"))
             .and_then(|v| numeric_metric(v))
             .unwrap_or(0.0)
-            .max(0.0) as i64;
+            .max(0.0)
+            .round() as i64;
         let pick_rate = row.get("pick_rate").and_then(|v| numeric_metric(v));
         let win_rate = row.get("win_rate").and_then(|v| numeric_metric(v));
         let linked_name = if !id.is_empty() {
-            format!("[{}]({}/game/items/{})", name, web_url, id)
+            format!("[{}]({}/game/items/{})", name, web_url, url_encode(id))
         } else {
             name
         };
@@ -899,9 +932,13 @@ pub fn build_items_payload(rows: &[Value], web_url: &str, lobby_label: &str) -> 
             "**{}. {}** · {} pick · {} WR · {} uses",
             i + 1,
             linked_name,
-            format_number_dec(pick_rate, 1),
-            format_number_dec(win_rate, 1),
-            uses,
+            pick_rate
+                .map(|value| format!("{:.1}%", value))
+                .unwrap_or_else(|| "—".into()),
+            win_rate
+                .map(|value| format!("{:.1}%", value))
+                .unwrap_or_else(|| "—".into()),
+            format_number(uses as f64),
         ));
     }
 
@@ -1181,8 +1218,28 @@ fn month_short(month: u32) -> &'static str {
     }
 }
 
+// Keep the extension manifest single-sourced from the legacy bot.  Avatar IDs
+// with animated assets must use the canonical GitHub URL for Discord to retain GIF animation.
+const AVATAR_MANIFEST: &str = include_str!("../../discord-bot/src/paladins-avatar-assets.ts");
+const AVATAR_ASSET_BASE: &str =
+    "https://raw.githubusercontent.com/EthanHicks1/PaladinsArtAssets/master/avatars";
+
+fn canonical_avatar_asset_url(avatar_id: &Value) -> Option<String> {
+    let id = json_id(Some(avatar_id))?
+        .parse::<i64>()
+        .ok()
+        .filter(|id| *id >= 0)?;
+    let marker = format!("{id}: '");
+    let start = AVATAR_MANIFEST.find(&marker)? + marker.len();
+    let extension = AVATAR_MANIFEST[start..].split('\'').next()?;
+    matches!(extension, "png" | "gif").then(|| format!("{AVATAR_ASSET_BASE}/{id}.{extension}"))
+}
+
 /// Resolve the player avatar URL — mirrors TS playerAvatarUrl.
-fn player_avatar_url(value: &Value, web_url: &str) -> String {
+fn player_avatar_url(value: &Value, avatar_id: &Value, web_url: &str) -> String {
+    if let Some(url) = canonical_avatar_asset_url(avatar_id) {
+        return url;
+    }
     let raw = value.as_str().unwrap_or("").trim();
     if raw.starts_with("http://") || raw.starts_with("https://") {
         return raw.to_string();
@@ -1196,7 +1253,7 @@ fn player_avatar_url(value: &Value, web_url: &str) -> String {
 /// Build player profile payload — mirrors TS buildPlayerProfileMessage.
 pub fn build_player_profile(result: &Value, web_url: &str) -> Embed {
     let player = result.get("player").unwrap_or(result);
-    let player_id = player.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let player_id = json_id(player.get("id")).unwrap_or_default();
     let player_name = compact(player.get("name").unwrap_or(&Value::Null), 256)
         .unwrap_or_else(|| "Unknown player".to_string());
     let title = compact(player.get("title").unwrap_or(&Value::Null), 220);
@@ -1217,7 +1274,7 @@ pub fn build_player_profile(result: &Value, web_url: &str) -> Embed {
     let record = format_percent(wins, losses);
     let kda = global_kda(result.get("globalStats").unwrap_or(&Value::Null));
     let mut general = vec![
-        stat_line("Account ID", player_id.to_string()),
+        stat_line("Account ID", player_id.clone()),
         stat_line(
             "Account level",
             format_number(
@@ -1337,7 +1394,11 @@ pub fn build_player_profile(result: &Value, web_url: &str) -> Embed {
         builder = builder.field(field);
     }
 
-    let avatar = player_avatar_url(player.get("avatar_url").unwrap_or(&Value::Null), web_url);
+    let avatar = player_avatar_url(
+        player.get("avatar_url").unwrap_or(&Value::Null),
+        player.get("avatar_id").unwrap_or(&Value::Null),
+        web_url,
+    );
     if let Ok(src) = ImageSource::url(&avatar) {
         builder = builder.thumbnail(src);
     }
@@ -1516,5 +1577,29 @@ mod tests {
             .value
             .contains("[A](https://paladinscat.com/players/1)"));
         assert!(embed.timestamp.is_some());
+    }
+
+    #[test]
+    fn history_and_live_payloads_accept_numeric_ids() {
+        let history = vec![json!({"match_id": 123, "win_status":"Winner", "champion_name":"Ying"})];
+        assert!(
+            build_history_payload("A", &history, "https://paladinscat.com")
+                .description
+                .unwrap()
+                .contains("/matches/123")
+        );
+        let live = json!({"match":{"match_id":9,"queue_id":486},"player_id":1,"players":[{"player_id":1,"player_name":"A","champion_name":"Ying","task_force":1}]});
+        assert!(
+            build_current_payload(&live, "https://paladinscat.com").fields[0]
+                .value
+                .contains("▸ **Ying**")
+        );
+    }
+
+    #[test]
+    fn canonical_avatar_assets_preserve_manifest_extensions() {
+        assert_eq!(canonical_avatar_asset_url(&json!(9918)).as_deref(), Some("https://raw.githubusercontent.com/EthanHicks1/PaladinsArtAssets/master/avatars/9918.png"));
+        assert_eq!(canonical_avatar_asset_url(&json!(23226)).as_deref(), Some("https://raw.githubusercontent.com/EthanHicks1/PaladinsArtAssets/master/avatars/23226.gif"));
+        assert!(canonical_avatar_asset_url(&json!(999999)).is_none());
     }
 }

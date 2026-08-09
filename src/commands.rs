@@ -365,8 +365,16 @@ impl Handler {
         match &self.image_service {
             Some(images) => match images.render_loadout(&record).await {
                 Ok(png) => {
-                    self.send_webhook_image("", png, "loadout.png", &interaction.token)
-                        .await
+                    let (filename, description) =
+                        loadout_attachment_metadata(&session.player, selected);
+                    self.send_webhook_image(
+                        "",
+                        png,
+                        &filename,
+                        Some(&description),
+                        &interaction.token,
+                    )
+                    .await
                 }
                 Err(error) => {
                     tracing::warn!(%error, "loadout render failed");
@@ -429,43 +437,25 @@ impl Handler {
 
     async fn save(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
         if let Some(n) = opt_string(opts, "player") {
-            match self.api.discord_player(&n).await {
-                Ok(profile) => {
-                    let player = profile.get("player").unwrap_or(&profile);
-                    let Some(id) = value_id(player.get("id")) else {
-                        return self
-                            .reply_text(interaction, format!("Player '{}' was not found", n))
-                            .await;
-                    };
-                    match self
-                        .api
-                        .save_discord_player(&extract_user_id(interaction).unwrap_or_default(), &id)
-                        .await
-                    {
-                        Ok(saved) => {
-                            self.reply_text(
-                                interaction,
-                                format!(
-                                    "Saved **{}** (ID: `{}`) as your default player.",
-                                    saved.get("name").and_then(|v| v.as_str()).unwrap_or(&n),
-                                    id
-                                ),
-                            )
-                            .await
-                        }
-                        Err(error) => {
-                            self.reply_text(
-                                interaction,
-                                api_error_message(&error, "Failed to save your default player"),
-                            )
-                            .await
-                        }
-                    }
+            // The legacy bot delegates resolution to the save endpoint. Doing
+            // an extra profile lookup first added latency and changed its error
+            // behavior for otherwise valid aliases.
+            match self
+                .api
+                .save_discord_player(&extract_user_id(interaction).unwrap_or_default(), &n)
+                .await
+            {
+                Ok(saved) => {
+                    let name = saved.get("name").and_then(|v| v.as_str()).unwrap_or(&n);
+                    let id = value_id(saved.get("id")).unwrap_or_else(|| n.clone());
+                    self.reply_text(interaction, format!(
+                        "Saved **{}** (ID: `{}`) as your default player. Player commands will use it whenever you omit the player option.", name, id
+                    )).await
                 }
                 Err(error) => {
                     self.reply_text(
                         interaction,
-                        api_error_message(&error, &format!("Player '{}' was not found", n)),
+                        api_error_message(&error, "Failed to save your default player"),
                     )
                     .await
                 }
@@ -563,7 +553,7 @@ impl Handler {
                         async move { renderer.render_web_match(&match_id, &render_url).await };
                     match tokio::time::timeout(RENDER_TIMEOUT, render).await {
                         Ok(Ok(png)) => {
-                            self.send_webhook_image(&match_url, png, "match.png", &token)
+                            self.send_webhook_image(&match_url, png, "match.png", None, &token)
                                 .await;
                             return;
                         }
@@ -606,9 +596,11 @@ impl Handler {
                         .await;
                 };
                 let id = value_id(Some(player_id)).unwrap_or_default();
+                let canonical_name = val.get("name").and_then(Value::as_str).unwrap_or(&name);
                 match self.api.player_history(&id, 10).await {
                     Ok(rows) => {
-                        let embed = embeds::build_history_payload(&name, &rows, &self.web_url);
+                        let embed =
+                            embeds::build_history_payload(canonical_name, &rows, &self.web_url);
                         self.send_embed(interaction, embed).await;
                     }
                     Err(e) => {
@@ -677,23 +669,55 @@ impl Handler {
                 };
                 let id = value_id(Some(player_id)).unwrap_or_default();
 
-                match self.api.loadouts(&id).await {
-                    Ok(loadouts) => {
-                        // Filter to the requested champion (case-insensitive).
-                        let champ_loadouts: Vec<Value> = loadouts
-                            .iter()
-                            .filter(|lo| {
-                                lo.get("champion_name")
-                                    .map(|v| {
-                                        v.to_string().to_lowercase() == champion.to_lowercase()
-                                    })
-                                    .unwrap_or(false)
-                            })
-                            .cloned()
-                            .collect();
+                match self.api.loadouts_response(&id).await {
+                    Ok(cached) => {
+                        // The first read is DB-only. Match the TS flow: refresh only
+                        // when that cache has no deck for the requested champion.
+                        let matches_champion = |rows: &[Value]| {
+                            rows.iter()
+                                .filter(|lo| {
+                                    lo.get("champion_name")
+                                        .and_then(|v| v.as_str())
+                                        .map(|value| {
+                                            normalize_champion(value)
+                                                == normalize_champion(&champion)
+                                        })
+                                        .unwrap_or(false)
+                                })
+                                .cloned()
+                                .collect()
+                        };
+                        let mut champ_loadouts: Vec<Value> = matches_champion(&cached.loadouts);
+                        let mut refreshed = cached.refreshed;
+                        let mut refresh_error = cached.refresh_error;
+                        if champ_loadouts.is_empty() {
+                            match self.api.refresh_loadouts(&id).await {
+                                Ok(result) => {
+                                    champ_loadouts = matches_champion(&result.loadouts);
+                                    refreshed = result.refreshed;
+                                    refresh_error = result.refresh_error;
+                                }
+                                // Preserve the cached result on the backend's refresh guard.
+                                Err(error) if error.status == Some(429) => {
+                                    refresh_error = Some(error.message)
+                                }
+                                Err(error) => {
+                                    return self
+                                        .reply_text(
+                                            interaction,
+                                            api_error_message(&error, "Failed to refresh loadouts"),
+                                        )
+                                        .await
+                                }
+                            }
+                        }
 
                         if champ_loadouts.is_empty() {
-                            let embed = embeds::build_no_loadouts_payload(&name, &champion, None);
+                            let embed = embeds::build_no_loadouts_payload(
+                                &name,
+                                &champion,
+                                refresh_error.as_deref(),
+                            );
                             self.send_webhook(&embed, &[], &interaction.token).await;
                             return;
                         }
@@ -711,7 +735,7 @@ impl Handler {
                         let session = LoadoutSession {
                             user_id,
                             player: val.clone(),
-                            loadouts: champ_loadouts.clone(),
+                            loadouts: champ_loadouts.iter().take(25).cloned().collect(),
                             expires_at: now + LOADOUT_SESSION_TTL_SECS,
                         };
                         insert_session(&token, session);
@@ -728,10 +752,13 @@ impl Handler {
                                     .chars()
                                     .take(100)
                                     .collect::<String>();
-                                let card_points = lo
-                                    .get("card_points")
-                                    .map(|v| v.to_string())
-                                    .unwrap_or_else(|| "0".into());
+                                let card_points: i64 = lo
+                                    .get("card_levels")
+                                    .and_then(|v| v.as_array())
+                                    .map(|levels| {
+                                        levels.iter().filter_map(|value| value.as_i64()).sum()
+                                    })
+                                    .unwrap_or(0);
                                 let description = format!("{} card points", card_points)
                                     .chars()
                                     .take(100)
@@ -769,7 +796,7 @@ impl Handler {
                             champ_loadouts.len(),
                             &self.web_url,
                             &id,
-                            false,
+                            refreshed,
                         );
 
                         self.send_webhook(&embed, &components, &interaction.token)
@@ -798,9 +825,9 @@ impl Handler {
         let c: String = opt_string(opts, "champion").unwrap_or_else(|| "any".to_string());
         let scope: String = opt_string(opts, "lobby").unwrap_or_else(|| "global".to_string());
         let lobby_label = match scope.as_str() {
-            "bronze-gold" => "Bronze–Gold ranked lobbies",
-            "platinum" => "Platinum ranked lobbies",
-            "diamond" => "Diamond ranked lobbies",
+            "bronze-gold" => "Bronze–Gold lobbies",
+            "platinum" => "Platinum+ lobbies",
+            "diamond" => "Diamond+ lobbies",
             _ => "Global ranked lobbies",
         };
         match self.api.champion_page_data(&c.to_lowercase(), &scope).await {
@@ -849,9 +876,9 @@ impl Handler {
             "items" => {
                 let scope = opt_string(opts, "lobby").unwrap_or_else(|| "global".to_string());
                 let lobby_label = match scope.as_str() {
-                    "bronze-gold" => "Bronze–Gold ranked lobbies",
-                    "platinum" => "Platinum ranked lobbies",
-                    "diamond" => "Diamond ranked lobbies",
+                    "bronze-gold" => "Bronze–Gold lobbies",
+                    "platinum" => "Platinum+ lobbies",
+                    "diamond" => "Diamond+ lobbies",
                     _ => "Global ranked lobbies",
                 };
                 match self.api.ranked_items(&scope, 20).await {
@@ -989,13 +1016,20 @@ impl Handler {
         }
     }
 
-    async fn send_webhook_image(&self, content: &str, png: Vec<u8>, filename: &str, token: &str) {
+    async fn send_webhook_image(
+        &self,
+        content: &str,
+        png: Vec<u8>,
+        filename: &str,
+        description: Option<&str>,
+        token: &str,
+    ) {
         let url = self.original_response_url(token);
         let payload = serde_json::json!({
             "content": content,
             "embeds": [],
             "components": [],
-            "attachments": [{ "id": 0, "filename": filename }],
+            "attachments": [{ "id": 0, "filename": filename, "description": description }],
             "allowed_mentions": { "parse": [] },
         });
         let body = reqwest::multipart::Form::new()
@@ -1044,6 +1078,39 @@ fn value_id(value: Option<&Value>) -> Option<String> {
     })
 }
 
+fn normalize_champion(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn loadout_attachment_metadata(player: &Value, loadout: &Value) -> (String, String) {
+    let champion = loadout
+        .get("champion_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("champion");
+    let loadout_id = value_id(loadout.get("id")).unwrap_or_else(|| "unknown".to_string());
+    let filename = format!(
+        "paladinscat-loadout-{}-{}.png",
+        normalize_champion(champion),
+        loadout_id
+    );
+    let player_name = player
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Player");
+    let loadout_name = loadout
+        .get("loadout_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unnamed Loadout");
+    (
+        filename,
+        format!("{}'s {} loadout {}", player_name, champion, loadout_name),
+    )
+}
+
 fn api_error_message(error: &ApiError, fallback: &str) -> String {
     if error.message == "The PaladinsCat service request failed." {
         fallback.to_owned()
@@ -1074,5 +1141,15 @@ mod tests {
         assert!(claim_image_cooldown(&user)
             .unwrap_err()
             .starts_with("Image cooldown: try again in "));
+    }
+
+    #[test]
+    fn loadout_attachment_metadata_matches_legacy_format() {
+        let (filename, description) = loadout_attachment_metadata(
+            &serde_json::json!({ "name": "Nabi" }),
+            &serde_json::json!({ "id": 42, "champion_name": "Mal'Damba", "loadout_name": "Snake Pit" }),
+        );
+        assert_eq!(filename, "paladinscat-loadout-maldamba-42.png");
+        assert_eq!(description, "Nabi's Mal'Damba loadout Snake Pit");
     }
 }

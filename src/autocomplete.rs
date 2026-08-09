@@ -45,14 +45,18 @@ fn normalize(input: &str) -> String {
 
 fn score(name: &str, query: &str) -> u8 {
     let key = normalize(name);
+    if query.is_empty() {
+        return 4;
+    }
     if key == query {
         return SCORE_EXACT;
     }
     if key.starts_with(query) {
         return SCORE_STARTS;
     }
-    let words: Vec<&str> = key
+    let words: Vec<String> = name
         .split(|c: char| !c.is_alphanumeric())
+        .map(normalize)
         .filter(|s| !s.is_empty())
         .collect();
     for word in &words {
@@ -68,10 +72,6 @@ fn score(name: &str, query: &str) -> u8 {
 
 pub fn champion_autocomplete_choices(names: &[String], query: &str) -> Vec<(String, String)> {
     let query = normalize(query);
-    if query.is_empty() {
-        return Vec::new();
-    }
-
     let mut seen = std::collections::HashMap::new();
     for name in names {
         let key = normalize(name);
@@ -125,5 +125,24 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].0.len(), CHOICE_LEN);
         assert_eq!(result[0].1.len(), CHOICE_LEN);
+    }
+
+    #[test]
+    fn empty_query_returns_alphabetical_catalog_like_ts() {
+        let names = vec!["Zhin".into(), "Androxus".into()];
+        let result = champion_autocomplete_choices(&names, "");
+        assert_eq!(
+            result,
+            vec![
+                ("Androxus".into(), "Androxus".into()),
+                ("Zhin".into(), "Zhin".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn word_prefix_uses_original_name_boundaries() {
+        let names = vec!["Mal'Damba".into()];
+        assert_eq!(champion_autocomplete_choices(&names, "dam").len(), 1);
     }
 }

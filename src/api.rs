@@ -98,6 +98,13 @@ pub struct ApiClient {
     response_cache: Cache<String, serde_json::Value>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LoadoutsResponse {
+    pub loadouts: Vec<serde_json::Value>,
+    pub refreshed: bool,
+    pub refresh_error: Option<String>,
+}
+
 /// Encode a path segment for use in URLs.
 fn encode(s: &str) -> String {
     percent_encode(s.as_bytes(), NON_ALPHANUMERIC).to_string()
@@ -151,6 +158,23 @@ impl ApiClient {
     /// Send a GET request with slow timeout (125s) — used for match endpoints.
     async fn get_json_slow(&self, url: &str) -> Result<serde_json::Value, ApiError> {
         self.get_json_impl(&self.inner_slow, url).await
+    }
+
+    async fn post_json(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, ApiError> {
+        let mut request = self.inner.post(url).json(body);
+        if let Some(token) = &self.service_token {
+            request = request.header("X-PaladinsCat-Service-Token", token);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            return Err(response_error(status, &response.text().await?));
+        }
+        Ok(response.json().await?)
     }
 
     async fn get_json_impl(
@@ -465,15 +489,56 @@ impl ApiClient {
     /// Route: GET /players/{id}/loadouts
     /// Backend returns {"loadouts": [...], "freshness": {...}}; unwraps loadouts array.
     pub async fn loadouts(&self, player_id: &str) -> Result<Vec<serde_json::Value>, ApiError> {
+        Ok(self.loadouts_response(player_id).await?.loadouts)
+    }
+
+    pub async fn loadouts_response(&self, player_id: &str) -> Result<LoadoutsResponse, ApiError> {
         let url = format!("{}/players/{}/loadouts", self.base, encode(player_id));
         let val: serde_json::Value = self.get_json(&url).await?;
-        match val.get("loadouts").and_then(|v| v.as_array()) {
-            Some(arr) => Ok(arr.to_vec()),
+        let loadouts = match val.get("loadouts").and_then(|v| v.as_array()) {
+            Some(arr) => arr.to_vec(),
             None => match &val {
-                serde_json::Value::Array(arr) => Ok(arr.to_vec()),
-                _ => Ok(vec![val]),
+                serde_json::Value::Array(arr) => arr.to_vec(),
+                _ => vec![val.clone()],
             },
-        }
+        };
+        Ok(LoadoutsResponse {
+            loadouts,
+            refreshed: val
+                .get("refreshed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            refresh_error: val
+                .get("refresh_error")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+        })
+    }
+
+    /// Mirrors the TS explicit refresh endpoint; the backend owns its guard.
+    pub async fn refresh_loadouts(&self, player_id: &str) -> Result<LoadoutsResponse, ApiError> {
+        let url = format!(
+            "{}/players/{}/loadouts/refresh",
+            self.base,
+            encode(player_id)
+        );
+        let val: serde_json::Value = self.post_json(&url, &serde_json::json!({})).await?;
+        let loadouts = val
+            .get("loadouts")
+            .and_then(|v| v.as_array())
+            .map(|rows| rows.to_vec())
+            .unwrap_or_default();
+        Ok(LoadoutsResponse {
+            loadouts,
+            refreshed: val
+                .get("refreshed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            refresh_error: val
+                .get("refresh_error")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+        })
     }
 
     /// Get champion page data for stats.

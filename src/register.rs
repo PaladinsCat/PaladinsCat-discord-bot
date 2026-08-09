@@ -1,11 +1,11 @@
 //! Slash command registration — replaces command-registration.ts
 
+use std::collections::HashSet;
 use twilight_http::Client;
 use twilight_model::application::command::{
     Command, CommandOption, CommandOptionChoice, CommandOptionChoiceValue, CommandOptionType,
     CommandType,
 };
-use twilight_model::application::interaction::InteractionContextType;
 use twilight_model::id::marker::{ApplicationMarker, GuildMarker};
 use twilight_model::id::Id;
 
@@ -34,10 +34,9 @@ fn command(name: &str, description: &str, options: Vec<CommandOption>) -> Comman
         name: name.to_string(),
         description: description.to_string(),
         options,
-        contexts: Some(vec![
-            InteractionContextType::Guild,
-            InteractionContextType::PrivateChannel,
-        ]),
+        // Match the legacy SlashCommandBuilder output: leave context defaults
+        // to Discord instead of accidentally excluding Bot DMs.
+        contexts: None,
         integration_types: None,
         default_member_permissions: None,
         #[allow(deprecated)]
@@ -127,7 +126,12 @@ fn option_champion() -> CommandOption {
 }
 
 fn option_lobby() -> CommandOption {
-    string_option_with_choices("lobby", "Ranked lobby tier", true, lobby_choices())
+    string_option_with_choices(
+        "lobby",
+        "Ranked lobby tier; choose Global for all ranks",
+        true,
+        lobby_choices(),
+    )
 }
 
 fn option_player() -> CommandOption {
@@ -265,7 +269,8 @@ async fn register_and_clear_guilds(
 
     let mut cleared = 0;
     let mut failed = 0;
-    for guild_id in guild_ids {
+    let mut seen = HashSet::new();
+    for guild_id in guild_ids.iter().filter(|id| seen.insert(id.get())) {
         match clear_guild_commands(http, application_id, *guild_id).await {
             Ok(()) => cleared += 1,
             Err(_) => failed += 1,
