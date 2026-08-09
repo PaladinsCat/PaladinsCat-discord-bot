@@ -157,17 +157,21 @@ async fn match_image_handler(State(state): State<AppState>, Path(id): Path<Strin
             .into_response();
     };
 
-    if images.cached_match(&id).await.is_none() {
-        if let Err(error) = state.api.match_info(&id).await {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({"error": error.message})),
-            )
-                .into_response();
+    let rendered = if let Some(png) = images.cached_match(&id).await {
+        Ok(png)
+    } else {
+        match state.api.match_info(&id).await {
+            Ok(record) => images.render_match(&record).await,
+            Err(error) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"error": error.message})),
+                )
+                    .into_response();
+            }
         }
-    }
-    let url = format!("{}/matches/{}", state.web_url.trim_end_matches('/'), id);
-    match images.render_web_match(&id, &url).await {
+    };
+    match rendered {
         Ok(png) => {
             state.record(started.elapsed().as_millis() as u64);
             (

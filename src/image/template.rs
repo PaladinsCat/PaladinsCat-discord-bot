@@ -1,5 +1,6 @@
 //! HTML template data binding — builds data-bound scoreboard/loadout documents.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -40,11 +41,25 @@ pub struct TemplateEngine {
 // ---------------------------------------------------------------------------
 
 fn num(value: Option<&serde_json::Value>) -> i64 {
-    value.and_then(|v| v.as_i64()).unwrap_or(0)
+    match value {
+        Some(serde_json::Value::Number(value)) => value
+            .as_i64()
+            .or_else(|| value.as_f64().map(|v| v as i64))
+            .unwrap_or(0),
+        Some(serde_json::Value::String(value)) => {
+            value.parse::<f64>().map(|v| v as i64).unwrap_or(0)
+        }
+        Some(serde_json::Value::Bool(value)) => i64::from(*value),
+        _ => 0,
+    }
 }
 
 fn num_f64(value: Option<&serde_json::Value>) -> f64 {
-    value.and_then(|v| v.as_f64()).unwrap_or(0.0)
+    match value {
+        Some(serde_json::Value::Number(value)) => value.as_f64().unwrap_or(0.0),
+        Some(serde_json::Value::String(value)) => value.parse().unwrap_or(0.0),
+        _ => 0.0,
+    }
 }
 
 fn str_of(value: Option<&serde_json::Value>) -> String {
@@ -67,8 +82,77 @@ fn compact(value: i64) -> String {
     if value.abs() >= 1000 {
         format!("{:.1}k", value as f64 / 1000.0)
     } else {
-        value.to_string()
+        number(value)
     }
+}
+
+fn number(value: i64) -> String {
+    let negative = value < 0;
+    let digits = value.unsigned_abs().to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    if negative {
+        format!("-{grouped}")
+    } else {
+        grouped
+    }
+}
+
+fn queue_presentation(queue_id: i64) -> (&'static str, &'static str, bool) {
+    match queue_id {
+        424 => ("Casual", "Siege", false),
+        428 => ("Ranked", "Siege", false),
+        437 => ("Casual", "Payload", false),
+        451 => ("PvE", "Survival", false),
+        452 => ("Casual", "Onslaught", false),
+        469 => ("Casual", "Team Deathmatch", false),
+        474 => ("Casual", "Battlegrounds Solo", false),
+        475 => ("Casual", "Battlegrounds Duo", false),
+        476 => ("Casual", "Battlegrounds Quad", false),
+        486 => ("Ranked", "Siege", true),
+        _ => ("Match", "Unknown mode", false),
+    }
+}
+
+fn match_party_numbers(players: &[serde_json::Value]) -> HashMap<String, i64> {
+    let mut counts = HashMap::<i64, usize>::new();
+    for player in players {
+        let id = num(player.get("party_id"));
+        if id > 0 {
+            *counts.entry(id).or_default() += 1;
+        }
+    }
+    let mut ids: Vec<i64> = counts
+        .into_iter()
+        .filter_map(|(id, count)| (count > 1).then_some(id))
+        .collect();
+    ids.sort_unstable();
+    let derived: HashMap<i64, i64> = ids
+        .into_iter()
+        .enumerate()
+        .map(|(index, id)| (id, index as i64 + 1))
+        .collect();
+    players
+        .iter()
+        .filter_map(|player| {
+            let player_id = str_of(player.get("player_id"));
+            let raw_party = num(player.get("party_id"));
+            let party = derived.get(&raw_party).copied().unwrap_or_else(|| {
+                let stored = num(player.get("party")).max(num(player.get("party_number")));
+                if stored > 0 {
+                    stored
+                } else {
+                    0
+                }
+            });
+            (party > 0 && !player_id.is_empty()).then_some((player_id, party))
+        })
+        .collect()
 }
 
 fn duration(seconds: i64) -> String {
@@ -274,7 +358,6 @@ impl TemplateEngine {
             .cloned()
             .unwrap_or_default();
         let queue_id = num(match_obj.and_then(|m| m.get("queue_id")));
-        let ranked = queue_id == 486;
         let bans = data
             .get("bans")
             .and_then(|b| b.as_array())
@@ -290,11 +373,12 @@ impl TemplateEngine {
         sorted_bans.sort_by_key(|b| num(b.get("ban_slot")));
         let split = (sorted_bans.len() + 1) / 2;
 
-        let hero = self.hero_markup(match_obj, &players, ranked, &sorted_bans, split);
+        let party_numbers = match_party_numbers(&players);
+        let hero = self.hero_markup(match_obj, &players, queue_id, &sorted_bans, split);
         let columns = "<div class=\"columns grid-row\"><div>Party</div><div></div><div>Level</div><div>Player</div><div>Elo</div><div>Talent</div><div>Credits</div><div>K / D / A</div><div>OB. Time</div><div>Damage</div><div>Taken</div><div>Shielding</div><div>Healing</div></div>";
-        let team_one_rows = self.team_rows(&players, &facts, 1);
+        let team_one_rows = self.team_rows(&players, &facts, 1, &party_numbers);
         let team_one_summary = self.team_summary(match_obj, &players, 1);
-        let team_two_rows = self.team_rows(&players, &facts, 2);
+        let team_two_rows = self.team_rows(&players, &facts, 2, &party_numbers);
         let team_two_summary = self.team_summary(match_obj, &players, 2);
 
         format!(
@@ -307,7 +391,7 @@ impl TemplateEngine {
         &self,
         match_obj: Option<&serde_json::Value>,
         players: &[serde_json::Value],
-        ranked: bool,
+        queue_id: i64,
         sorted_bans: &[serde_json::Value],
         split: usize,
     ) -> String {
@@ -320,7 +404,7 @@ impl TemplateEngine {
             })
             .unwrap_or_default();
         let region = str_of(match_obj.and_then(|m| m.get("region")));
-        let mode = if ranked { "Ranked" } else { "Casual" };
+        let (category, mode, ranked) = queue_presentation(queue_id);
         let map_class = if map_name.len() > 19 {
             "map-name long"
         } else {
@@ -333,7 +417,7 @@ impl TemplateEngine {
         let mut status = format!(
             "<span class=\"status-tag {}\">{}</span>",
             if ranked { "ranked" } else { "casual" },
-            mode
+            category
         );
         if broken && !recovered {
             status.push_str("<span class=\"status-tag broken\">Broken</span>");
@@ -345,18 +429,12 @@ impl TemplateEngine {
             status.push_str("<span class=\"status-tag private\">Private</span>");
         }
 
-        let team1_score = num(match_obj.and_then(|m| m.get("team1_score")));
-        let team2_score = num(match_obj.and_then(|m| m.get("team2_score")));
-        let score1 = if team1_score == 0 {
-            "?".to_string()
-        } else {
-            team1_score.to_string()
+        let score = |value: Option<&serde_json::Value>| match value {
+            Some(value) if !value.is_null() => num(Some(value)).to_string(),
+            _ => "?".to_string(),
         };
-        let score2 = if team2_score == 0 {
-            "?".to_string()
-        } else {
-            team2_score.to_string()
-        };
+        let score1 = score(match_obj.and_then(|m| m.get("team1_score")));
+        let score2 = score(match_obj.and_then(|m| m.get("team2_score")));
 
         let ban_set = |entries: &[serde_json::Value]| -> String {
             entries
@@ -445,8 +523,17 @@ impl TemplateEngine {
         if players.is_empty() {
             return 0;
         }
-        let sum: i64 = players.iter().map(player_display_tier).sum();
-        ((sum as f64) / players.len() as f64).round() as i64
+        let sum: i64 = players
+            .iter()
+            .map(|player| {
+                num(player
+                    .get("kbm_tier")
+                    .or_else(|| player.get("tier"))
+                    .or_else(|| player.get("league_tier")))
+                .clamp(0, 27)
+            })
+            .sum();
+        ((sum as f64) / players.len() as f64).floor() as i64
     }
 
     fn team_rows(
@@ -454,6 +541,7 @@ impl TemplateEngine {
         players: &[serde_json::Value],
         facts: &[serde_json::Value],
         team: i64,
+        party_numbers: &HashMap<String, i64>,
     ) -> String {
         let team_players: Vec<&serde_json::Value> = players
             .iter()
@@ -529,7 +617,7 @@ impl TemplateEngine {
             } else {
                 String::new()
             };
-            let party_number = num(player.get("party_number"));
+            let party_number = party_numbers.get(&pid).copied().unwrap_or(0);
             let party_badge = if party_number > 0 {
                 format!("<span class=\"party-badge\" title=\"Party {party_number}\">{party_number}</span>")
             } else {
@@ -566,18 +654,18 @@ impl TemplateEngine {
                  <div class=\"metric heal{}\">{}</div>",
                 peak(0, false),
                 credits_icon,
-                values[0],
+                number(values[0]),
                 kda,
                 peak(1, true),
-                values[1],
+                number(values[1]),
                 peak(2, true),
-                values[2],
+                number(values[2]),
                 peak(3, true),
-                values[3],
+                number(values[3]),
                 peak(4, true),
-                values[4],
+                number(values[4]),
                 peak(5, true),
-                values[5],
+                number(values[5]),
             );
             row_html.push_str(&format!(
                 "<div class=\"player-row grid-row{}\"><div class=\"champion-wrap\">\
@@ -594,12 +682,12 @@ impl TemplateEngine {
                 party_badge = party_badge,
                 rank_icon = rank_icon,
                 rank_name = escape_html(&tier_name(player_tier)),
-                level = level,
+                level = number(level),
                 name = escape_html(&str_of(player.get("player_name"))),
                 vb = verification_badge,
                 mt = moderation_tag,
                 pid = escape_html(&pid),
-                elo = if elo == 0 { "—".to_string() } else { elo.to_string() },
+                elo = if elo == 0 { "—".to_string() } else { number(elo) },
                 talent_markup = talent_markup,
                 peak_cells = peak_cells,
             ));
@@ -660,8 +748,8 @@ impl TemplateEngine {
             id = id,
             team = team,
             result = if won { "Win" } else { "Defeat" },
-            level_avg = level_avg,
-            elo_avg = elo_avg,
+            level_avg = number(level_avg),
+            elo_avg = number(elo_avg),
             credits_icon = credits_icon,
             credits = compact(sum[0]),
             kda_str = kda_str,
@@ -696,10 +784,20 @@ impl TemplateEngine {
 /// Strip leading queue tokens (Ranked/Live/WIP + numbers) from a map name,
 /// mirroring the TS normalization.
 fn regex_strip_prefix(s: &str) -> String {
-    let mut result = s.to_string();
-    for pat in ["Ranked ", "Live ", "WIP "] {
-        if result.starts_with(pat) {
-            result = result[pat.len()..].to_string();
+    let mut result = s.trim().to_string();
+    loop {
+        let mut stripped = false;
+        for prefix in ["Ranked ", "Live ", "WIP "] {
+            if result
+                .get(..prefix.len())
+                .is_some_and(|value| value.eq_ignore_ascii_case(prefix))
+            {
+                result = result[prefix.len()..].trim_start().to_string();
+                stripped = true;
+                break;
+            }
+        }
+        if !stripped {
             break;
         }
     }
@@ -707,7 +805,9 @@ fn regex_strip_prefix(s: &str) -> String {
 }
 
 fn utc_timestamp_str(s: &str) -> String {
-    s.replace('T', " · ").replace('Z', " UTC")
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|date| date.format("%b %-d, %Y · %-I:%M %p UTC").to_string())
+        .unwrap_or_else(|_| "—".to_string())
 }
 
 pub fn escape_html(s: &str) -> String {

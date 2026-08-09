@@ -30,7 +30,7 @@ const MATCH_SCALE: f64 = 1.6;
 const LOADOUT_SCALE: f64 = 1.0;
 
 /// Template version for cache invalidation keys.
-const TEMPLATE_VERSION: u32 = 16;
+const TEMPLATE_VERSION: u32 = 17;
 
 /// Loadout template version for cache invalidation keys.
 const LOADOUT_TEMPLATE_VERSION: u32 = 9;
@@ -854,6 +854,34 @@ mod tests {
             "real scoreboard is unexpectedly white: {:.1}%",
             white_ratio * 100.0
         );
+        renderer.close().await;
+    }
+
+    #[tokio::test]
+    async fn chromium_integration_api_record_renders_isolated_scoreboard() {
+        if !integration_enabled() {
+            return;
+        }
+        let Ok(base) = std::env::var("PALADINSCAT_MATCH_API_URL") else {
+            return;
+        };
+        let match_id =
+            std::env::var("PALADINSCAT_MATCH_ID").unwrap_or_else(|_| "1281311346".to_string());
+        let api = crate::api::ApiClient::new(&base, None);
+        let record = api.match_info(&match_id).await.expect("load MatchRecord");
+        assert_eq!(record["players"].as_array().map(Vec::len), Some(10));
+        assert!(record["match"].is_object());
+        assert!(record["bans"].is_array());
+        let renderer = test_renderer();
+        let png = renderer
+            .render(&record)
+            .await
+            .expect("render isolated scoreboard");
+        if let Ok(path) = std::env::var("MATCH_PNG_OUT") {
+            std::fs::write(path, &png).expect("write MATCH_PNG_OUT");
+        }
+        let image = image::load_from_memory(&png).expect("decode PNG");
+        assert_eq!((image.width(), image.height()), (2048, 1152));
         renderer.close().await;
     }
 

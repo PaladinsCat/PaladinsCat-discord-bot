@@ -402,30 +402,54 @@ impl ApiClient {
             }
         };
 
-        // Unwrap matches[0].match envelope — TS: payload.matches?.[0]
-        let inner_match = val
+        // Preserve the complete MatchRecord. The renderer requires the sibling
+        // `match`, `players`, and `bans` fields; unwrapping only `.match`
+        // produced an empty custom scoreboard and led to the web-page workaround.
+        let mut record = val
             .get("matches")
             .and_then(|m| m.as_array())
             .and_then(|a| a.first())
-            .map(|wrapper| {
-                wrapper
-                    .get("match")
-                    .cloned()
-                    .unwrap_or_else(|| wrapper.clone())
-            })
+            .cloned()
             .unwrap_or_else(|| std::mem::take(&mut val));
 
-        // Hydrate with facts — TS: merge facts.players into match
-        if let Some(facts) = fact_result {
-            if let Some(mut obj) = inner_match.as_object().cloned() {
-                if let Some(fact_players) = facts.get("players").and_then(|v| v.as_array()) {
-                    obj.insert("facts".to_string(), serde_json::json!(fact_players));
+        if let Some(obj) = record.as_object_mut() {
+            // Mirror TS hydrateMatchPlayer: promote the joined profile snapshot
+            // fields used by the standalone scoreboard into each player row.
+            if let Some(players) = obj.get_mut("players").and_then(|v| v.as_array_mut()) {
+                for player in players {
+                    let Some(player_obj) = player.as_object_mut() else {
+                        continue;
+                    };
+                    let snapshot = player_obj
+                        .get("profile_snapshot")
+                        .and_then(|v| v.as_object())
+                        .cloned()
+                        .unwrap_or_default();
+                    for (target, source) in [
+                        ("final_match_level", "level"),
+                        ("tier", "kbm_tier"),
+                        ("kbm_tier", "kbm_tier"),
+                        ("kbm_rank", "kbm_rank"),
+                        ("queue_elo", "queue_elo"),
+                        ("cheater", "cheater"),
+                        ("sus_count", "sus_count"),
+                        ("verified", "verified"),
+                    ] {
+                        if let Some(value) = snapshot.get(source).filter(|v| !v.is_null()) {
+                            player_obj.insert(target.to_string(), value.clone());
+                        }
+                    }
                 }
-                return Ok(serde_json::Value::Object(obj));
             }
+            obj.insert(
+                "facts".to_string(),
+                fact_result
+                    .and_then(|facts| facts.get("players").cloned())
+                    .unwrap_or_else(|| serde_json::json!([])),
+            );
         }
 
-        Ok(inner_match)
+        Ok(record)
     }
 
     /// Get all champion names.

@@ -603,16 +603,17 @@ impl Handler {
         }
         match self.api.match_info(&id).await {
             Ok(val) => {
-                let mode = val
-                    .get("mode")
+                let match_data = val.get("match").unwrap_or(&val);
+                let mode = match_data
+                    .get("queue_id")
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "Unknown".into());
-                let map = val
+                let map = match_data
                     .get("map")
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "Unknown".into());
-                let duration = val
-                    .get("duration")
+                let duration = match_data
+                    .get("duration_seconds")
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into());
                 let description = format!(
@@ -624,13 +625,10 @@ impl Handler {
 
                 if let Some(img) = &self.image_service {
                     let img = Arc::clone(img);
-                    let match_id = id.clone();
                     let match_url = url.clone();
-                    let render_url = match_url.clone();
                     let token = interaction.token.clone();
                     let renderer = Arc::clone(&img);
-                    let render =
-                        async move { renderer.render_web_match(&match_id, &render_url).await };
+                    let render = async move { renderer.render_match(&val).await };
                     match tokio::time::timeout(RENDER_TIMEOUT, render).await {
                         Ok(Ok(png)) => {
                             let filename = format!("paladinscat-match-{}.png", id);
