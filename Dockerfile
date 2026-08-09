@@ -36,6 +36,12 @@ COPY src/frontend/public/images/icons/ src/frontend/public/images/icons/
 COPY src/frontend/public/data/champion-data.json src/frontend/public/data/
 COPY src/frontend/public/data/paladins-card-reference.json src/frontend/public/data/
 COPY src/frontend/public/data/paladins-loadout-frame-reference.json src/frontend/public/data/
+RUN test "$(find src/frontend/public/images/cards -maxdepth 1 -type f -name 'Card_*.png' | wc -l)" -ge 900 && \
+    test "$(find src/frontend/public/images/champions -maxdepth 1 -type f -name 'Banner_*.png' | wc -l)" -ge 30 && \
+    test -f src/frontend/public/images/cards/Card_Carry_On.png && \
+    test -f src/frontend/public/images/cards/Card_Intense_Training.png && \
+    test -f src/frontend/public/images/champions/Banner_Ying.png && \
+    test -f src/frontend/public/images/champions/Banner_Cassie.png
 
 EXPOSE 3020
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
