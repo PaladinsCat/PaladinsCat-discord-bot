@@ -160,12 +160,8 @@ impl ApiClient {
         self.get_json_impl(&self.inner_slow, url).await
     }
 
-    async fn post_json(
-        &self,
-        url: &str,
-        body: &serde_json::Value,
-    ) -> Result<serde_json::Value, ApiError> {
-        let mut request = self.inner.post(url).json(body);
+    async fn post_empty(&self, url: &str) -> Result<serde_json::Value, ApiError> {
+        let mut request = self.inner.post(url);
         if let Some(token) = &self.service_token {
             request = request.header("X-PaladinsCat-Service-Token", token);
         }
@@ -259,12 +255,12 @@ impl ApiClient {
         if let Some(token) = &self.service_token {
             req = req.header("X-PaladinsCat-Service-Token", token);
         }
-        let value = req
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<serde_json::Value>()
-            .await?;
+        let response = req.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            return Err(response_error(status, &response.text().await?));
+        }
+        let value = response.json::<serde_json::Value>().await?;
         Ok(value.get("player").cloned().unwrap_or(value))
     }
 
@@ -493,7 +489,11 @@ impl ApiClient {
     }
 
     pub async fn loadouts_response(&self, player_id: &str) -> Result<LoadoutsResponse, ApiError> {
-        let url = format!("{}/players/{}/loadouts", self.base, encode(player_id));
+        let url = format!(
+            "{}/players/{}/loadouts?refresh=false",
+            self.base,
+            encode(player_id)
+        );
         let val: serde_json::Value = self.get_json(&url).await?;
         let loadouts = match val.get("loadouts").and_then(|v| v.as_array()) {
             Some(arr) => arr.to_vec(),
@@ -522,7 +522,7 @@ impl ApiClient {
             self.base,
             encode(player_id)
         );
-        let val: serde_json::Value = self.post_json(&url, &serde_json::json!({})).await?;
+        let val: serde_json::Value = self.post_empty(&url).await?;
         let loadouts = val
             .get("loadouts")
             .and_then(|v| v.as_array())

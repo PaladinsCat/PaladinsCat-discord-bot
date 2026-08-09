@@ -38,8 +38,8 @@ impl ChampionList {
 fn normalize(input: &str) -> String {
     input
         .nfkd()
-        .filter(|c| c.is_alphanumeric())
-        .map(|c| c.to_lowercase().next().unwrap_or(c))
+        .flat_map(char::to_lowercase)
+        .filter(|c| c.is_ascii_alphanumeric())
         .collect()
 }
 

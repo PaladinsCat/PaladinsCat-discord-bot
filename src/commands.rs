@@ -19,6 +19,7 @@ use twilight_model::channel::message::MessageFlags;
 use twilight_model::http::interaction::{
     InteractionResponse, InteractionResponseData, InteractionResponseType,
 };
+use unicode_normalization::UnicodeNormalization;
 
 use crate::api::{ApiClient, ApiError};
 use crate::cache::RenderCache;
@@ -437,20 +438,37 @@ impl Handler {
 
     async fn save(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
         if let Some(n) = opt_string(opts, "player") {
-            // The legacy bot delegates resolution to the save endpoint. Doing
-            // an extra profile lookup first added latency and changed its error
-            // behavior for otherwise valid aliases.
-            match self
-                .api
-                .save_discord_player(&extract_user_id(interaction).unwrap_or_default(), &n)
-                .await
-            {
-                Ok(saved) => {
-                    let name = saved.get("name").and_then(|v| v.as_str()).unwrap_or(&n);
-                    let id = value_id(saved.get("id")).unwrap_or_else(|| n.clone());
-                    self.reply_text(interaction, format!(
+            match self.api.discord_player(&n).await {
+                Ok(resolved) => {
+                    let player = resolved.get("player").unwrap_or(&resolved);
+                    let Some(player_id) = value_id(player.get("id")) else {
+                        self.reply_text(interaction, "Failed to save your default player.")
+                            .await;
+                        return;
+                    };
+                    match self
+                        .api
+                        .save_discord_player(
+                            &extract_user_id(interaction).unwrap_or_default(),
+                            &player_id,
+                        )
+                        .await
+                    {
+                        Ok(saved) => {
+                            let name = saved.get("name").and_then(|v| v.as_str()).unwrap_or(&n);
+                            let id = value_id(saved.get("id")).unwrap_or(player_id);
+                            self.reply_text(interaction, format!(
                         "Saved **{}** (ID: `{}`) as your default player. Player commands will use it whenever you omit the player option.", name, id
                     )).await
+                        }
+                        Err(error) => {
+                            self.reply_text(
+                                interaction,
+                                api_error_message(&error, "Failed to save your default player"),
+                            )
+                            .await
+                        }
+                    }
                 }
                 Err(error) => {
                     self.reply_text(
@@ -707,7 +725,7 @@ impl Handler {
                                             interaction,
                                             api_error_message(&error, "Failed to refresh loadouts"),
                                         )
-                                        .await
+                                        .await;
                                 }
                             }
                         }
@@ -1080,9 +1098,9 @@ fn value_id(value: Option<&Value>) -> Option<String> {
 
 fn normalize_champion(value: &str) -> String {
     value
-        .chars()
-        .filter(|character| character.is_alphanumeric())
+        .nfkd()
         .flat_map(char::to_lowercase)
+        .filter(|character| character.is_ascii_alphanumeric())
         .collect()
 }
 

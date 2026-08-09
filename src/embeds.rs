@@ -120,6 +120,10 @@ pub fn format_number(value: f64) -> String {
     }
 }
 
+fn format_number_opt(value: Option<f64>) -> String {
+    value.map(format_number).unwrap_or_else(|| "—".to_string())
+}
+
 /// Insert thousands separators (commas) — mirrors en-US toLocaleString grouping.
 fn format_grouped(n: i64) -> String {
     let neg = n < 0;
@@ -141,14 +145,22 @@ fn format_grouped(n: i64) -> String {
 
 /// Format number with decimals — mirrors TS formattedNumber
 pub fn format_number_dec(value: Option<f64>, decimals: usize) -> String {
-    let Some(value) = value else { return "—".to_string() };
+    let Some(value) = value else {
+        return "—".to_string();
+    };
     // `toLocaleString` groups the integer part even when a fixed fractional
     // precision is requested (including precision zero).
     let formatted = format!("{:.prec$}", value, prec = decimals);
-    let (sign, digits) = formatted.strip_prefix('-').map_or(("", formatted.as_str()), |v| ("-", v));
+    let (sign, digits) = formatted
+        .strip_prefix('-')
+        .map_or(("", formatted.as_str()), |v| ("-", v));
     let (integer, fraction) = digits.split_once('.').unwrap_or((digits, ""));
     let grouped = format_grouped(integer.parse::<i64>().unwrap_or(0));
-    if decimals == 0 { format!("{}{}", sign, grouped) } else { format!("{}{}.{}", sign, grouped, fraction) }
+    if decimals == 0 {
+        format!("{}{}", sign, grouped)
+    } else {
+        format!("{}{}.{}", sign, grouped, fraction)
+    }
 }
 
 /// Duration label — mirrors TS durationLabel
@@ -1107,13 +1119,13 @@ fn ranked_field(
     let loss_n = numeric_metric(losses).unwrap_or(0.0);
     let mut lines = vec![
         stat_line("Rank", tier_name_profile(tier, rank)),
-        stat_line("TP", format_number(points_n)),
+        stat_line("TP", format_number_opt(numeric_metric(points))),
     ];
     if let Some(wr) = format_percent(win_n, loss_n) {
         lines.push(stat_line(
             "Win rate",
             format!(
-                "{} ({}-{})",
+                "{} ({}–{})",
                 wr,
                 format_number(win_n),
                 format_number(loss_n)
@@ -1241,7 +1253,15 @@ fn player_avatar_url(value: &Value, avatar_id: &Value, web_url: &str) -> String 
         return url;
     }
     let raw = value.as_str().unwrap_or("").trim();
-    if raw.starts_with("http://") || raw.starts_with("https://") {
+    if raw
+        .get(..7)
+        .map(|prefix| prefix.eq_ignore_ascii_case("http://"))
+        .unwrap_or(false)
+        || raw
+            .get(..8)
+            .map(|prefix| prefix.eq_ignore_ascii_case("https://"))
+            .unwrap_or(false)
+    {
         return raw.to_string();
     }
     format!(
@@ -1277,27 +1297,28 @@ pub fn build_player_profile(result: &Value, web_url: &str) -> Embed {
         stat_line("Account ID", player_id.clone()),
         stat_line(
             "Account level",
-            format_number(
-                numeric_metric(player.get("level").unwrap_or(&Value::Null)).unwrap_or(0.0),
-            ),
+            format_number_opt(numeric_metric(player.get("level").unwrap_or(&Value::Null))),
         ),
         stat_line(
             "Total XP",
-            format_number(
-                numeric_metric(player.get("total_xp").unwrap_or(&Value::Null)).unwrap_or(0.0),
-            ),
+            format_number_opt(numeric_metric(
+                player.get("total_xp").unwrap_or(&Value::Null),
+            )),
         ),
         stat_line("Total matches", format_number(total_matches as f64)),
         stat_line(
             "Casual deserted",
-            format_number(
-                numeric_metric(player.get("leaves").unwrap_or(&Value::Null)).unwrap_or(0.0),
-            ),
+            format_number_opt(numeric_metric(player.get("leaves").unwrap_or(&Value::Null))),
         ),
         stat_line(
             "Win rate",
             match record {
-                Some(r) => format!("{} ({}-{})", r, format_number(wins), format_number(losses)),
+                Some(r) => format!(
+                    "{} ({}–{})",
+                    r,
+                    format_number_opt(numeric_metric(player.get("wins").unwrap_or(&Value::Null))),
+                    format_number_opt(numeric_metric(player.get("losses").unwrap_or(&Value::Null)))
+                ),
                 None => "—".to_string(),
             },
         ),
@@ -1598,8 +1619,57 @@ mod tests {
 
     #[test]
     fn canonical_avatar_assets_preserve_manifest_extensions() {
-        assert_eq!(canonical_avatar_asset_url(&json!(9918)).as_deref(), Some("https://raw.githubusercontent.com/EthanHicks1/PaladinsArtAssets/master/avatars/9918.png"));
-        assert_eq!(canonical_avatar_asset_url(&json!(23226)).as_deref(), Some("https://raw.githubusercontent.com/EthanHicks1/PaladinsArtAssets/master/avatars/23226.gif"));
+        assert_eq!(
+            canonical_avatar_asset_url(&json!(9918)).as_deref(),
+            Some(
+                "https://raw.githubusercontent.com/EthanHicks1/PaladinsArtAssets/master/avatars/9918.png"
+            )
+        );
+        assert_eq!(
+            canonical_avatar_asset_url(&json!(23226)).as_deref(),
+            Some(
+                "https://raw.githubusercontent.com/EthanHicks1/PaladinsArtAssets/master/avatars/23226.gif"
+            )
+        );
         assert!(canonical_avatar_asset_url(&json!(999999)).is_none());
+    }
+
+    #[test]
+    fn fixed_precision_numbers_keep_ts_locale_grouping() {
+        assert_eq!(format_number_dec(Some(12345.6), 0), "12,346");
+        assert_eq!(format_number_dec(Some(12345.678), 1), "12,345.7");
+        assert_eq!(format_number_dec(Some(-12345.678), 2), "-12,345.68");
+        assert_eq!(format_number_dec(None, 1), "—");
+    }
+
+    #[test]
+    fn duration_rounds_before_formatting_like_ts() {
+        assert_eq!(duration_label(&json!(59.5)), "1m 00s");
+        assert_eq!(duration_label(&json!(119.49)), "1m 59s");
+    }
+
+    #[test]
+    fn profile_missing_metrics_and_record_match_ts_format() {
+        let embed = build_player_profile(
+            &json!({"player":{"id":1,"name":"A","wins":2,"losses":1}}),
+            "https://paladinscat.com",
+        );
+        let general = embed
+            .fields
+            .iter()
+            .find(|field| field.name == "General")
+            .unwrap()
+            .value
+            .as_str();
+        assert!(general.contains("Account level : —"));
+        assert!(general.contains("2–1"));
+        assert_eq!(
+            player_avatar_url(
+                &json!("HTTPS://avatar.test/a.png"),
+                &Value::Null,
+                "https://paladinscat.com"
+            ),
+            "HTTPS://avatar.test/a.png"
+        );
     }
 }
