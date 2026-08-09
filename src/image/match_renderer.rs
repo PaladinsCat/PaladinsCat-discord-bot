@@ -493,7 +493,10 @@ impl MatchRenderer {
             });
         })()"#;
 
-        let _ = client.execute(wait_script).await;
+        let wait = client.execute_await(wait_script).await?;
+        if let Some(error) = wait.error {
+            return Err(format!("Asset readiness evaluation failed: {error}").into());
+        }
 
         // Screenshot the element
         client.screenshot_element(selector).await
@@ -767,6 +770,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chromium_integration_awaits_asset_decode_before_capture() {
+        if !integration_enabled() {
+            return;
+        }
+        let renderer = test_renderer();
+        let doc = r#"<!doctype html><html><head><style>
+#scoreboard{width:200px;height:100px;background:#100000}.ready #scoreboard{background:#00d070}
+</style></head><body><div id="scoreboard"></div><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"><script>
+document.querySelector('img').decode=()=>new Promise(resolve=>setTimeout(()=>{document.documentElement.classList.add('ready');resolve()},350));
+</script></body></html>"#;
+        let png = renderer
+            .render_element(doc, "#scoreboard", 1.0)
+            .await
+            .expect("render after delayed decode");
+        let image = image::load_from_memory(&png).expect("decode PNG").to_rgb8();
+        let center = image.get_pixel(100, 50).0;
+        assert!(
+            center[1] > 150 && center[0] < 50,
+            "capture occurred before image decode: {center:?}"
+        );
+        renderer.close().await;
+    }
+
+    #[tokio::test]
     async fn chromium_integration_scoreboard_is_styled() {
         if !integration_enabled() {
             return;
@@ -830,9 +857,9 @@ mod tests {
                 "id": "ying-regression",
                 "champion_id": 2267,
                 "champion_name": "Ying",
-                "loadout_name": "PALADINSCAT.COM",
-                "card_ids": [13385, 13405, 15069, 15068, 13411],
-                "card_levels": [4, 2, 3, 2, 4]
+                "loadout_name": "NABI-TRI",
+                "card_ids": [13388, 13391, 13414, 15068, 13411],
+                "card_levels": [5, 5, 1, 3, 1]
             }
         });
         let png = renderer

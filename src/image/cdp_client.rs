@@ -421,7 +421,7 @@ mod tests {
                 // Echo a synthetic top-level result keyed to the method.
                 let resp = json!({
                     "id": id,
-                    "result": { "echo": method, "data": "qux" }
+                    "result": { "echo": method, "data": "qux", "params": msg["params"].clone() }
                 });
                 ws.send(tokio_tungstenite::tungstenite::Message::text(
                     resp.to_string(),
@@ -450,6 +450,13 @@ mod tests {
             .unwrap();
         assert_eq!(r2.id, Some(1));
         assert_eq!(r2.result["echo"], "Runtime.evaluate");
+
+        let r3 = client
+            .execute_await("Promise.resolve('ready')")
+            .await
+            .unwrap();
+        assert_eq!(r3.result["params"]["awaitPromise"], true);
+        assert_eq!(r3.result["params"]["returnByValue"], true);
     }
 
     #[tokio::test]
