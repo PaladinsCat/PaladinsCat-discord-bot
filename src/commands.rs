@@ -9,14 +9,14 @@ use serde_json::Value;
 use twilight_gateway::Event;
 use twilight_http::Client as HttpClient;
 use twilight_model::application::interaction::{
-    Interaction, InteractionData, InteractionType,
     application_command::{CommandData, CommandDataOption, CommandOptionValue},
+    Interaction, InteractionData, InteractionType,
 };
-use twilight_model::channel::message::MessageFlags;
 use twilight_model::channel::message::component::{
     ActionRow, Component, SelectMenu, SelectMenuOption, SelectMenuType,
 };
 use twilight_model::channel::message::embed::Embed;
+use twilight_model::channel::message::MessageFlags;
 use twilight_model::http::interaction::{
     InteractionResponse, InteractionResponseData, InteractionResponseType,
 };
@@ -1247,11 +1247,9 @@ mod tests {
     fn image_cooldown_rejects_an_immediate_duplicate() {
         let user = format!("cooldown-test-{}", uuid::Uuid::new_v4());
         assert!(claim_image_cooldown(&user).is_ok());
-        assert!(
-            claim_image_cooldown(&user)
-                .unwrap_err()
-                .starts_with("Image cooldown: try again in ")
-        );
+        assert!(claim_image_cooldown(&user)
+            .unwrap_err()
+            .starts_with("Image cooldown: try again in "));
     }
 
     #[test]

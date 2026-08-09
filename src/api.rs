@@ -4,7 +4,7 @@
 //! Mirrors api.ts: player, match, champion, history lookups.
 
 use moka::future::Cache;
-use percent_encoding::{NON_ALPHANUMERIC, percent_encode};
+use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use reqwest::Client as HttpClient;
 use std::time::Duration;
 
