@@ -38,6 +38,7 @@ struct LoadoutSession {
 
 /// 5-minute TTL for loadout sessions.
 const LOADOUT_SESSION_TTL_SECS: u64 = 5 * 60;
+const IMAGE_COOLDOWN_MS: i64 = 10 * 1000;
 
 /// Maximum time to wait for an image render before falling back to an embed.
 /// The interaction is deferred first, so this bounds only how long the user
@@ -46,6 +47,8 @@ const RENDER_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// Module-level session store.  Shared between command and component handlers.
 static LOADOUT_SESSIONS: LazyLock<RwLock<HashMap<String, LoadoutSession>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+static IMAGE_COOLDOWNS: LazyLock<RwLock<HashMap<String, i64>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 static WEBHOOK_HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
@@ -157,6 +160,21 @@ fn insert_session(token: &str, session: LoadoutSession) {
     sessions.insert(token.to_string(), session);
 }
 
+fn claim_image_cooldown(user_id: &str) -> Result<(), String> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut cooldowns = IMAGE_COOLDOWNS.write().unwrap();
+    cooldowns.retain(|_, expires_at| *expires_at > now);
+    if let Some(expires_at) = cooldowns
+        .get(user_id)
+        .filter(|expires_at| **expires_at > now)
+    {
+        let remaining = (*expires_at - now + 999) / 1000;
+        return Err(format!("Image cooldown: try again in {remaining}s."));
+    }
+    cooldowns.insert(user_id.to_string(), now + IMAGE_COOLDOWN_MS);
+    Ok(())
+}
+
 impl Handler {
     async fn handle_command(&self, interaction: Interaction) {
         let Some(cmd_data) = extract_command_data(&interaction.data) else {
@@ -262,14 +280,16 @@ impl Handler {
             return;
         };
 
-        // Preserve the TS component behaviour: replace the select-menu reply.
-        self.defer_update(&interaction).await;
-
         // Clone the session out, dropping the lock immediately.
         let session = match get_session(token) {
             Some(s) => s,
             None => {
                 tracing::debug!(token, "loadout session not found");
+                self.reply_ephemeral_text(
+                    &interaction,
+                    "This loadout menu expired. Run `/loadout` again.",
+                )
+                .await;
                 return;
             }
         };
@@ -283,6 +303,11 @@ impl Handler {
                     session_user = session.user_id,
                     "user mismatch on loadout selection"
                 );
+                self.reply_ephemeral_text(
+                    &interaction,
+                    "Only the player who opened this menu can choose its loadout.",
+                )
+                .await;
                 return;
             }
         }
@@ -291,17 +316,21 @@ impl Handler {
         let now = chrono::Utc::now().timestamp() as u64;
         if now >= session.expires_at {
             remove_session(token);
-            let embed = embeds::build_no_loadouts_payload(
-                &session.player_name,
-                &session.champion_name,
-                Some("session expired"),
-            );
-            self.send_webhook(&embed, &[], &interaction.token).await;
+            self.reply_ephemeral_text(
+                &interaction,
+                "This loadout menu expired. Run `/loadout` again.",
+            )
+            .await;
             return;
         }
 
         // Extract the selected loadout ID from the value.
         let Some(selected_value) = data.values.first() else {
+            self.reply_ephemeral_text(
+                &interaction,
+                "That saved loadout is no longer available. Run `/loadout` again.",
+            )
+            .await;
             return;
         };
         let loadout_id = selected_value.as_str();
@@ -312,12 +341,23 @@ impl Handler {
             .iter()
             .find(|lo| value_id(lo.get("id")) == Some(loadout_id.to_string()));
 
-        // Delete session after use (single-use token).
-        remove_session(token);
-
         let Some(selected) = selected else {
+            self.reply_ephemeral_text(
+                &interaction,
+                "That saved loadout is no longer available. Run `/loadout` again.",
+            )
+            .await;
             return;
         };
+
+        if let Err(message) = claim_image_cooldown(&session.user_id) {
+            self.reply_ephemeral_text(&interaction, message).await;
+            return;
+        }
+        // Delete session only after the selection has been accepted.
+        remove_session(token);
+        // Preserve the TS component behaviour: replace the select-menu reply.
+        self.defer_update(&interaction).await;
 
         let record = serde_json::json!({ "player": session.player, "loadout": selected });
         match &self.image_service {
@@ -411,15 +451,21 @@ impl Handler {
                             )
                             .await
                         }
-                        Err(_) => {
-                            self.reply_text(interaction, "Failed to save your default player")
-                                .await
+                        Err(error) => {
+                            self.reply_text(
+                                interaction,
+                                api_error_message(&error, "Failed to save your default player"),
+                            )
+                            .await
                         }
                     }
                 }
-                Err(_) => {
-                    self.reply_text(interaction, format!("Player '{}' was not found", n))
-                        .await
+                Err(error) => {
+                    self.reply_text(
+                        interaction,
+                        api_error_message(&error, &format!("Player '{}' was not found", n)),
+                    )
+                    .await
                 }
             }
         }
@@ -429,25 +475,28 @@ impl Handler {
         &self,
         interaction: &Interaction,
         opts: &[CommandDataOption],
-    ) -> Option<String> {
+    ) -> Result<String, String> {
         if let Some(name) = opt_string(opts, "player") {
-            return Some(name);
+            return Ok(name);
         }
         match self
             .api
             .saved_discord_player(&extract_user_id(interaction).unwrap_or_default())
             .await
         {
-            Ok(player) => value_id(player.get("id")),
-            Err(_) => None,
+            Ok(player) => value_id(player.get("id")).ok_or_else(missing_saved_player_message),
+            Err(error) if error.status == Some(404) => Err(missing_saved_player_message()),
+            Err(error) => Err(api_error_message(
+                &error,
+                "The saved player could not be loaded.",
+            )),
         }
     }
 
     async fn player(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let Some(name) = self.player_input(interaction, opts).await else {
-            return self
-                .reply_text(interaction, "Provide a player name or ID")
-                .await;
+        let name = match self.player_input(interaction, opts).await {
+            Ok(name) => name,
+            Err(message) => return self.reply_text(interaction, message).await,
         };
         match self.api.discord_player(&name).await {
             Ok(val) => {
@@ -456,8 +505,11 @@ impl Handler {
             }
             Err(e) => {
                 tracing::error!(player = %name, err = %e, "discord_player request failed");
-                self.reply_text(interaction, format!("Failed to look up player '{}'", name))
-                    .await;
+                self.reply_text(
+                    interaction,
+                    api_error_message(&e, &format!("Failed to look up player '{}'", name)),
+                )
+                .await;
             }
         }
     }
@@ -466,6 +518,16 @@ impl Handler {
         let Some(id) = opt_string(opts, "id") else {
             return self.reply_text(interaction, "Provide a match ID").await;
         };
+        if !(6..=20).contains(&id.len()) || !id.chars().all(|c| c.is_ascii_digit()) {
+            return self
+                .reply_text(interaction, "Enter a valid numeric match ID.")
+                .await;
+        }
+        if let Some(user_id) = extract_user_id(interaction) {
+            if let Err(message) = claim_image_cooldown(&user_id) {
+                return self.reply_text(interaction, message).await;
+            }
+        }
         match self.api.match_info(&id).await {
             Ok(val) => {
                 let mode = val
@@ -530,8 +592,9 @@ impl Handler {
     }
 
     async fn history(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let Some(name) = self.player_input(interaction, opts).await else {
-            return self.reply_text(interaction, "Provide a player name").await;
+        let name = match self.player_input(interaction, opts).await {
+            Ok(name) => name,
+            Err(message) => return self.reply_text(interaction, message).await,
         };
         match self.api.player(&name).await {
             Ok(val) => {
@@ -568,8 +631,9 @@ impl Handler {
     }
 
     async fn current(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let Some(name) = self.player_input(interaction, opts).await else {
-            return self.reply_text(interaction, "Provide a player name").await;
+        let name = match self.player_input(interaction, opts).await {
+            Ok(name) => name,
+            Err(message) => return self.reply_text(interaction, message).await,
         };
         match self.api.live_match(&name).await {
             Ok(val) => {
@@ -588,8 +652,9 @@ impl Handler {
 
     /// Handle `/loadout` — session-based select menu matching the TS bot 1:1.
     async fn loadout(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let Some(name) = self.player_input(interaction, opts).await else {
-            return self.reply_text(interaction, "Provide a player name").await;
+        let name = match self.player_input(interaction, opts).await {
+            Ok(name) => name,
+            Err(message) => return self.reply_text(interaction, message).await,
         };
         let Some(champion) = opt_string(opts, "champion") else {
             return self
@@ -710,15 +775,21 @@ impl Handler {
                         self.send_webhook(&embed, &components, &interaction.token)
                             .await;
                     }
-                    Err(_) => {
-                        self.reply_text(interaction, "Failed to fetch loadouts")
-                            .await;
+                    Err(error) => {
+                        self.reply_text(
+                            interaction,
+                            api_error_message(&error, "Failed to fetch loadouts"),
+                        )
+                        .await;
                     }
                 }
             }
-            Err(_) => {
-                self.reply_text(interaction, format!("Player '{}' not found", name))
-                    .await;
+            Err(error) => {
+                self.reply_text(
+                    interaction,
+                    api_error_message(&error, &format!("Player '{}' not found", name)),
+                )
+                .await;
             }
         }
     }
@@ -737,9 +808,12 @@ impl Handler {
                 let embed = embeds::build_champion_payload(&val, &self.web_url, lobby_label);
                 self.send_embed(interaction, embed).await;
             }
-            Err(_) => {
-                self.reply_text(interaction, format!("No data for champion '{}'", c))
-                    .await;
+            Err(error) => {
+                self.reply_text(
+                    interaction,
+                    api_error_message(&error, &format!("No data for champion '{}'", c)),
+                )
+                .await;
             }
         }
     }
@@ -751,9 +825,12 @@ impl Handler {
                     let embed = embeds::build_maps_payload(&rows, &self.web_url);
                     self.send_embed(interaction, embed).await;
                 }
-                Err(_) => {
-                    self.reply_text(interaction, "Failed to fetch map stats")
-                        .await;
+                Err(error) => {
+                    self.reply_text(
+                        interaction,
+                        api_error_message(&error, "Failed to fetch map stats"),
+                    )
+                    .await;
                 }
             },
             "composition" => match self.api.ranked_compositions(5).await {
@@ -761,9 +838,12 @@ impl Handler {
                     let embed = embeds::build_composition_payload(&rows, &self.web_url);
                     self.send_embed(interaction, embed).await;
                 }
-                Err(_) => {
-                    self.reply_text(interaction, "Failed to fetch composition stats")
-                        .await;
+                Err(error) => {
+                    self.reply_text(
+                        interaction,
+                        api_error_message(&error, "Failed to fetch composition stats"),
+                    )
+                    .await;
                 }
             },
             "items" => {
@@ -779,9 +859,12 @@ impl Handler {
                         let embed = embeds::build_items_payload(&rows, &self.web_url, lobby_label);
                         self.send_embed(interaction, embed).await;
                     }
-                    Err(_) => {
-                        self.reply_text(interaction, "Failed to fetch item stats")
-                            .await;
+                    Err(error) => {
+                        self.reply_text(
+                            interaction,
+                            api_error_message(&error, "Failed to fetch item stats"),
+                        )
+                        .await;
                     }
                 }
             }
@@ -813,6 +896,22 @@ impl Handler {
 
     async fn reply_text(&self, interaction: &Interaction, msg: impl Into<String>) {
         self.send_webhook_text(&interaction.token, msg.into()).await;
+    }
+
+    async fn reply_ephemeral_text(&self, interaction: &Interaction, msg: impl Into<String>) {
+        self.send_response(
+            interaction.id,
+            &interaction.token,
+            InteractionResponse {
+                kind: InteractionResponseType::ChannelMessageWithSource,
+                data: Some(InteractionResponseData {
+                    content: Some(msg.into()),
+                    flags: Some(MessageFlags::EPHEMERAL),
+                    ..Default::default()
+                }),
+            },
+        )
+        .await;
     }
 
     /// Defer the initial interaction response inside Discord's 3-second ACK window.
@@ -951,4 +1050,8 @@ fn api_error_message(error: &ApiError, fallback: &str) -> String {
     } else {
         error.message.clone()
     }
+}
+
+fn missing_saved_player_message() -> String {
+    "No player name was entered and you do not have a saved player. Enter a player or use `/save player:<name or ID>` first.".to_string()
 }
