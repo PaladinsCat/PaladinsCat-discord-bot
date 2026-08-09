@@ -132,7 +132,14 @@ impl MatchRenderer {
         let _render_guard = self.render_lock.lock().await;
         let client = self.ensure_browser().await?;
         client.set_device_scale_factor(1.0, WIDTH, HEIGHT).await?;
-        client.send("Page.navigate", json!({ "url": url })).await?;
+        // Discord links remain public. Compose config may supply an internal
+        // frontend origin for Chromium when the public edge rejects automation.
+        // The path/query remain exact and no rewrite occurs without that origin.
+        let internal_origin = std::env::var("PALADINSCAT_RENDER_WEB_URL").ok();
+        let render_url = internal_render_url(url, internal_origin.as_deref());
+        client
+            .send("Page.navigate", json!({ "url": render_url }))
+            .await?;
 
         let deadline = Instant::now() + Duration::from_secs(6);
         loop {
@@ -428,6 +435,24 @@ impl MatchRenderer {
     }
 }
 
+/// Substitute only paladinscat.com's origin when an internal origin is set.
+/// Localhost and other URLs remain untouched for development and tests.
+fn internal_render_url(url: &str, internal_origin: Option<&str>) -> String {
+    const PUBLIC_HTTP: &str = "http://paladinscat.com";
+    const PUBLIC_HTTPS: &str = "https://paladinscat.com";
+    let suffix = url
+        .strip_prefix(PUBLIC_HTTPS)
+        .or_else(|| url.strip_prefix(PUBLIC_HTTP));
+    match (suffix, internal_origin) {
+        (Some(path), Some(base))
+            if path.is_empty() || path.starts_with('/') || path.starts_with('?') =>
+        {
+            format!("{}{}", base.trim_end_matches('/'), path)
+        }
+        _ => url.to_string(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers: browser page-target discovery & URL escaping
 // ---------------------------------------------------------------------------
@@ -531,7 +556,8 @@ fn default_chromium_path() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::html_data_uri;
+    use super::{html_data_uri, internal_render_url};
+    use std::time::Instant;
 
     #[test]
     fn html_data_uri_is_base64_and_preserves_css_hex_colors() {
@@ -551,6 +577,28 @@ mod tests {
         assert!(decoded.contains("#abcdef"));
         // No raw '#' appears in the URI itself.
         assert!(!payload.contains('#'));
+    }
+
+    #[test]
+    fn canonical_web_export_uses_internal_frontend_only_for_public_origin() {
+        assert_eq!(
+            internal_render_url(
+                "https://paladinscat.com/matches/1281335238?x=1",
+                Some("http://frontend:3000")
+            ),
+            "http://frontend:3000/matches/1281335238?x=1"
+        );
+        assert_eq!(
+            internal_render_url(
+                "http://localhost:3000/matches/1281335238",
+                Some("http://frontend:3000")
+            ),
+            "http://localhost:3000/matches/1281335238"
+        );
+        assert_eq!(
+            internal_render_url("https://paladinscat.com/matches/1281335238", None),
+            "https://paladinscat.com/matches/1281335238"
+        );
     }
 
     #[test]
@@ -734,17 +782,33 @@ mod tests {
             return;
         };
         let renderer = test_renderer();
+        let cold_started = Instant::now();
         let png = renderer
             .render_web_match(&url)
             .await
             .expect("render web scoreboard");
+        let cold_elapsed = cold_started.elapsed();
+        let warm_started = Instant::now();
+        let warm_png = renderer
+            .render_web_match(&url)
+            .await
+            .expect("render warm web scoreboard");
+        println!(
+            "canonical scoreboard cold={}ms warm={}ms",
+            cold_elapsed.as_millis(),
+            warm_started.elapsed().as_millis()
+        );
         if let Ok(path) = std::env::var("MATCH_PNG_OUT") {
             std::fs::write(path, &png).expect("write MATCH_PNG_OUT");
         }
         let image = image::load_from_memory(&png).expect("decode PNG");
         let dimensions = (image.width(), image.height());
+        let warm_dimensions = image::load_from_memory(&warm_png)
+            .map(|image| (image.width(), image.height()))
+            .expect("decode warm PNG");
         renderer.close().await;
         assert_eq!(dimensions, (2048, 1152));
+        assert_eq!(warm_dimensions, (2048, 1152));
     }
 
     #[tokio::test]

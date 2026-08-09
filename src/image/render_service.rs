@@ -22,11 +22,13 @@ pub struct ImageServiceConfig {
 impl Default for ImageServiceConfig {
     fn default() -> Self {
         Self {
-            concurrency: 2,
+            concurrency: 1,
             queue_limit: 10,
-            timeout_ms: 8000,
-            cache_bytes: 50 * 1024 * 1024,
-            cache_ttl_secs: 300,
+            // Match the TypeScript production budget. The command-level 12s
+            // timeout remains the hang boundary and recycles a stalled browser.
+            timeout_ms: 20_000,
+            cache_bytes: 32 * 1024 * 1024,
+            cache_ttl_secs: 600,
         }
     }
 }
@@ -381,6 +383,16 @@ fn value_id(value: Option<&serde_json::Value>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn defaults_match_ts_render_budget() {
+        let config = ImageServiceConfig::default();
+        assert_eq!(config.concurrency, 1);
+        assert_eq!(config.queue_limit, 10);
+        assert_eq!(config.timeout_ms, 20_000);
+        assert_eq!(config.cache_bytes, 32 * 1024 * 1024);
+        assert_eq!(config.cache_ttl_secs, 600);
+    }
 
     #[test]
     fn encode_b64_does_not_panic_on_high_bytes() {
