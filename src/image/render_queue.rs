@@ -69,7 +69,14 @@ pub struct BoundedWorkQueue<T: Send + Clone + 'static> {
     permits: Arc<Semaphore>,
     active: AtomicUsize,
     /// In-flight deduplication: key → shared result holder.
-    in_flight_map: StdMutex<HashMap<String, Arc<tokio::sync::Mutex<Option<T>>>>>,
+    in_flight_map: StdMutex<HashMap<String, Arc<SharedResult<T>>>>,
+}
+
+/// One producer result shared by all duplicate callers. `Notify` prevents the
+/// polling and runtime-blocking lock used by the first Rust implementation.
+struct SharedResult<T> {
+    result: tokio::sync::Mutex<Option<Result<T, String>>>,
+    ready: tokio::sync::Notify,
 }
 
 impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
@@ -104,40 +111,31 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send,
     {
-        // Check for in-flight deduplication
-        let holder_ref: Option<Arc<tokio::sync::Mutex<Option<T>>>>;
-        {
-            let map = self.in_flight_map.lock().unwrap();
-            if let Some(holder) = map.get(&key) {
-                holder_ref = Some(Arc::clone(holder));
+        let (result_holder, producer) = {
+            let mut map = self.in_flight_map.lock().unwrap();
+            if let Some(existing) = map.get(&key) {
+                self.state.lock().unwrap().deduplicated += 1;
+                (Arc::clone(existing), false)
             } else {
-                holder_ref = None;
-            }
-        }
-        if let Some(holder) = holder_ref {
-            let holder_for_wait = Arc::clone(&holder);
-            self.wait_for_holder(holder_for_wait).await?;
-            return self.extract_result(&holder);
-        }
-
-        // Check queue capacity
-        {
-            let map = self.in_flight_map.lock().unwrap();
-            if map.len() >= self.concurrency + self.max_queued {
-                return Err(QueueFullError {
-                    message: format!("The {} queue is busy. Try again shortly.", self.work_label),
+                if map.len() >= self.concurrency + self.max_queued {
+                    return Err(QueueFullError {
+                        message: format!(
+                            "The {} queue is busy. Try again shortly.",
+                            self.work_label
+                        ),
+                    });
+                }
+                let holder = Arc::new(SharedResult {
+                    result: tokio::sync::Mutex::new(None),
+                    ready: tokio::sync::Notify::new(),
                 });
+                map.insert(key.clone(), Arc::clone(&holder));
+                (holder, true)
             }
+        };
+        if !producer {
+            return self.wait_for_result(result_holder).await;
         }
-
-        // Create shared result holder
-        let result_holder: Arc<tokio::sync::Mutex<Option<T>>> =
-            Arc::new(tokio::sync::Mutex::new(None));
-
-        self.in_flight_map
-            .lock()
-            .unwrap()
-            .insert(key.clone(), Arc::clone(&result_holder));
 
         // Waiting for a permit is queued work; its timeout starts only after
         // execution begins, matching the legacy TypeScript queue.
@@ -154,68 +152,37 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
         let result = tokio::time::timeout(Duration::from_millis(self.timeout_ms), work()).await;
         self.active.fetch_sub(1, Ordering::Relaxed);
 
-        match result {
-            Ok(Ok(value)) => {
-                let mut guard = result_holder.lock().await;
-                *guard = Some(value.clone());
-                drop(guard);
-
-                let elapsed = started.elapsed().as_secs_f64() * 1000.0;
-                self.record_duration(elapsed);
-                {
-                    let mut state = self.state.lock().unwrap();
-                    state.completed += 1;
-                }
-
-                self.in_flight_map.lock().unwrap().remove(&key);
-                Ok(value)
-            }
-            Ok(Err(e)) => {
-                let elapsed = started.elapsed().as_secs_f64() * 1000.0;
-                self.record_duration(elapsed);
-                {
-                    let mut state = self.state.lock().unwrap();
-                    state.failed += 1;
-                }
-
-                // Store error marker so dedup waiters get the error
-                let mut guard = result_holder.lock().await;
-                *guard = None;
-
-                self.in_flight_map.lock().unwrap().remove(&key);
-                Err(QueueFullError {
-                    message: format!("{} failed: {}", self.work_label, e),
-                })
-            }
-            Err(_) => {
-                let elapsed = started.elapsed().as_secs_f64() * 1000.0;
-                self.record_duration(elapsed);
-                {
-                    let mut state = self.state.lock().unwrap();
-                    state.failed += 1;
-                }
-
-                self.in_flight_map.lock().unwrap().remove(&key);
-                Err(QueueFullError {
-                    message: format!("{} exceeded {}ms", self.work_label, self.timeout_ms),
-                })
+        let outcome = match result {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(e)) => Err(format!("{} failed: {}", self.work_label, e)),
+            Err(_) => Err(format!(
+                "{} exceeded {}ms",
+                self.work_label, self.timeout_ms
+            )),
+        };
+        self.record_duration(started.elapsed().as_secs_f64() * 1000.0);
+        {
+            let mut state = self.state.lock().unwrap();
+            if outcome.is_ok() {
+                state.completed += 1;
+            } else {
+                state.failed += 1;
             }
         }
+        *result_holder.result.lock().await = Some(outcome.clone());
+        result_holder.ready.notify_waiters();
+        self.in_flight_map.lock().unwrap().remove(&key);
+        outcome.map_err(|message| QueueFullError { message })
     }
 
-    /// Wait for a shared result holder to be populated.
-    async fn wait_for_holder(
-        &self,
-        holder: Arc<tokio::sync::Mutex<Option<T>>>,
-    ) -> Result<(), QueueFullError> {
+    async fn wait_for_result(&self, holder: Arc<SharedResult<T>>) -> Result<T, QueueFullError> {
         tokio::time::timeout(Duration::from_millis(self.timeout_ms), async {
             loop {
-                let guard = holder.lock().await;
-                if guard.is_some() {
-                    return;
+                let notified = holder.ready.notified();
+                if let Some(result) = holder.result.lock().await.clone() {
+                    return result.map_err(|message| QueueFullError { message });
                 }
-                drop(guard);
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                notified.await;
             }
         })
         .await
@@ -224,18 +191,7 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
                 "{} dedup wait exceeded {}ms",
                 self.work_label, self.timeout_ms
             ),
-        })
-    }
-
-    /// Extract the result from a holder.
-    fn extract_result(
-        &self,
-        holder: &Arc<tokio::sync::Mutex<Option<T>>>,
-    ) -> Result<T, QueueFullError> {
-        let guard = holder.blocking_lock();
-        guard.clone().ok_or_else(|| QueueFullError {
-            message: "Dedup result was never populated".into(),
-        })
+        })?
     }
 
     /// Get a snapshot of queue state.
@@ -285,5 +241,113 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
         if state.durations.len() > 100 {
             state.durations.remove(0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn bounds_distinct_work_to_configured_concurrency() {
+        let queue = Arc::new(BoundedWorkQueue::<u8>::new(1, 2, 200, "Render"));
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::new();
+        for key in ["a", "b"] {
+            let queue = Arc::clone(&queue);
+            let active = Arc::clone(&active);
+            let peak = Arc::clone(&peak);
+            tasks.push(tokio::spawn(async move {
+                queue
+                    .add(key.into(), move || async move {
+                        let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(now, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        Ok(1)
+                    })
+                    .await
+                    .unwrap()
+            }));
+        }
+        for task in tasks {
+            assert_eq!(task.await.unwrap(), 1);
+        }
+        assert_eq!(peak.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn deduplicates_success_and_returns_same_value() {
+        let queue = Arc::new(BoundedWorkQueue::<u8>::new(1, 1, 200, "Render"));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let first = {
+            let queue = Arc::clone(&queue);
+            let calls = Arc::clone(&calls);
+            tokio::spawn(async move {
+                queue
+                    .add("same".into(), move || async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        Ok(7)
+                    })
+                    .await
+                    .unwrap()
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        let second = queue.add("same".into(), || async { Ok(9) }).await.unwrap();
+        assert_eq!(first.await.unwrap(), 7);
+        assert_eq!(second, 7);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(queue.snapshot().deduplicated, 1);
+    }
+
+    #[tokio::test]
+    async fn deduplicated_waiters_receive_producer_error() {
+        let queue = Arc::new(BoundedWorkQueue::<u8>::new(1, 1, 200, "Render"));
+        let first_queue = Arc::clone(&queue);
+        let first = tokio::spawn(async move {
+            first_queue
+                .add("same".into(), || async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    Err::<u8, Box<dyn std::error::Error + Send + Sync>>("boom".into())
+                })
+                .await
+                .unwrap_err()
+                .message
+        });
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        let second = queue
+            .add("same".into(), || async { Ok(1) })
+            .await
+            .unwrap_err()
+            .message;
+        assert_eq!(first.await.unwrap(), second);
+        assert!(second.contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn times_out_producer_and_duplicate_with_same_error() {
+        let queue = Arc::new(BoundedWorkQueue::<u8>::new(1, 1, 20, "Render"));
+        let first_queue = Arc::clone(&queue);
+        let first = tokio::spawn(async move {
+            first_queue
+                .add("same".into(), || async {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    Ok(1)
+                })
+                .await
+                .unwrap_err()
+                .message
+        });
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        let second = queue
+            .add("same".into(), || async { Ok(2) })
+            .await
+            .unwrap_err()
+            .message;
+        assert_eq!(first.await.unwrap(), second);
+        assert!(second.contains("exceeded 20ms"));
     }
 }

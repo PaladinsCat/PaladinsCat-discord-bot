@@ -87,10 +87,9 @@ impl ApiClient {
             return Ok(cached);
         }
 
-        let mut last_err: Option<reqwest::Error> = None;
         let delays = [500u64, 1000, 2000];
 
-        for &delay_ms in &delays {
+        for (attempt, &delay_ms) in delays.iter().enumerate() {
             let mut req = client.get(url);
             if let Some(token) = &self.service_token {
                 req = req
@@ -99,7 +98,7 @@ impl ApiClient {
             }
             match req.send().await {
                 Ok(resp) => {
-                    if resp.status().as_u16() == 429 {
+                    if resp.status().as_u16() == 429 && attempt + 1 < delays.len() {
                         tracing::warn!(url, delay_ms, "Rate limited (429), backing off");
                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                         continue;
@@ -114,16 +113,15 @@ impl ApiClient {
                 }
                 Err(e) => {
                     if e.is_timeout() {
-                        tracing::warn!(url, delay_ms, "Request timeout, retrying");
-                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                        last_err = Some(e);
-                        continue;
+                        // A second full request can triple a slow command's
+                        // wall time while providing no extra information.
+                        tracing::warn!(url, "Request timed out");
                     }
                     return Err(e);
                 }
             }
         }
-        Err(last_err.expect("loop runs at least once"))
+        unreachable!("request loop returns on its final attempt")
     }
 
     /// Fetch enriched player profile via authenticated /players/discord endpoint.
@@ -263,16 +261,31 @@ impl ApiClient {
     pub async fn match_info(&self, match_id: &str) -> Result<serde_json::Value, reqwest::Error> {
         let encoded = encode(match_id);
 
-        // Parallel fetch: match data (125s slow) + facts (15s fast, best-effort)
+        // Match the legacy local-only fast path: query the durable read model
+        // first, and invoke the slow requested-match pipeline only on a miss.
+        let batch_url = format!("{}/matches/batch?ids={}", self.base, encoded);
         let match_url = format!("{}/matches/{}", self.base, encoded);
         let fact_url = format!("{}/matches/fact/{}", self.base, encoded);
 
-        let (match_result, fact_result) = tokio::join!(self.get_json_slow(&match_url), async {
-            // Best-effort facts — TS: .catch(() => null)
+        let (batch_result, mut fact_result) = tokio::join!(self.get_json(&batch_url), async {
             self.get_json(&fact_url).await.ok()
         });
 
-        let val = match_result?;
+        let mut val = match batch_result {
+            Ok(payload)
+                if payload
+                    .get("matches")
+                    .and_then(|matches| matches.as_array())
+                    .is_some_and(|matches| !matches.is_empty()) => payload,
+            _ => {
+                let payload = self.get_json_slow(&match_url).await?;
+                if fact_result.is_none() {
+                    fact_result = self.get_json(&fact_url).await.ok();
+                }
+                payload
+            }
+        };
+
         // Unwrap matches[0].match envelope — TS: payload.matches?.[0]
         let inner_match = val
             .get("matches")
@@ -284,7 +297,7 @@ impl ApiClient {
                     .cloned()
                     .unwrap_or_else(|| wrapper.clone())
             })
-            .unwrap_or_else(|| val.clone());
+            .unwrap_or_else(|| std::mem::take(&mut val));
 
         // Hydrate with facts — TS: merge facts.players into match
         if let Some(facts) = fact_result {

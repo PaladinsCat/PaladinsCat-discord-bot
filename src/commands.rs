@@ -15,6 +15,7 @@ use twilight_model::channel::message::component::{
     ActionRow, Component, SelectMenu, SelectMenuOption, SelectMenuType,
 };
 use twilight_model::channel::message::embed::Embed;
+use twilight_model::channel::message::MessageFlags;
 use twilight_model::http::interaction::{
     InteractionResponse, InteractionResponseData, InteractionResponseType,
 };
@@ -46,6 +47,13 @@ const RENDER_TIMEOUT: Duration = Duration::from_secs(12);
 /// Module-level session store.  Shared between command and component handlers.
 static LOADOUT_SESSIONS: LazyLock<RwLock<HashMap<String, LoadoutSession>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
+static WEBHOOK_HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(20))
+        .build()
+        .expect("build Discord webhook client")
+});
 
 struct Handler {
     api: Arc<ApiClient>,
@@ -164,8 +172,18 @@ impl Handler {
                 .await;
         };
 
+        if cmd_data.name == "help" {
+            self.help(&interaction).await;
+            return;
+        }
+
+        // Match the TS lifecycle: acknowledge every potentially slow command
+        // before doing any backend lookup. Otherwise Discord invalidates the
+        // interaction token while the Rust handler is still waiting on I/O.
+        self.defer_response(&interaction, cmd_data.name == "save")
+            .await;
+
         match cmd_data.name.as_str() {
-            "help" => self.help(&interaction).await,
             "player" | "profile" => self.player(&interaction, &cmd_data.options).await,
             "match" => self.match_cmd(&interaction, &cmd_data.options).await,
             "history" => self.history(&interaction, &cmd_data.options).await,
@@ -179,15 +197,8 @@ impl Handler {
             "save" => self.save(&interaction, &cmd_data.options).await,
             other => {
                 tracing::debug!(command = other, "unknown command");
-                self.send_response(
-                    interaction.id,
-                    &interaction.token,
-                    InteractionResponse {
-                        kind: InteractionResponseType::Pong,
-                        data: None,
-                    },
-                )
-                .await;
+                self.reply_text(&interaction, "Unknown command. Use `/help`.")
+                    .await;
             }
         }
     }
@@ -251,8 +262,8 @@ impl Handler {
             return;
         };
 
-        // Acknowledge the interaction immediately.
-        self.defer_response(&interaction).await;
+        // Preserve the TS component behaviour: replace the select-menu reply.
+        self.defer_update(&interaction).await;
 
         // Clone the session out, dropping the lock immediately.
         let session = match get_session(token) {
@@ -296,11 +307,10 @@ impl Handler {
         let loadout_id = selected_value.as_str();
 
         // Find the selected loadout.
-        let selected = session.loadouts.iter().find(|lo| {
-            lo.get("id")
-                .map(|v| v.to_string() == loadout_id)
-                .unwrap_or(false)
-        });
+        let selected = session
+            .loadouts
+            .iter()
+            .find(|lo| value_id(lo.get("id")) == Some(loadout_id.to_string()));
 
         // Delete session after use (single-use token).
         remove_session(token);
@@ -309,16 +319,36 @@ impl Handler {
             return;
         };
 
-        // Build the loadout detail embed and send it.
-        let loadouts_vec = vec![selected.clone()];
-        let embed = embeds::build_loadouts_payload(
-            &session.player_name,
-            &loadouts_vec,
-            &self.web_url,
-            session.player.get("id").and_then(|v| v.as_str()),
-        );
-
-        self.send_webhook(&embed, &[], &interaction.token).await;
+        let record = serde_json::json!({ "player": session.player, "loadout": selected });
+        match &self.image_service {
+            Some(images) => match images.render_loadout(&record).await {
+                Ok(png) => {
+                    self.send_webhook_image("", png, "loadout.png", &interaction.token)
+                        .await
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "loadout render failed");
+                    self.send_webhook(
+                        &embeds::simple_embed(
+                            "Loadout",
+                            "The loadout image could not be rendered.",
+                            None,
+                        ),
+                        &[],
+                        &interaction.token,
+                    )
+                    .await;
+                }
+            },
+            None => {
+                self.send_webhook(
+                    &embeds::simple_embed("Loadout", "The loadout renderer is unavailable.", None),
+                    &[],
+                    &interaction.token,
+                )
+                .await
+            }
+        }
     }
 
     // ——— Command implementations ———
@@ -340,7 +370,19 @@ impl Handler {
         ]
         .join("\n");
         let embed = embeds::simple_embed("PaladinsCat commands", &description, None);
-        self.send_embed(interaction, embed).await;
+        self.send_response(
+            interaction.id,
+            &interaction.token,
+            InteractionResponse {
+                kind: InteractionResponseType::ChannelMessageWithSource,
+                data: Some(InteractionResponseData {
+                    embeds: Some(vec![embed]),
+                    flags: Some(MessageFlags::EPHEMERAL),
+                    ..Default::default()
+                }),
+            },
+        )
+        .await;
     }
 
     async fn save(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
@@ -348,14 +390,14 @@ impl Handler {
             match self.api.discord_player(&n).await {
                 Ok(profile) => {
                     let player = profile.get("player").unwrap_or(&profile);
-                    let Some(id) = player.get("id").and_then(|value| value.as_str()) else {
+                    let Some(id) = value_id(player.get("id")) else {
                         return self
                             .reply_text(interaction, format!("Player '{}' was not found", n))
                             .await;
                     };
                     match self
                         .api
-                        .save_discord_player(&extract_user_id(interaction).unwrap_or_default(), id)
+                        .save_discord_player(&extract_user_id(interaction).unwrap_or_default(), &id)
                         .await
                     {
                         Ok(saved) => {
@@ -396,10 +438,7 @@ impl Handler {
             .saved_discord_player(&extract_user_id(interaction).unwrap_or_default())
             .await
         {
-            Ok(player) => player
-                .get("id")
-                .and_then(|value| value.as_str())
-                .map(str::to_string),
+            Ok(player) => value_id(player.get("id")),
             Err(_) => None,
         }
     }
@@ -449,22 +488,18 @@ impl Handler {
                 let embed =
                     embeds::simple_embed(&format!("Match {}", id), &description, Some(&url));
 
-                // Acknowledge immediately so Discord's 3s window is never exceeded,
-                // then render in the background with a bounded timeout.
-                self.defer_response(interaction).await;
-
                 if let Some(img) = &self.image_service {
                     let img = Arc::clone(img);
                     let match_id = id.clone();
                     let match_url = url.clone();
+                    let render_url = match_url.clone();
                     let token = interaction.token.clone();
-                    let embed_for_img = embed.clone();
                     let renderer = Arc::clone(&img);
                     let render =
-                        async move { renderer.render_web_match(&match_id, &match_url).await };
+                        async move { renderer.render_web_match(&match_id, &render_url).await };
                     match tokio::time::timeout(RENDER_TIMEOUT, render).await {
                         Ok(Ok(png)) => {
-                            self.send_followup_image(embed_for_img, png, "match.png", &token)
+                            self.send_webhook_image(&match_url, png, "match.png", &token)
                                 .await;
                             return;
                         }
@@ -502,7 +537,7 @@ impl Handler {
                         .reply_text(interaction, format!("Player '{}' not found", name))
                         .await;
                 };
-                let id = player_id.as_str().unwrap_or("");
+                let id = value_id(Some(player_id)).unwrap_or_default();
                 match self.api.player_history(&id, 10).await {
                     Ok(rows) => {
                         let embed = embeds::build_history_payload(&name, &rows, &self.web_url);
@@ -550,9 +585,6 @@ impl Handler {
                 .await;
         };
 
-        // Defer first so we have time for the API call.
-        self.defer_response(interaction).await;
-
         match self.api.player(&name).await {
             Ok(val) => {
                 let Some(player_id) = val.get("id") else {
@@ -564,7 +596,7 @@ impl Handler {
                     self.send_webhook(&embed, &[], &interaction.token).await;
                     return;
                 };
-                let id = player_id.as_str().unwrap_or("");
+                let id = value_id(Some(player_id)).unwrap_or_default();
 
                 match self.api.loadouts(&id).await {
                     Ok(loadouts) => {
@@ -659,7 +691,7 @@ impl Handler {
                             &champion,
                             champ_loadouts.len(),
                             &self.web_url,
-                            id,
+                            &id,
                             false,
                         );
 
@@ -751,19 +783,7 @@ impl Handler {
     // ——— Helpers ———
 
     async fn send_embed(&self, interaction: &Interaction, embed: Embed) {
-        let data = InteractionResponseData {
-            embeds: Some(vec![embed]),
-            ..Default::default()
-        };
-        self.send_response(
-            interaction.id,
-            &interaction.token,
-            InteractionResponse {
-                kind: InteractionResponseType::ChannelMessageWithSource,
-                data: Some(data),
-            },
-        )
-        .await;
+        self.send_webhook(&embed, &[], &interaction.token).await;
     }
 
     async fn send_response(
@@ -780,81 +800,108 @@ impl Handler {
     }
 
     async fn reply_text(&self, interaction: &Interaction, msg: impl Into<String>) {
-        let data = InteractionResponseData {
-            content: Some(msg.into()),
-            ..Default::default()
-        };
-        self.send_response(
-            interaction.id,
-            &interaction.token,
-            InteractionResponse {
-                kind: InteractionResponseType::ChannelMessageWithSource,
-                data: Some(data),
-            },
-        )
-        .await;
+        self.send_webhook_text(&interaction.token, msg.into()).await;
     }
 
-    /// Defer the initial interaction response (15-second ACK).
-    async fn defer_response(&self, interaction: &Interaction) {
+    /// Defer the initial interaction response inside Discord's 3-second ACK window.
+    async fn defer_response(&self, interaction: &Interaction, ephemeral: bool) {
+        let data = ephemeral.then(|| InteractionResponseData {
+            flags: Some(MessageFlags::EPHEMERAL),
+            ..Default::default()
+        });
         self.send_response(
             interaction.id,
             &interaction.token,
             InteractionResponse {
                 kind: InteractionResponseType::DeferredChannelMessageWithSource,
+                data,
+            },
+        )
+        .await;
+    }
+
+    async fn defer_update(&self, interaction: &Interaction) {
+        self.send_response(
+            interaction.id,
+            &interaction.token,
+            InteractionResponse {
+                kind: InteractionResponseType::DeferredUpdateMessage,
                 data: None,
             },
         )
         .await;
     }
 
-    /// Send the deferred response / edit the original via the webhook endpoint.
-    /// Uses `PATCH /webhooks/{app_id}/{token}` with the data payload.
+    fn original_response_url(&self, token: &str) -> String {
+        format!(
+            "https://discord.com/api/v10/webhooks/{}/{}/messages/@original",
+            self.app_id.get(),
+            token
+        )
+    }
+
+    /// Edit the original deferred interaction response.
     async fn send_webhook(&self, embed: &Embed, components: &[Component], token: &str) {
-        let webhook_id = self.app_id.get();
-        let url = format!(
-            "https://discord.com/api/v9/webhooks/{}/{}",
-            webhook_id, token
-        );
+        let url = self.original_response_url(token);
         let payload = serde_json::json!({
+            "content": "",
             "embeds": [embed],
-            "components": if components.is_empty() { serde_json::Value::Null } else { serde_json::json!(components) },
+            "components": components,
+            "attachments": [],
         });
-        let client = reqwest::Client::new();
-        match client.patch(&url).json(&payload).send().await {
-            Ok(_) => {}
+        match WEBHOOK_HTTP.patch(&url).json(&payload).send().await {
+            Ok(response) if response.status().is_success() => {}
+            Ok(response) => {
+                tracing::error!(url = %url, status = %response.status(), "webhook PATCH rejected")
+            }
             Err(e) => {
                 tracing::error!(url = %url, err = %e, "webhook PATCH failed");
             }
         }
     }
 
-    /// Send an embed + PNG image attachment via the webhook follow-up endpoint.
-    /// Uses multipart form data: embed in the `payload_json` field, image as `FILE`.
-    async fn send_followup_image(&self, embed: Embed, png: Vec<u8>, filename: &str, token: &str) {
-        let webhook_id = self.app_id.get();
-        let url = format!(
-            "https://discord.com/api/v9/webhooks/{}/{}",
-            webhook_id, token
-        );
+    async fn send_webhook_text(&self, token: &str, content: String) {
+        let url = self.original_response_url(token);
         let payload = serde_json::json!({
-            "embeds": [embed],
+            "content": content,
+            "embeds": [],
+            "components": [],
+            "attachments": [],
+            "allowed_mentions": { "parse": [] },
         });
-        let client = reqwest::Client::new();
+        match WEBHOOK_HTTP.patch(&url).json(&payload).send().await {
+            Ok(response) if response.status().is_success() => {}
+            Ok(response) => {
+                tracing::error!(url = %url, status = %response.status(), "webhook text PATCH rejected")
+            }
+            Err(error) => tracing::error!(url = %url, %error, "webhook text PATCH failed"),
+        }
+    }
+
+    async fn send_webhook_image(&self, content: &str, png: Vec<u8>, filename: &str, token: &str) {
+        let url = self.original_response_url(token);
+        let payload = serde_json::json!({
+            "content": content,
+            "embeds": [],
+            "components": [],
+            "attachments": [{ "id": 0, "filename": filename }],
+            "allowed_mentions": { "parse": [] },
+        });
         let body = reqwest::multipart::Form::new()
             .text(
                 "payload_json",
                 serde_json::to_string(&payload).unwrap_or_default(),
             )
             .part(
-                "FILE",
-                reqwest::multipart::Part::bytes(png.to_vec()).file_name(filename.to_string()),
+                "files[0]",
+                reqwest::multipart::Part::bytes(png).file_name(filename.to_string()),
             );
-        match client.post(&url).multipart(body).send().await {
-            Ok(_) => {}
-            Err(e) => {
-                tracing::error!(url = %url, err = %e, "follow-up image POST failed");
+        match WEBHOOK_HTTP.patch(&url).multipart(body).send().await {
+            Ok(response) if response.status().is_success() => {}
+            Ok(response) => {
+                tracing::error!(url = %url, status = %response.status(), "webhook image PATCH rejected")
             }
+            Err(error) => tracing::error!(url = %url, %error, "webhook image PATCH failed"),
         }
     }
 }
@@ -876,4 +923,12 @@ fn opt_string(opts: &[CommandDataOption], name: &str) -> Option<String> {
             CommandOptionValue::String(s) => Some(s.clone()),
             _ => None,
         })
+}
+
+fn value_id(value: Option<&Value>) -> Option<String> {
+    value.and_then(|value| match value {
+        Value::String(id) => Some(id.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    })
 }
