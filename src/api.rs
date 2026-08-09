@@ -84,6 +84,14 @@ fn response_error(status: reqwest::StatusCode, body: &str) -> ApiError {
     }
 }
 
+fn player_not_found(input: &str) -> ApiError {
+    ApiError {
+        status: Some(404),
+        message: format!("Player “{}” was not found", input),
+        code: None,
+    }
+}
+
 /// API client wrapper — stores base URL separately from reqwest client.
 /// All path parameters are percent-encoded. Responses to 429 get exponential backoff.
 /// Mirrors TS: PaladinsCatApi with service token auth.
@@ -108,6 +116,14 @@ pub struct LoadoutsResponse {
 /// Encode a path segment for use in URLs.
 fn encode(s: &str) -> String {
     percent_encode(s.as_bytes(), NON_ALPHANUMERIC).to_string()
+}
+
+fn json_id(value: Option<&serde_json::Value>) -> Option<String> {
+    value.and_then(|value| match value {
+        serde_json::Value::String(id) => Some(id.clone()),
+        serde_json::Value::Number(id) => Some(id.to_string()),
+        _ => None,
+    })
 }
 
 /// Clamp a value to the given range.
@@ -267,13 +283,8 @@ impl ApiClient {
     /// Resolve player name/ID to numeric ID and fetch profile.
     /// Used by history, loadout, current commands to get player ID.
     pub async fn player(&self, name: &str) -> Result<serde_json::Value, ApiError> {
-        let player_id = match self.resolve_player_id(name).await {
-            Ok(id) => id,
-            Err(e) => return Err(e),
-        };
-        if player_id.is_empty() {
-            return Ok(serde_json::json!({"error": "player not found"}));
-        }
+        let resolved = self.resolve_player(name).await?;
+        let player_id = json_id(resolved.get("id")).unwrap_or_default();
         let url = format!(
             "{}/players/{}?include=ratings",
             self.base,
@@ -293,13 +304,13 @@ impl ApiClient {
     /// - Names resolved via /players/search?name=...&limit=5.
     /// - Exact match (case-insensitive) preferred; fallback to first result.
     /// - Returns empty string when no player matches.
-    async fn resolve_player_id(&self, input: &str) -> Result<String, ApiError> {
+    pub async fn resolve_player(&self, input: &str) -> Result<serde_json::Value, ApiError> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
-            return Ok(String::new());
+            return Err(player_not_found(trimmed));
         }
         if trimmed.chars().all(|c| c.is_ascii_digit()) {
-            return Ok(trimmed.to_string());
+            return Ok(serde_json::json!({"id": trimmed, "name": trimmed}));
         }
 
         // TS: searchPlayers(input, 5) — limit=5
@@ -322,24 +333,20 @@ impl ApiClient {
                 .unwrap_or(false)
         });
 
-        match exact {
-            Some(row) => Ok(row
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string()),
-            None => {
-                // Fallback to first result — TS: exact ?? rows[0]
-                match rows.first() {
-                    Some(row) => Ok(row
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string()),
-                    None => Ok(String::new()),
-                }
-            }
-        }
+        let mut result = exact
+            .or_else(|| rows.first())
+            .cloned()
+            .ok_or_else(|| player_not_found(trimmed))?;
+        let Some(id) = json_id(result.get("id")) else {
+            return Err(player_not_found(trimmed));
+        };
+        result["id"] = serde_json::Value::String(id);
+        Ok(result)
+    }
+
+    async fn resolve_player_id(&self, input: &str) -> Result<String, ApiError> {
+        let resolved = self.resolve_player(input).await?;
+        json_id(resolved.get("id")).ok_or_else(|| player_not_found(input.trim()))
     }
 
     /// Get match details by ID.
