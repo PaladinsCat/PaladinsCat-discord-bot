@@ -338,6 +338,7 @@ impl MatchRenderer {
                 "--allow-file-access-from-files",
                 &format!("--remote-debugging-port={}", debug_port),
                 "--remote-debugging-address=127.0.0.1",
+                "about:blank",
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::from(stderr_file))
@@ -498,7 +499,11 @@ async fn resolve_page_ws_url(
         if let Some(targets) = list.as_array() {
             for t in targets {
                 let ty = t.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                if ty == "page" {
+                let url = t.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                // Debian Chromium opens a special chrome://newtab target by
+                // default. It can navigate visually while Runtime.evaluate
+                // remains stuck on its browser-UI execution context.
+                if ty == "page" && !url.starts_with("chrome://") {
                     if let Some(ws) = t.get("webSocketDebuggerUrl").and_then(|v| v.as_str()) {
                         return Ok(ws.to_string());
                     }
