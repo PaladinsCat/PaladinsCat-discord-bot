@@ -51,7 +51,11 @@ struct ServiceStats {
 
 impl Default for ServiceStats {
     fn default() -> Self {
-        Self { deduplicated: 0, render_retries: 0, browser_recoveries: 0 }
+        Self {
+            deduplicated: 0,
+            render_retries: 0,
+            browser_recoveries: 0,
+        }
     }
 }
 
@@ -66,30 +70,46 @@ pub struct ImageService {
 
 impl ImageService {
     pub fn new(renderer: Arc<MatchRenderer>, config: ImageServiceConfig) -> Self {
-        let render_attempt_timeout_ms = std::cmp::max(1, std::cmp::min(6000, (config.timeout_ms as f64 * 0.4) as u64));
+        let render_attempt_timeout_ms = std::cmp::max(
+            1,
+            std::cmp::min(6000, (config.timeout_ms as f64 * 0.4) as u64),
+        );
         Self {
             renderer,
             cache: RenderCache::new(config.cache_bytes, config.cache_ttl_secs),
-            queue: BoundedWorkQueue::new(config.concurrency, config.queue_limit, config.timeout_ms, "Render"),
+            queue: BoundedWorkQueue::new(
+                config.concurrency,
+                config.queue_limit,
+                config.timeout_ms,
+                "Render",
+            ),
             in_flight_matches: StdMutex::new(HashMap::new()),
             render_attempt_timeout_ms,
             stats: StdMutex::new(ServiceStats::default()),
         }
     }
 
-    pub async fn render_match(&self, record: &Value) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn render_match(
+        &self,
+        record: &Value,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         let match_id = record["match"]["match_id"].as_str().unwrap_or("unknown");
-        let cache_key = format!("match:{}:summary:v{}", match_id, self.renderer.template_version());
+        let cache_key = format!(
+            "match:{}:summary:v{}",
+            match_id,
+            self.renderer.template_version()
+        );
 
         if let Some(cached) = self.cache.get(&cache_key).await {
             return Ok(decode_b64(&cached));
         }
 
-        let result = self.render_with_dedup(match_id, || async {
-            self.render_with_recovery(|| async {
-                self.renderer.render(record).await
-            }).await
-        }).await?;
+        let result = self
+            .render_with_dedup(match_id, || async {
+                self.render_with_recovery(|| async { self.renderer.render(record).await })
+                    .await
+            })
+            .await?;
 
         self.cache.set(cache_key, encode_b64(&result)).await;
         Ok(result)
@@ -100,43 +120,72 @@ impl ImageService {
         match_id: &str,
         url: &str,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-        let cache_key = format!("match:{}:summary:v{}", match_id, self.renderer.template_version());
+        let cache_key = format!(
+            "match:{}:summary:v{}",
+            match_id,
+            self.renderer.template_version()
+        );
         if let Some(cached) = self.cache.get(&cache_key).await {
             return Ok(decode_b64(&cached));
         }
-        let result = self.render_with_dedup(match_id, || async {
-            self.render_with_recovery(|| async { self.renderer.render_web_match(url).await }).await
-        }).await?;
+        let result = self
+            .render_with_dedup(match_id, || async {
+                self.render_with_recovery(|| async { self.renderer.render_web_match(url).await })
+                    .await
+            })
+            .await?;
         self.cache.set(cache_key, encode_b64(&result)).await;
         Ok(result)
     }
 
-    pub async fn render_loadout(&self, record: &Value) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn render_loadout(
+        &self,
+        record: &Value,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         let player_id = record["player"]["id"].as_str().unwrap_or("unknown");
         let loadout_id = record["loadout"]["id"].as_str().unwrap_or("unknown");
-        let updated_at = record["loadout"]["updated_at"]
-            .as_str()
-            .unwrap_or(record["loadout"]["fetched_at"].as_str().unwrap_or("unknown"));
-        let cache_key = format!("loadout:{}:{}:{}:v{}", player_id, loadout_id, updated_at, self.renderer.loadout_template_version());
+        let updated_at = record["loadout"]["updated_at"].as_str().unwrap_or(
+            record["loadout"]["fetched_at"]
+                .as_str()
+                .unwrap_or("unknown"),
+        );
+        let cache_key = format!(
+            "loadout:{}:{}:{}:v{}",
+            player_id,
+            loadout_id,
+            updated_at,
+            self.renderer.loadout_template_version()
+        );
 
         if let Some(cached) = self.cache.get(&cache_key).await {
             return Ok(decode_b64(&cached));
         }
 
-        let result = self.render_with_recovery(|| async {
-            self.renderer.render_loadout(record).await
-        }).await?;
+        let result = self
+            .render_with_recovery(|| async { self.renderer.render_loadout(record).await })
+            .await?;
 
         self.cache.set(cache_key, encode_b64(&result)).await;
         Ok(result)
     }
 
-    pub async fn match_by_id<F>(&self, match_id: String, load: F)
-        -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>
+    pub async fn match_by_id<F>(
+        &self,
+        match_id: String,
+        load: F,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>
     where
-        F: FnOnce() -> Box<dyn std::future::Future<Output = Result<Value, Box<dyn std::error::Error + Send + Sync>>> + Send>,
+        F: FnOnce() -> Box<
+            dyn std::future::Future<
+                    Output = Result<Value, Box<dyn std::error::Error + Send + Sync>>,
+                > + Send,
+        >,
     {
-        let cache_key = format!("match:{}:summary:v{}", match_id, self.renderer.template_version());
+        let cache_key = format!(
+            "match:{}:summary:v{}",
+            match_id,
+            self.renderer.template_version()
+        );
         if let Some(cached) = self.cache.get(&cache_key).await {
             return Ok(decode_b64(&cached));
         }
@@ -144,7 +193,9 @@ impl ImageService {
         let holder = self.get_or_create_in_flight(&match_id);
         {
             let guard = holder.lock().await;
-            if let Some(result) = guard.as_ref() { return Ok(result.clone()); }
+            if let Some(result) = guard.as_ref() {
+                return Ok(result.clone());
+            }
         }
 
         // SAFETY: `load()` returns a `impl Future` which is always `Unpin`
@@ -152,9 +203,9 @@ impl ImageService {
             let f = std::pin::Pin::new_unchecked(load());
             f.await?
         };
-        let result = self.render_with_recovery(|| async {
-            self.renderer.render(&record).await
-        }).await?;
+        let result = self
+            .render_with_recovery(|| async { self.renderer.render(&record).await })
+            .await?;
 
         {
             let mut guard = holder.lock().await;
@@ -186,11 +237,14 @@ impl ImageService {
         }
     }
 
-    async fn render_with_recovery<F, Fut>(&self, mut render: F)
-        -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>
+    async fn render_with_recovery<F, Fut>(
+        &self,
+        mut render: F,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>
     where
         F: FnMut() -> Fut,
-        Fut: std::future::Future<Output = Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>>,
+        Fut:
+            std::future::Future<Output = Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>>,
     {
         for attempt in 0..2 {
             match render().await {
@@ -210,11 +264,15 @@ impl ImageService {
         Err("Render recovery exhausted".into())
     }
 
-    async fn render_with_dedup<F, Fut>(&self, match_id: &str, render: F)
-        -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>
+    async fn render_with_dedup<F, Fut>(
+        &self,
+        match_id: &str,
+        render: F,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>
     where
         F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>>,
+        Fut:
+            std::future::Future<Output = Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>>,
     {
         let holder = self.get_or_create_in_flight(match_id);
         {
@@ -247,55 +305,31 @@ impl ImageService {
 }
 
 fn encode_b64(bytes: &[u8]) -> String {
-    let t = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut r = String::with_capacity(bytes.len() / 3 * 4 + 4);
-    let mut i = 0;
-    while i + 2 < bytes.len() {
-        let (a, b, c) = (bytes[i] as u32, bytes[i+1] as u32, bytes[i+2] as u32);
-        r.push(t[(((a>>2)&63) as usize)] as char);
-        r.push(t[(((a<<4)|(b>>4)) as u8 as usize)] as char);
-        r.push(t[(((b<<2)|(c>>6)) as u8 as usize)] as char);
-        r.push(t[((c&63) as usize)] as char);
-        i += 3;
-    }
-    let rem = bytes.len() - i;
-    if rem == 1 {
-        let a = bytes[i] as u32;
-        r.push(t[(((a>>2)&63) as usize)] as char);
-        r.push(t[((a<<4) as u8 as usize)] as char);
-        r.push('='); r.push('=');
-    } else if rem == 2 {
-        let (a, b) = (bytes[i] as u32, bytes[i+1] as u32);
-        r.push(t[(((a>>2)&63) as usize)] as char);
-        r.push(t[(((a<<4)|(b>>4)) as u8 as usize)] as char);
-        r.push(t[((b<<2) as u8 as usize)] as char);
-        r.push('=');
-    }
-    r
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 fn decode_b64(s: &str) -> Vec<u8> {
-    let lookup: [u8; 256] = {
-        let mut t = [255u8; 256];
-        for i in b'A'..=b'Z' { t[i as usize] = (i - b'A') as u8; }
-        for i in b'a'..=b'z' { t[i as usize] = (i - b'a' + 26) as u8; }
-        for i in b'0'..=b'9' { t[i as usize] = (i - b'0' + 52) as u8; }
-        t[b'+' as usize] = 62;
-        t[b'/' as usize] = 63;
-        t
-    };
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    let mut i = 0;
-    while i + 3 < bytes.len() {
-        let a = lookup[bytes[i] as usize];
-        let b = lookup[bytes[i+1] as usize];
-        let c = lookup[bytes[i+2] as usize];
-        let d = lookup[bytes[i+3] as usize];
-        out.push((a << 2) | (b >> 4));
-        out.push((b << 4) | (c >> 2));
-        out.push((c << 6) | d);
-        i += 4;
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(s.trim())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_b64_does_not_panic_on_high_bytes() {
+        // Regression: the old hand-rolled encoder indexed a 64-char table with
+        // unmasked 8-bit values (e.g. (a<<4)|(b>>4) up to 255), panicking with
+        // "index out of bounds" on real PNG bytes. Must round-trip cleanly.
+        for len in 0..300 {
+            let data: Vec<u8> = (0..len).map(|i| (i * 37 + 11) as u8).collect();
+            let encoded = encode_b64(&data);
+            let decoded = decode_b64(&encoded);
+            assert_eq!(decoded, data, "round-trip failed for len {len}");
+        }
     }
-    out
 }

@@ -122,7 +122,9 @@ impl MatchRenderer {
             .await
     }
 
-    /// Render the canonical web scoreboard and use its own PNG exporter.
+    /// Render the canonical web scoreboard itself. This is the `/match`
+    /// command path, so the Discord PNG shares the web component's data
+    /// fallbacks, team markers, markup, and CSS instead of duplicating them.
     pub async fn render_web_match(
         &self,
         url: &str,
@@ -592,6 +594,10 @@ mod tests {
                 .join("dev/prototypes/cheater-police-line.svg")
                 .to_string_lossy()
                 .into_owned(),
+            asset_root_path: root
+                .join("src/frontend/public/images")
+                .to_string_lossy()
+                .into_owned(),
         };
         let te = TemplateEngine::load(&cfg).unwrap();
         crate::image::match_renderer::MatchRenderer::new(
@@ -626,6 +632,97 @@ mod tests {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
         let decoded = crate::image::cdp_client::decode_base64_png(&b64).expect("decodable PNG");
         assert_eq!(decoded.len(), png.len());
+    }
+
+    #[tokio::test]
+    async fn chromium_integration_scoreboard_is_styled() {
+        if !integration_enabled() {
+            return;
+        }
+        let renderer = test_renderer();
+        let players: Vec<serde_json::Value> = (0..10)
+            .map(|i| {
+                serde_json::json!({
+                    "player_id": format!("p{i}"),
+                    "player_name": format!("Player{i}"),
+                    "champion_name": if i % 2 == 0 { "Androxus" } else { "Fernando" },
+                    "task_force": if i < 5 { 1 } else { 2 },
+                    "final_match_level": 50 + i,
+                    "queue_elo": 1500 + i * 10,
+                    "kbm_tier": 15,
+                    "kills": 8,
+                    "deaths": 4,
+                    "assists": 12,
+                    "gold_earned": 10000,
+                    "objective_assists": 120,
+                    "damage_done_physical": 60000,
+                    "damage_taken": 45000,
+                    "damage_mitigated": 20000,
+                    "healing": 15000
+                })
+            })
+            .collect();
+        let record = serde_json::json!({
+            "match": {"match_id": 1281311346u64, "duration_seconds": 812, "region": "NA",
+                "map": "Ranked Warder's Gate", "queue_id": 486, "winning_task_force": 1,
+                "team1_score": 4, "team2_score": 2, "entry_datetime": "2026-08-08T12:00:00Z"},
+            "players": players, "bans": [], "facts": []
+        });
+        let png = renderer
+            .render(&record)
+            .await
+            .expect("render styled scoreboard");
+        let image = image::load_from_memory(&png).expect("decode PNG").to_rgb8();
+        let white = image
+            .pixels()
+            .filter(|p| p.0.iter().all(|channel| *channel > 245))
+            .count();
+        let white_ratio = white as f64 / (image.width() as f64 * image.height() as f64);
+        assert!(
+            white_ratio < 0.25,
+            "scoreboard is unexpectedly white: {:.1}%",
+            white_ratio * 100.0
+        );
+        renderer.close().await;
+    }
+
+    #[tokio::test]
+    async fn chromium_integration_real_match_from_env_is_styled() {
+        if !integration_enabled() {
+            return;
+        }
+        let Ok(path) = std::env::var("MATCH_JSON") else {
+            return;
+        };
+        let payload: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).expect("read MATCH_JSON"))
+                .expect("parse MATCH_JSON");
+        let record = payload
+            .get("matches")
+            .and_then(|v| v.as_array())
+            .and_then(|v| v.first())
+            .unwrap_or(&payload);
+        let renderer = test_renderer();
+        let png = renderer
+            .render(record)
+            .await
+            .expect("render real scoreboard");
+        if let Ok(path) = std::env::var("MATCH_PNG_OUT") {
+            std::fs::write(path, &png).expect("write MATCH_PNG_OUT");
+        }
+        let image = image::load_from_memory(&png).expect("decode PNG").to_rgb8();
+        let white = image
+            .pixels()
+            .filter(|p| p.0.iter().all(|channel| *channel > 245))
+            .count();
+        let white_ratio = white as f64 / (image.width() as f64 * image.height() as f64);
+        println!("real scoreboard white ratio: {:.1}%", white_ratio * 100.0);
+        assert!(
+            white_ratio < 0.25,
+            "real scoreboard is unexpectedly white: {:.1}%",
+            white_ratio * 100.0
+        );
+        renderer.close().await;
     }
 
     #[tokio::test]

@@ -152,15 +152,16 @@ fn insert_session(token: &str, session: LoadoutSession) {
 impl Handler {
     async fn handle_command(&self, interaction: Interaction) {
         let Some(cmd_data) = extract_command_data(&interaction.data) else {
-            return self.send_response(
-                interaction.id,
-                &interaction.token,
-                InteractionResponse {
-                    kind: InteractionResponseType::Pong,
-                    data: None,
-                },
-            )
-            .await;
+            return self
+                .send_response(
+                    interaction.id,
+                    &interaction.token,
+                    InteractionResponse {
+                        kind: InteractionResponseType::Pong,
+                        data: None,
+                    },
+                )
+                .await;
         };
 
         match cmd_data.name.as_str() {
@@ -263,7 +264,11 @@ impl Handler {
         let interaction_user_id = extract_user_id(&interaction);
         if let Some(uid) = &interaction_user_id {
             if uid != &session.user_id {
-                tracing::warn!(uid, session_user = session.user_id, "user mismatch on loadout selection");
+                tracing::warn!(
+                    uid,
+                    session_user = session.user_id,
+                    "user mismatch on loadout selection"
+                );
                 return;
             }
         }
@@ -289,7 +294,9 @@ impl Handler {
 
         // Find the selected loadout.
         let selected = session.loadouts.iter().find(|lo| {
-            lo.get("id").map(|v| v.to_string() == loadout_id).unwrap_or(false)
+            lo.get("id")
+                .map(|v| v.to_string() == loadout_id)
+                .unwrap_or(false)
         });
 
         // Delete session after use (single-use token).
@@ -335,13 +342,16 @@ impl Handler {
 
     async fn save(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
         if let Some(n) = opt_string(opts, "player") {
-            self.reply_text(interaction, format!("Saved player: {}", n)).await;
+            self.reply_text(interaction, format!("Saved player: {}", n))
+                .await;
         }
     }
 
     async fn player(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
         let Some(name) = opt_string(opts, "player") else {
-            return self.reply_text(interaction, "Provide a player name or ID").await;
+            return self
+                .reply_text(interaction, "Provide a player name or ID")
+                .await;
         };
         match self.api.discord_player(&name).await {
             Ok(val) => {
@@ -350,7 +360,8 @@ impl Handler {
             }
             Err(e) => {
                 tracing::error!(player = %name, err = %e, "discord_player request failed");
-                self.reply_text(interaction, format!("Failed to look up player '{}'", name)).await;
+                self.reply_text(interaction, format!("Failed to look up player '{}'", name))
+                    .await;
             }
         }
     }
@@ -361,15 +372,25 @@ impl Handler {
         };
         match self.api.match_info(&id).await {
             Ok(val) => {
-                let mode = val.get("mode").map(|v| v.to_string()).unwrap_or_else(|| "Unknown".into());
-                let map = val.get("map").map(|v| v.to_string()).unwrap_or_else(|| "Unknown".into());
-                let duration = val.get("duration").map(|v| v.to_string()).unwrap_or_else(|| "—".into());
+                let mode = val
+                    .get("mode")
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "Unknown".into());
+                let map = val
+                    .get("map")
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "Unknown".into());
+                let duration = val
+                    .get("duration")
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into());
                 let url = format!("{}/matches/{}", self.web_url, id);
                 let description = format!(
                     "**{}** · {}\nDuration: {}\n[View match]({})",
                     mode, map, duration, url
                 );
-                let embed = embeds::simple_embed(&format!("Match {}", id), &description, Some(&url));
+                let embed =
+                    embeds::simple_embed(&format!("Match {}", id), &description, Some(&url));
 
                 // Acknowledge immediately so Discord's 3s window is never exceeded,
                 // then render in the background with a bounded timeout.
@@ -401,7 +422,8 @@ impl Handler {
                 self.send_webhook(&embed, &[], &interaction.token).await;
             }
             Err(_) => {
-                self.reply_text(interaction, format!("Match '{}' not found", id)).await;
+                self.reply_text(interaction, format!("Match '{}' not found", id))
+                    .await;
             }
         }
     }
@@ -413,7 +435,9 @@ impl Handler {
         match self.api.player(&name).await {
             Ok(val) => {
                 let Some(player_id) = val.get("id") else {
-                    return self.reply_text(interaction, format!("Player '{}' not found", name)).await;
+                    return self
+                        .reply_text(interaction, format!("Player '{}' not found", name))
+                        .await;
                 };
                 let id = player_id.as_str().unwrap_or("");
                 match self.api.player_history(&id, 10).await {
@@ -423,13 +447,15 @@ impl Handler {
                     }
                     Err(e) => {
                         tracing::error!(player_id = id, err = %e, "player_history request failed");
-                        self.reply_text(interaction, "Failed to fetch match history").await;
+                        self.reply_text(interaction, "Failed to fetch match history")
+                            .await;
                     }
                 }
             }
             Err(e) => {
                 tracing::error!(player = name.as_str(), err = %e, "player lookup failed");
-                self.reply_text(interaction, format!("Player '{}' not found", name)).await;
+                self.reply_text(interaction, format!("Player '{}' not found", name))
+                    .await;
             }
         }
     }
@@ -444,7 +470,8 @@ impl Handler {
                 self.send_embed(interaction, embed).await;
             }
             Err(_) => {
-                self.reply_text(interaction, format!("Player '{}' not found", name)).await;
+                self.reply_text(interaction, format!("Player '{}' not found", name))
+                    .await;
             }
         }
     }
@@ -455,7 +482,9 @@ impl Handler {
             return self.reply_text(interaction, "Provide a player name").await;
         };
         let Some(champion) = opt_string(opts, "champion") else {
-            return self.reply_text(interaction, "Provide a champion name").await;
+            return self
+                .reply_text(interaction, "Provide a champion name")
+                .await;
         };
 
         // Defer first so we have time for the API call.
@@ -482,8 +511,7 @@ impl Handler {
                             .filter(|lo| {
                                 lo.get("champion_name")
                                     .map(|v| {
-                                        v.to_string().to_lowercase()
-                                            == champion.to_lowercase()
+                                        v.to_string().to_lowercase() == champion.to_lowercase()
                                     })
                                     .unwrap_or(false)
                             })
@@ -491,11 +519,7 @@ impl Handler {
                             .collect();
 
                         if champ_loadouts.is_empty() {
-                            let embed = embeds::build_no_loadouts_payload(
-                                &name,
-                                &champion,
-                                None,
-                            );
+                            let embed = embeds::build_no_loadouts_payload(&name, &champion, None);
                             self.send_webhook(&embed, &[], &interaction.token).await;
                             return;
                         }
@@ -525,18 +549,22 @@ impl Handler {
                             .iter()
                             .take(25)
                             .map(|lo| {
-                                let label = lo.get("loadout_name")
+                                let label = lo
+                                    .get("loadout_name")
                                     .map(|v| v.to_string())
                                     .unwrap_or_else(|| "Unnamed Loadout".into())
-                                    .chars().take(100).collect::<String>();
-                                let card_points = lo.get("card_points")
+                                    .chars()
+                                    .take(100)
+                                    .collect::<String>();
+                                let card_points = lo
+                                    .get("card_points")
                                     .map(|v| v.to_string())
                                     .unwrap_or_else(|| "0".into());
                                 let description = format!("{} card points", card_points)
-                                    .chars().take(100).collect::<String>();
-                                let value = lo.get("id")
-                                    .map(|v| v.to_string())
-                                    .unwrap_or_default();
+                                    .chars()
+                                    .take(100)
+                                    .collect::<String>();
+                                let value = lo.get("id").map(|v| v.to_string()).unwrap_or_default();
                                 SelectMenuOption {
                                     default: false,
                                     description: Some(description),
@@ -572,15 +600,18 @@ impl Handler {
                             false,
                         );
 
-                        self.send_webhook(&embed, &components, &interaction.token).await;
+                        self.send_webhook(&embed, &components, &interaction.token)
+                            .await;
                     }
                     Err(_) => {
-                        self.reply_text(interaction, "Failed to fetch loadouts").await;
+                        self.reply_text(interaction, "Failed to fetch loadouts")
+                            .await;
                     }
                 }
             }
             Err(_) => {
-                self.reply_text(interaction, format!("Player '{}' not found", name)).await;
+                self.reply_text(interaction, format!("Player '{}' not found", name))
+                    .await;
             }
         }
     }
@@ -600,48 +631,48 @@ impl Handler {
                 self.send_embed(interaction, embed).await;
             }
             Err(_) => {
-                self.reply_text(interaction, format!("No data for champion '{}'", c)).await;
+                self.reply_text(interaction, format!("No data for champion '{}'", c))
+                    .await;
             }
         }
     }
 
     async fn stats(&self, interaction: &Interaction, command: &str) {
         match command {
-            "maps" => {
-                match self.api.ranked_maps(100).await {
-                    Ok(rows) => {
-                        let embed = embeds::build_maps_payload(&rows, &self.web_url);
-                        self.send_embed(interaction, embed).await;
-                    }
-                    Err(_) => {
-                        self.reply_text(interaction, "Failed to fetch map stats").await;
-                    }
+            "maps" => match self.api.ranked_maps(100).await {
+                Ok(rows) => {
+                    let embed = embeds::build_maps_payload(&rows, &self.web_url);
+                    self.send_embed(interaction, embed).await;
                 }
-            }
-            "composition" => {
-                match self.api.ranked_compositions(5).await {
-                    Ok(rows) => {
-                        let embed = embeds::build_composition_payload(&rows, &self.web_url);
-                        self.send_embed(interaction, embed).await;
-                    }
-                    Err(_) => {
-                        self.reply_text(interaction, "Failed to fetch composition stats").await;
-                    }
+                Err(_) => {
+                    self.reply_text(interaction, "Failed to fetch map stats")
+                        .await;
                 }
-            }
-            "items" => {
-                match self.api.ranked_items(20).await {
-                    Ok(rows) => {
-                        let embed = embeds::build_items_payload(&rows, &self.web_url, "Global ranked lobbies");
-                        self.send_embed(interaction, embed).await;
-                    }
-                    Err(_) => {
-                        self.reply_text(interaction, "Failed to fetch item stats").await;
-                    }
+            },
+            "composition" => match self.api.ranked_compositions(5).await {
+                Ok(rows) => {
+                    let embed = embeds::build_composition_payload(&rows, &self.web_url);
+                    self.send_embed(interaction, embed).await;
                 }
-            }
+                Err(_) => {
+                    self.reply_text(interaction, "Failed to fetch composition stats")
+                        .await;
+                }
+            },
+            "items" => match self.api.ranked_items(20).await {
+                Ok(rows) => {
+                    let embed =
+                        embeds::build_items_payload(&rows, &self.web_url, "Global ranked lobbies");
+                    self.send_embed(interaction, embed).await;
+                }
+                Err(_) => {
+                    self.reply_text(interaction, "Failed to fetch item stats")
+                        .await;
+                }
+            },
             _ => {
-                self.reply_text(interaction, format!("{} stats coming soon", command)).await;
+                self.reply_text(interaction, format!("{} stats coming soon", command))
+                    .await;
             }
         }
     }
@@ -710,7 +741,10 @@ impl Handler {
     /// Uses `PATCH /webhooks/{app_id}/{token}` with the data payload.
     async fn send_webhook(&self, embed: &Embed, components: &[Component], token: &str) {
         let webhook_id = self.app_id.get();
-        let url = format!("https://discord.com/api/v9/webhooks/{}/{}", webhook_id, token);
+        let url = format!(
+            "https://discord.com/api/v9/webhooks/{}/{}",
+            webhook_id, token
+        );
         let payload = serde_json::json!({
             "embeds": [embed],
             "components": if components.is_empty() { serde_json::Value::Null } else { serde_json::json!(components) },
@@ -726,13 +760,7 @@ impl Handler {
 
     /// Send an embed + PNG image attachment via the webhook follow-up endpoint.
     /// Uses multipart form data: embed in the `payload_json` field, image as `FILE`.
-    async fn send_followup_image(
-        &self,
-        embed: Embed,
-        png: Vec<u8>,
-        filename: &str,
-        token: &str,
-    ) {
+    async fn send_followup_image(&self, embed: Embed, png: Vec<u8>, filename: &str, token: &str) {
         let webhook_id = self.app_id.get();
         let url = format!(
             "https://discord.com/api/v9/webhooks/{}/{}",
@@ -743,11 +771,13 @@ impl Handler {
         });
         let client = reqwest::Client::new();
         let body = reqwest::multipart::Form::new()
-            .text("payload_json", serde_json::to_string(&payload).unwrap_or_default())
+            .text(
+                "payload_json",
+                serde_json::to_string(&payload).unwrap_or_default(),
+            )
             .part(
                 "FILE",
-                reqwest::multipart::Part::bytes(png.to_vec())
-                    .file_name(filename.to_string()),
+                reqwest::multipart::Part::bytes(png.to_vec()).file_name(filename.to_string()),
             );
         match client.post(&url).multipart(body).send().await {
             Ok(_) => {}

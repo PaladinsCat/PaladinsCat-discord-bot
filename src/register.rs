@@ -2,12 +2,12 @@
 
 use twilight_http::Client;
 use twilight_model::application::command::{
-    Command, CommandOption, CommandOptionChoice, CommandOptionChoiceValue,
-    CommandOptionType, CommandType,
+    Command, CommandOption, CommandOptionChoice, CommandOptionChoiceValue, CommandOptionType,
+    CommandType,
 };
 use twilight_model::application::interaction::InteractionContextType;
-use twilight_model::id::Id;
 use twilight_model::id::marker::{ApplicationMarker, GuildMarker};
+use twilight_model::id::Id;
 
 /// Result of a registration run.
 #[derive(Debug, Clone)]
@@ -141,17 +141,57 @@ fn option_match_id() -> CommandOption {
 pub fn all_command_definitions() -> Vec<Command> {
     vec![
         command("help", "List PaladinsCat bot commands", vec![]),
-        command("save", "Save your default Paladins player", vec![string_option("player", "Player name or ID", true)]),
-        command("profile", "Show a Paladins player profile", vec![option_player()]),
-        command("player", "Show a Paladins player profile", vec![option_player()]),
-        command("match", "Render a match result image", vec![option_match_id()]),
-        command("history", "Show recent matches for a player", vec![option_player()]),
-        command("current", "Check a player's current live match", vec![option_player()]),
-        command("loadout", "Render one of a player's saved champion loadouts", vec![option_champion(), option_player()]),
-        command("champion", "Show champion ranked statistics", vec![option_champion(), option_lobby()]),
+        command(
+            "save",
+            "Save your default Paladins player",
+            vec![string_option("player", "Player name or ID", true)],
+        ),
+        command(
+            "profile",
+            "Show a Paladins player profile",
+            vec![option_player()],
+        ),
+        command(
+            "player",
+            "Show a Paladins player profile",
+            vec![option_player()],
+        ),
+        command(
+            "match",
+            "Render a match result image",
+            vec![option_match_id()],
+        ),
+        command(
+            "history",
+            "Show recent matches for a player",
+            vec![option_player()],
+        ),
+        command(
+            "current",
+            "Check a player's current live match",
+            vec![option_player()],
+        ),
+        command(
+            "loadout",
+            "Render one of a player's saved champion loadouts",
+            vec![option_champion(), option_player()],
+        ),
+        command(
+            "champion",
+            "Show champion ranked statistics",
+            vec![option_champion(), option_lobby()],
+        ),
         command("maps", "Show statistics for every ranked map", vec![]),
-        command("composition", "Show the five most-played ranked team compositions", vec![]),
-        command("items", "Show global ranked item statistics", vec![option_lobby()]),
+        command(
+            "composition",
+            "Show the five most-played ranked team compositions",
+            vec![],
+        ),
+        command(
+            "items",
+            "Show global ranked item statistics",
+            vec![option_lobby()],
+        ),
     ]
 }
 

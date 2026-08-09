@@ -34,7 +34,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing::info!(bot_mode = %cfg.bot_mode, "Starting PaladinsCat Discord Bot");
 
     let service_token = std::env::var("PALADINSCAT_SERVICE_TOKEN").ok();
-    let api = Arc::new(api::ApiClient::new(&cfg.api_base_url, service_token.as_deref()));
+    let api = Arc::new(api::ApiClient::new(
+        &cfg.api_base_url,
+        service_token.as_deref(),
+    ));
     let render_cache = Arc::new(cache::RenderCache::new(cfg.cache_bytes, cfg.cache_ttl_secs));
 
     // Spawn health + preview server (shares ApiClient + RenderCache)
@@ -46,14 +49,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let template_engine = image::TemplateEngine::load(&image::TemplateConfig::dev_defaults());
     let image_service: Option<Arc<image::ImageService>> = match template_engine {
         Ok(te) if !cfg.chrome_path.is_empty() => {
-            let renderer = image::MatchRenderer::new(te, image::MatchRendererConfig {
-                chromium_path: cfg.chrome_path.clone(),
-                debug_port: 0,
-            });
-            let service = image::ImageService::new(
-                Arc::new(renderer),
-                image::ImageServiceConfig::default(),
+            let renderer = image::MatchRenderer::new(
+                te,
+                image::MatchRendererConfig {
+                    chromium_path: cfg.chrome_path.clone(),
+                    debug_port: 0,
+                },
             );
+            let service =
+                image::ImageService::new(Arc::new(renderer), image::ImageServiceConfig::default());
             tracing::info!("Image service initialized");
             let service = Arc::new(service);
             // Warm the browser in the background so the first render is fast and
@@ -73,7 +77,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Some(service)
         }
         Ok(te) => {
-            tracing::warn!("CHROME_PATH not set — image rendering disabled (commands fall back to embeds)");
+            tracing::warn!(
+                "CHROME_PATH not set — image rendering disabled (commands fall back to embeds)"
+            );
             drop(te);
             None
         }
@@ -98,16 +104,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let should_register = app_id_raw > 0;
-    let app_id: twilight_model::id::Id<twilight_model::id::marker::ApplicationMarker> = if should_register {
-        twilight_model::id::Id::new(app_id_raw)
-    } else {
-        tracing::warn!("APPLICATION_ID not set or zero; skipping command registration");
-        twilight_model::id::Id::new(1) // dummy; never used
-    };
+    let app_id: twilight_model::id::Id<twilight_model::id::marker::ApplicationMarker> =
+        if should_register {
+            twilight_model::id::Id::new(app_id_raw)
+        } else {
+            tracing::warn!("APPLICATION_ID not set or zero; skipping command registration");
+            twilight_model::id::Id::new(1) // dummy; never used
+        };
 
     if app_id_raw > 0 {
-        let dev_guild = cfg.development_guild_id
-            .and_then(|s| s.parse::<u64>().ok().map(|n| twilight_model::id::Id::new(n)));
+        let dev_guild = cfg.development_guild_id.and_then(|s| {
+            s.parse::<u64>()
+                .ok()
+                .map(|n| twilight_model::id::Id::new(n))
+        });
         match register::register_commands(&http, app_id, dev_guild, &[]).await {
             Ok(result) => {
                 tracing::info!(

@@ -77,7 +77,11 @@ impl ApiClient {
         self.get_json_impl(&self.inner_slow, url).await
     }
 
-    async fn get_json_impl(&self, client: &HttpClient, url: &str) -> Result<serde_json::Value, reqwest::Error> {
+    async fn get_json_impl(
+        &self,
+        client: &HttpClient,
+        url: &str,
+    ) -> Result<serde_json::Value, reqwest::Error> {
         // Check cache first
         if let Some(cached) = self.response_cache.get(url).await {
             return Ok(cached);
@@ -89,7 +93,8 @@ impl ApiClient {
         for &delay_ms in &delays {
             let mut req = client.get(url);
             if let Some(token) = &self.service_token {
-                req = req.header(reqwest::header::USER_AGENT, "PaladinsCatDiscordBot/0.1")
+                req = req
+                    .header(reqwest::header::USER_AGENT, "PaladinsCatDiscordBot/0.1")
                     .header("X-PaladinsCat-Service-Token", token.as_str());
             }
             match req.send().await {
@@ -102,7 +107,9 @@ impl ApiClient {
                     resp.error_for_status_ref()?;
                     let val: serde_json::Value = resp.json().await?;
                     // Cache successful response
-                    self.response_cache.insert(url.to_string(), val.clone()).await;
+                    self.response_cache
+                        .insert(url.to_string(), val.clone())
+                        .await;
                     return Ok(val);
                 }
                 Err(e) => {
@@ -141,7 +148,11 @@ impl ApiClient {
         if player_id.is_empty() {
             return Ok(serde_json::json!({"error": "player not found"}));
         }
-        let url = format!("{}/players/{}?include=ratings", self.base, encode(&player_id));
+        let url = format!(
+            "{}/players/{}?include=ratings",
+            self.base,
+            encode(&player_id)
+        );
         let val = self.get_json(&url).await?;
         match val.get("player") {
             Some(inner) if inner.is_object() => Ok(inner.clone()),
@@ -219,13 +230,10 @@ impl ApiClient {
         let match_url = format!("{}/matches/{}", self.base, encoded);
         let fact_url = format!("{}/matches/fact/{}", self.base, encoded);
 
-        let (match_result, fact_result) = tokio::join!(
-            self.get_json_slow(&match_url),
-            async {
-                // Best-effort facts — TS: .catch(() => null)
-                self.get_json(&fact_url).await.ok()
-            }
-        );
+        let (match_result, fact_result) = tokio::join!(self.get_json_slow(&match_url), async {
+            // Best-effort facts — TS: .catch(() => null)
+            self.get_json(&fact_url).await.ok()
+        });
 
         let val = match_result?;
         // Unwrap matches[0].match envelope — TS: payload.matches?.[0]
@@ -259,16 +267,16 @@ impl ApiClient {
         let url = format!("{}/champions", self.base);
         let val: serde_json::Value = self.get_json(&url).await?;
         match &val {
-            serde_json::Value::Array(arr) => {
-                Ok(arr
-                    .iter()
-                    .filter_map(|v| match v {
-                        serde_json::Value::String(s) => Some(s.clone()),
-                        serde_json::Value::Object(o) => o.get("name").and_then(|n| n.as_str().map(str::to_string)),
-                        _ => None,
-                    })
-                    .collect())
-            }
+            serde_json::Value::Array(arr) => Ok(arr
+                .iter()
+                .filter_map(|v| match v {
+                    serde_json::Value::String(s) => Some(s.clone()),
+                    serde_json::Value::Object(o) => {
+                        o.get("name").and_then(|n| n.as_str().map(str::to_string))
+                    }
+                    _ => None,
+                })
+                .collect()),
             _ => Ok(vec![]),
         }
     }
@@ -285,8 +293,17 @@ impl ApiClient {
     /// Mirrors TS: playerHistoryById(playerId, limit).
     /// Route: GET /players/{id}/matches?limit={}
     /// Uses slow client (30s timeout) — large history sets can be slow.
-    pub async fn player_history(&self, player_id: &str, limit: usize) -> Result<Vec<serde_json::Value>, reqwest::Error> {
-        let url = format!("{}/players/{}/matches?limit={}", self.base, encode(player_id), limit);
+    pub async fn player_history(
+        &self,
+        player_id: &str,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Value>, reqwest::Error> {
+        let url = format!(
+            "{}/players/{}/matches?limit={}",
+            self.base,
+            encode(player_id),
+            limit
+        );
         let val: serde_json::Value = self.get_json_slow(&url).await?;
         match &val {
             serde_json::Value::Array(arr) => Ok(arr.to_vec()),
@@ -303,10 +320,7 @@ impl ApiClient {
         // TS: GET /live/players/{id}
         let url = format!("{}/live/players/{}", self.base, encode(&player_id));
         let val = self.get_json(&url).await?;
-        let in_game = val
-            .get("match")
-            .map(|m| !m.is_null())
-            .unwrap_or(false);
+        let in_game = val.get("match").map(|m| !m.is_null()).unwrap_or(false);
         let mut out = val;
         if let Some(obj) = out.as_object_mut() {
             obj.insert("in_game".to_string(), serde_json::json!(in_game));
@@ -319,7 +333,10 @@ impl ApiClient {
     /// Mirrors TS: playerLoadoutsById(playerId).
     /// Route: GET /players/{id}/loadouts
     /// Backend returns {"loadouts": [...], "freshness": {...}}; unwraps loadouts array.
-    pub async fn loadouts(&self, player_id: &str) -> Result<Vec<serde_json::Value>, reqwest::Error> {
+    pub async fn loadouts(
+        &self,
+        player_id: &str,
+    ) -> Result<Vec<serde_json::Value>, reqwest::Error> {
         let url = format!("{}/players/{}/loadouts", self.base, encode(player_id));
         let val: serde_json::Value = self.get_json(&url).await?;
         match val.get("loadouts").and_then(|v| v.as_array()) {
@@ -337,7 +354,11 @@ impl ApiClient {
     /// - scope maps to tierMin/tierMax via lobby_scope_to_tiers().
     /// - "global" or unknown scope → no tier filter (no query params).
     /// Route: GET /champions/{slug}/page-data?tierMin={}&tierMax={}
-    pub async fn champion_page_data(&self, slug: &str, scope: &str) -> Result<serde_json::Value, reqwest::Error> {
+    pub async fn champion_page_data(
+        &self,
+        slug: &str,
+        scope: &str,
+    ) -> Result<serde_json::Value, reqwest::Error> {
         let q = if let Some((tier_min, tier_max)) = lobby_scope_to_tiers(scope) {
             format!("?tierMin={}&tierMax={}", tier_min, tier_max)
         } else {
@@ -351,7 +372,10 @@ impl ApiClient {
     ///
     /// Mirrors TS: rankedMaps(limit=100).
     /// Route: GET /stats/maps?queueId=486&limit={} (clamped 1-100)
-    pub async fn ranked_maps(&self, limit: usize) -> Result<Vec<serde_json::Value>, reqwest::Error> {
+    pub async fn ranked_maps(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Value>, reqwest::Error> {
         let clamped = clamp(limit, 1, 100);
         // TS: queueId=486 is the ranked queue
         let url = format!("{}/stats/maps?queueId=486&limit={}", self.base, clamped);
@@ -367,7 +391,10 @@ impl ApiClient {
     /// Mirrors TS: rankedCompositions(limit=5).
     /// Route: GET /matches/compositions?sortBy=count&order=desc&limit={} (clamped 1-25)
     /// Backend returns {"total": N, "data": [...]} — unwraps data array.
-    pub async fn ranked_compositions(&self, limit: usize) -> Result<Vec<serde_json::Value>, reqwest::Error> {
+    pub async fn ranked_compositions(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Value>, reqwest::Error> {
         let clamped = clamp(limit, 1, 25);
         let url = format!(
             "{}/matches/compositions?sortBy=count&order=desc&limit={}",
@@ -388,12 +415,12 @@ impl ApiClient {
     /// Mirrors TS: rankedItems(scope, limit=20).
     /// Route: GET /stats/items?mode=ranked&limit={} (clamped 1-50).
     /// "global" scope → no tier filter appended.
-    pub async fn ranked_items(&self, limit: usize) -> Result<Vec<serde_json::Value>, reqwest::Error> {
+    pub async fn ranked_items(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Value>, reqwest::Error> {
         let clamped = clamp(limit, 1, 50);
-        let url = format!(
-            "{}/stats/items?mode=ranked&limit={}",
-            self.base, clamped
-        );
+        let url = format!("{}/stats/items?mode=ranked&limit={}", self.base, clamped);
         let val = self.get_json(&url).await?;
         match &val {
             serde_json::Value::Array(arr) => Ok(arr.to_vec()),

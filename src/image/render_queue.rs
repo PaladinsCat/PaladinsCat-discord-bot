@@ -116,10 +116,7 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
             let map = self.in_flight_map.lock().unwrap();
             if map.len() >= self.max_queued {
                 return Err(QueueFullError {
-                    message: format!(
-                        "The {} queue is busy. Try again shortly.",
-                        self.work_label
-                    ),
+                    message: format!("The {} queue is busy. Try again shortly.", self.work_label),
                 });
             }
         }
@@ -135,10 +132,7 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
 
         // Execute work with timeout
         let started = Instant::now();
-        let result = tokio::time::timeout(
-            Duration::from_millis(self.timeout_ms),
-            work(),
-        ).await;
+        let result = tokio::time::timeout(Duration::from_millis(self.timeout_ms), work()).await;
 
         match result {
             Ok(Ok(value)) => {
@@ -183,10 +177,7 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
 
                 self.in_flight_map.lock().unwrap().remove(&key);
                 Err(QueueFullError {
-                    message: format!(
-                        "{} exceeded {}ms",
-                        self.work_label, self.timeout_ms
-                    ),
+                    message: format!("{} exceeded {}ms", self.work_label, self.timeout_ms),
                 })
             }
         }
@@ -246,7 +237,10 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
             0.0
         } else {
             let idx = ((sorted.len() as f64) * 0.95).ceil() as usize - 1;
-            sorted.get(idx.min(sorted.len() - 1)).copied().unwrap_or(0.0)
+            sorted
+                .get(idx.min(sorted.len() - 1))
+                .copied()
+                .unwrap_or(0.0)
         };
 
         QueueSnapshot {

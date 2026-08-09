@@ -28,7 +28,10 @@ impl ChampionList {
         if self.names.is_none() {
             self.names = api.champion_names().await.ok();
         }
-        self.names.as_ref().map(|v| v.as_slice()).unwrap_or_default()
+        self.names
+            .as_ref()
+            .map(|v| v.as_slice())
+            .unwrap_or_default()
     }
 }
 
@@ -48,7 +51,10 @@ fn score(name: &str, query: &str) -> u8 {
     if key.starts_with(query) {
         return SCORE_STARTS;
     }
-    let words: Vec<&str> = key.split(|c: char| !c.is_alphanumeric()).filter(|s| !s.is_empty()).collect();
+    let words: Vec<&str> = key
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .collect();
     for word in &words {
         if word.starts_with(query) {
             return SCORE_WORD_STARTS;
@@ -60,10 +66,7 @@ fn score(name: &str, query: &str) -> u8 {
     u8::MAX
 }
 
-pub fn champion_autocomplete_choices(
-    names: &[String],
-    query: &str,
-) -> Vec<(String, String)> {
+pub fn champion_autocomplete_choices(names: &[String], query: &str) -> Vec<(String, String)> {
     let query = normalize(query);
     if query.is_empty() {
         return Vec::new();
