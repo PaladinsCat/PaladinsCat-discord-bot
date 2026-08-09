@@ -120,6 +120,21 @@ impl ImageService {
         Ok(result)
     }
 
+    /// Return a completed match render without invoking the backend or browser.
+    /// This preserves the cache-first path for repeated match commands.
+    pub async fn cached_match(&self, match_id: &str) -> Option<Vec<u8>> {
+        let cache_key = format!(
+            "match:{}:summary:v{}",
+            match_id,
+            self.renderer.template_version()
+        );
+        self.cache
+            .get(&cache_key)
+            .await
+            .map(|cached| decode_b64(&cached))
+            .filter(|png| !png.is_empty())
+    }
+
     pub async fn render_web_match(
         &self,
         match_id: &str,
@@ -130,8 +145,8 @@ impl ImageService {
             match_id,
             self.renderer.template_version()
         );
-        if let Some(cached) = self.cache.get(&cache_key).await {
-            return Ok(decode_b64(&cached));
+        if let Some(cached) = self.cached_match(match_id).await {
+            return Ok(cached);
         }
         let result = self
             .queue

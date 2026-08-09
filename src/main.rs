@@ -40,9 +40,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ));
     let render_cache = Arc::new(cache::RenderCache::new(cfg.cache_bytes, cfg.cache_ttl_secs));
 
-    // Spawn health + preview server (shares ApiClient + RenderCache)
-    let _handle = health::spawn_server(cfg.health_port, api.clone(), render_cache.clone());
-
     // Initialize image service (optional — requires Chrome/Chromium on the host).
     // If CHROME_PATH is empty or browser fails to start, image rendering will be
     // unavailable but commands will continue to work with embed-only responses.
@@ -88,6 +85,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             None
         }
     };
+
+    // Spawn health + E2E preview server after the renderer exists so its match
+    // image route exercises the same cache and browser used by Discord.
+    let _handle = health::spawn_server(
+        cfg.health_port,
+        api.clone(),
+        render_cache.clone(),
+        image_service.clone(),
+        cfg.web_url.clone(),
+    );
 
     // Initialize Discord gateway. Slash commands arrive via InteractionCreate,
     // which requires only the GUILDS intent. MESSAGE_CONTENT is a privileged

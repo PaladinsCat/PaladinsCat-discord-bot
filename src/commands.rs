@@ -585,6 +585,22 @@ impl Handler {
                 return self.reply_text(interaction, message).await;
             }
         }
+        let url = format!("{}/matches/{}", self.web_url, id);
+        if let Some(images) = &self.image_service {
+            if let Some(png) = images.cached_match(&id).await {
+                let filename = format!("paladinscat-match-{}.png", id);
+                let description = format!("Paladins match {}", id);
+                self.send_webhook_image(
+                    &url,
+                    png,
+                    &filename,
+                    Some(&description),
+                    &interaction.token,
+                )
+                .await;
+                return;
+            }
+        }
         match self.api.match_info(&id).await {
             Ok(val) => {
                 let mode = val
@@ -599,7 +615,6 @@ impl Handler {
                     .get("duration")
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into());
-                let url = format!("{}/matches/{}", self.web_url, id);
                 let description = format!(
                     "**{}** · {}\nDuration: {}\n[View match]({})",
                     mode, map, duration, url

@@ -3,20 +3,23 @@
 //! Exposes:
 //!   GET /health                — status + performance metrics
 //!   GET /                        — root text ping
+//!   GET /matches/{id}/image     — canonical PNG render E2E surface
 //!   GET /preview/cmd/{command}  — HTTP dispatch of bot commands (mirrors TS bot test surfaces)
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 
 use crate::api::ApiClient;
 use crate::cache::RenderCache;
+use crate::image::ImageService;
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 
@@ -27,6 +30,8 @@ use crate::cache::RenderCache;
 pub struct AppState {
     pub api: Arc<ApiClient>,
     pub render_cache: Arc<RenderCache>,
+    pub image_service: Option<Arc<ImageService>>,
+    pub web_url: String,
 
     // Metrics (wrapped in Arc so AppState: Clone)
     commands_processed: Arc<AtomicU64>,
@@ -35,10 +40,17 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(api: Arc<ApiClient>, render_cache: Arc<RenderCache>) -> Self {
+    pub fn new(
+        api: Arc<ApiClient>,
+        render_cache: Arc<RenderCache>,
+        image_service: Option<Arc<ImageService>>,
+        web_url: String,
+    ) -> Self {
         Self {
             api,
             render_cache,
+            image_service,
+            web_url,
             commands_processed: Arc::new(AtomicU64::new(0)),
             last_latency_ms: Arc::new(AtomicU64::new(0)),
             total_latency_ms: Arc::new(AtomicU64::new(0)),
@@ -79,11 +91,14 @@ pub fn spawn_server(
     port: u16,
     api: Arc<ApiClient>,
     render_cache: Arc<RenderCache>,
+    image_service: Option<Arc<ImageService>>,
+    web_url: String,
 ) -> tokio::task::JoinHandle<Result<(), std::io::Error>> {
-    let state = AppState::new(api, render_cache);
+    let state = AppState::new(api, render_cache, image_service, web_url);
     let app = Router::new()
         .route("/health", get(health_handler))
         .route("/", get(root_handler))
+        .route("/matches/:id/image", get(match_image_handler))
         .route("/preview/cmd/:cmd", get(preview_cmd_handler))
         .with_state(state);
 
@@ -98,16 +113,79 @@ pub fn spawn_server(
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 async fn health_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let render = state.image_service.as_ref().map(|service| {
+        let snapshot = service.snapshot();
+        serde_json::json!({
+            "active": snapshot.queue.active,
+            "queued": snapshot.queue.queued,
+            "completed": snapshot.queue.completed,
+            "failed": snapshot.queue.failed,
+            "deduplicated": snapshot.queue.deduplicated,
+            "cache_entries": snapshot.cache_entries,
+            "cache_bytes": snapshot.cache_bytes,
+            "render_retries": snapshot.render_retries,
+            "browser_recoveries": snapshot.browser_recoveries
+        })
+    });
     Json(serde_json::json!({
         "status": "ok",
         "service": "paladinscat-discord-bot",
         "bot_mode": "rust",
-        "metrics": state.health_metrics()
+        "metrics": state.health_metrics(),
+        "render": render
     }))
 }
 
 async fn root_handler() -> String {
     "PaladinsCat Discord Bot — Health OK".to_string()
+}
+
+async fn match_image_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let started = Instant::now();
+    if !(6..=20).contains(&id.len()) || !id.chars().all(|c| c.is_ascii_digit()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Enter a valid numeric match ID."})),
+        )
+            .into_response();
+    }
+    let Some(images) = &state.image_service else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "The match renderer is unavailable."})),
+        )
+            .into_response();
+    };
+
+    if images.cached_match(&id).await.is_none() {
+        if let Err(error) = state.api.match_info(&id).await {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": error.message})),
+            )
+                .into_response();
+        }
+    }
+    let url = format!("{}/matches/{}", state.web_url.trim_end_matches('/'), id);
+    match images.render_web_match(&id, &url).await {
+        Ok(png) => {
+            state.record(started.elapsed().as_millis() as u64);
+            (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, "image/png"),
+                    (header::CACHE_CONTROL, "private, max-age=60"),
+                ],
+                png,
+            )
+                .into_response()
+        }
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": error.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 /// GET /preview/cmd/{command}?params…
