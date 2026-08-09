@@ -20,7 +20,7 @@ use twilight_model::http::interaction::{
     InteractionResponse, InteractionResponseData, InteractionResponseType,
 };
 
-use crate::api::ApiClient;
+use crate::api::{ApiClient, ApiError};
 use crate::cache::RenderCache;
 use crate::embeds;
 use crate::image::ImageService;
@@ -519,9 +519,12 @@ impl Handler {
                 // Fallback: edit the deferred response with the embed via webhook.
                 self.send_webhook(&embed, &[], &interaction.token).await;
             }
-            Err(_) => {
-                self.reply_text(interaction, format!("Match '{}' not found", id))
-                    .await;
+            Err(error) => {
+                self.reply_text(
+                    interaction,
+                    api_error_message(&error, &format!("Match '{}' not found", id)),
+                )
+                .await;
             }
         }
     }
@@ -545,15 +548,21 @@ impl Handler {
                     }
                     Err(e) => {
                         tracing::error!(player_id = id, err = %e, "player_history request failed");
-                        self.reply_text(interaction, "Failed to fetch match history")
-                            .await;
+                        self.reply_text(
+                            interaction,
+                            api_error_message(&e, "Failed to fetch match history"),
+                        )
+                        .await;
                     }
                 }
             }
             Err(e) => {
                 tracing::error!(player = name.as_str(), err = %e, "player lookup failed");
-                self.reply_text(interaction, format!("Player '{}' not found", name))
-                    .await;
+                self.reply_text(
+                    interaction,
+                    api_error_message(&e, &format!("Player '{}' not found", name)),
+                )
+                .await;
             }
         }
     }
@@ -567,9 +576,12 @@ impl Handler {
                 let embed = embeds::build_current_payload(&val, &self.web_url);
                 self.send_embed(interaction, embed).await;
             }
-            Err(_) => {
-                self.reply_text(interaction, format!("Player '{}' not found", name))
-                    .await;
+            Err(error) => {
+                self.reply_text(
+                    interaction,
+                    api_error_message(&error, &format!("Player '{}' not found", name)),
+                )
+                .await;
             }
         }
     }
@@ -931,4 +943,12 @@ fn value_id(value: Option<&Value>) -> Option<String> {
         Value::Number(number) => Some(number.to_string()),
         _ => None,
     })
+}
+
+fn api_error_message(error: &ApiError, fallback: &str) -> String {
+    if error.message == "The PaladinsCat service request failed." {
+        fallback.to_owned()
+    } else {
+        error.message.clone()
+    }
 }
