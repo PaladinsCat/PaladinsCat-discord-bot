@@ -48,7 +48,7 @@ const IMAGE_COOLDOWN_MS: i64 = 10 * 1000;
 /// Maximum time to wait for an image render before falling back to an embed.
 /// The interaction is deferred first, so this bounds only how long the user
 /// waits for the image (or the embed fallback), not Discord's 3s ACK window.
-const RENDER_TIMEOUT: Duration = Duration::from_secs(12);
+const RENDER_TIMEOUT: Duration = Duration::from_secs(22);
 
 /// Module-level session store.  Shared between command and component handlers.
 static LOADOUT_SESSIONS: LazyLock<RwLock<HashMap<String, LoadoutSession>>> =

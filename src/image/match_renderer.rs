@@ -38,6 +38,10 @@ const LOADOUT_TEMPLATE_VERSION: u32 = 9;
 /// Maximum time to wait for the browser debug port to appear.
 const BROWSER_START_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// Production is CPU-capped; allow the canonical Next.js page to hydrate
+/// within the service's 20-second render budget before recycling Chromium.
+const WEB_SCOREBOARD_READY_TIMEOUT: Duration = Duration::from_secs(12);
+
 /// Configuration for the match renderer.
 #[derive(Debug, Clone)]
 pub struct MatchRendererConfig {
@@ -141,7 +145,7 @@ impl MatchRenderer {
             .send("Page.navigate", json!({ "url": render_url }))
             .await?;
 
-        let deadline = Instant::now() + Duration::from_secs(6);
+        let deadline = Instant::now() + WEB_SCOREBOARD_READY_TIMEOUT;
         loop {
             match client
                 .execute("typeof window.__paladinscatMatchScoreboardPng === 'function'")
@@ -151,7 +155,17 @@ impl MatchRenderer {
                 _ if Instant::now() < deadline => {
                     tokio::time::sleep(Duration::from_millis(100)).await
                 }
-                _ => return Err(format!("Web scoreboard did not load: {url}").into()),
+                _ => {
+                    let state = client
+                        .execute(
+                            r#"JSON.stringify({ready:document.readyState,title:document.title,scoreboard:!!document.querySelector('#browser-scoreboard'),scripts:document.scripts.length})"#,
+                        )
+                        .await
+                        .ok()
+                        .and_then(|response| response.result["result"]["value"].as_str().map(str::to_owned))
+                        .unwrap_or_else(|| "unavailable".to_string());
+                    return Err(format!("Web scoreboard did not load: {url}; page={state}").into());
+                }
             }
         }
 
