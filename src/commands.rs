@@ -172,7 +172,10 @@ impl Handler {
             "current" => self.current(&interaction, &cmd_data.options).await,
             "loadout" => self.loadout(&interaction, &cmd_data.options).await,
             "champion" => self.champion(&interaction, &cmd_data.options).await,
-            "maps" | "composition" | "items" => self.stats(&interaction, &cmd_data.name).await,
+            "maps" | "composition" | "items" => {
+                self.stats(&interaction, &cmd_data.name, &cmd_data.options)
+                    .await
+            }
             "save" => self.save(&interaction, &cmd_data.options).await,
             other => {
                 tracing::debug!(command = other, "unknown command");
@@ -342,13 +345,67 @@ impl Handler {
 
     async fn save(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
         if let Some(n) = opt_string(opts, "player") {
-            self.reply_text(interaction, format!("Saved player: {}", n))
-                .await;
+            match self.api.discord_player(&n).await {
+                Ok(profile) => {
+                    let player = profile.get("player").unwrap_or(&profile);
+                    let Some(id) = player.get("id").and_then(|value| value.as_str()) else {
+                        return self
+                            .reply_text(interaction, format!("Player '{}' was not found", n))
+                            .await;
+                    };
+                    match self
+                        .api
+                        .save_discord_player(&extract_user_id(interaction).unwrap_or_default(), id)
+                        .await
+                    {
+                        Ok(saved) => {
+                            self.reply_text(
+                                interaction,
+                                format!(
+                                    "Saved **{}** (ID: `{}`) as your default player.",
+                                    saved.get("name").and_then(|v| v.as_str()).unwrap_or(&n),
+                                    id
+                                ),
+                            )
+                            .await
+                        }
+                        Err(_) => {
+                            self.reply_text(interaction, "Failed to save your default player")
+                                .await
+                        }
+                    }
+                }
+                Err(_) => {
+                    self.reply_text(interaction, format!("Player '{}' was not found", n))
+                        .await
+                }
+            }
+        }
+    }
+
+    async fn player_input(
+        &self,
+        interaction: &Interaction,
+        opts: &[CommandDataOption],
+    ) -> Option<String> {
+        if let Some(name) = opt_string(opts, "player") {
+            return Some(name);
+        }
+        match self
+            .api
+            .saved_discord_player(&extract_user_id(interaction).unwrap_or_default())
+            .await
+        {
+            Ok(player) => player
+                .get("id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            Err(_) => None,
         }
     }
 
     async fn player(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let Some(name) = opt_string(opts, "player") else {
+        let Some(name) = self.player_input(interaction, opts).await else {
             return self
                 .reply_text(interaction, "Provide a player name or ID")
                 .await;
@@ -402,7 +459,9 @@ impl Handler {
                     let match_url = url.clone();
                     let token = interaction.token.clone();
                     let embed_for_img = embed.clone();
-                    let render = async move { img.render_web_match(&match_id, &match_url).await };
+                    let renderer = Arc::clone(&img);
+                    let render =
+                        async move { renderer.render_web_match(&match_id, &match_url).await };
                     match tokio::time::timeout(RENDER_TIMEOUT, render).await {
                         Ok(Ok(png)) => {
                             self.send_followup_image(embed_for_img, png, "match.png", &token)
@@ -414,6 +473,10 @@ impl Handler {
                         }
                         Err(_) => {
                             tracing::warn!("match image render timed out — falling back to embed");
+                            // `timeout` drops the render future before its recovery wrapper
+                            // sees an error. Reset the shared browser so the next /match is
+                            // never queued behind a poisoned CDP page.
+                            img.recycle().await;
                         }
                     }
                 }
@@ -429,7 +492,7 @@ impl Handler {
     }
 
     async fn history(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let Some(name) = opt_string(opts, "player") else {
+        let Some(name) = self.player_input(interaction, opts).await else {
             return self.reply_text(interaction, "Provide a player name").await;
         };
         match self.api.player(&name).await {
@@ -461,7 +524,7 @@ impl Handler {
     }
 
     async fn current(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let Some(name) = opt_string(opts, "player") else {
+        let Some(name) = self.player_input(interaction, opts).await else {
             return self.reply_text(interaction, "Provide a player name").await;
         };
         match self.api.live_match(&name).await {
@@ -478,7 +541,7 @@ impl Handler {
 
     /// Handle `/loadout` — session-based select menu matching the TS bot 1:1.
     async fn loadout(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let Some(name) = opt_string(opts, "player") else {
+        let Some(name) = self.player_input(interaction, opts).await else {
             return self.reply_text(interaction, "Provide a player name").await;
         };
         let Some(champion) = opt_string(opts, "champion") else {
@@ -637,7 +700,7 @@ impl Handler {
         }
     }
 
-    async fn stats(&self, interaction: &Interaction, command: &str) {
+    async fn stats(&self, interaction: &Interaction, command: &str, opts: &[CommandDataOption]) {
         match command {
             "maps" => match self.api.ranked_maps(100).await {
                 Ok(rows) => {
@@ -659,17 +722,25 @@ impl Handler {
                         .await;
                 }
             },
-            "items" => match self.api.ranked_items(20).await {
-                Ok(rows) => {
-                    let embed =
-                        embeds::build_items_payload(&rows, &self.web_url, "Global ranked lobbies");
-                    self.send_embed(interaction, embed).await;
+            "items" => {
+                let scope = opt_string(opts, "lobby").unwrap_or_else(|| "global".to_string());
+                let lobby_label = match scope.as_str() {
+                    "bronze-gold" => "Bronze–Gold ranked lobbies",
+                    "platinum" => "Platinum ranked lobbies",
+                    "diamond" => "Diamond ranked lobbies",
+                    _ => "Global ranked lobbies",
+                };
+                match self.api.ranked_items(&scope, 20).await {
+                    Ok(rows) => {
+                        let embed = embeds::build_items_payload(&rows, &self.web_url, lobby_label);
+                        self.send_embed(interaction, embed).await;
+                    }
+                    Err(_) => {
+                        self.reply_text(interaction, "Failed to fetch item stats")
+                            .await;
+                    }
                 }
-                Err(_) => {
-                    self.reply_text(interaction, "Failed to fetch item stats")
-                        .await;
-                }
-            },
+            }
             _ => {
                 self.reply_text(interaction, format!("{} stats coming soon", command))
                     .await;

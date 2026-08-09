@@ -78,7 +78,10 @@ impl ImageService {
             renderer,
             cache: RenderCache::new(config.cache_bytes, config.cache_ttl_secs),
             queue: BoundedWorkQueue::new(
-                config.concurrency,
+                // The canonical exporter uses one shared CDP page. More queue
+                // permits only make later requests spend their budget waiting
+                // on `render_lock`; serialize here and report the wait.
+                1,
                 config.queue_limit,
                 config.timeout_ms,
                 "Render",
@@ -105,11 +108,13 @@ impl ImageService {
         }
 
         let result = self
-            .render_with_dedup(match_id, || async {
+            .queue
+            .add(match_id.to_string(), || async {
                 self.render_with_recovery(|| async { self.renderer.render(record).await })
                     .await
             })
-            .await?;
+            .await
+            .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)?;
 
         self.cache.set(cache_key, encode_b64(&result)).await;
         Ok(result)
@@ -129,11 +134,13 @@ impl ImageService {
             return Ok(decode_b64(&cached));
         }
         let result = self
-            .render_with_dedup(match_id, || async {
+            .queue
+            .add(match_id.to_string(), || async {
                 self.render_with_recovery(|| async { self.renderer.render_web_match(url).await })
                     .await
             })
-            .await?;
+            .await
+            .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)?;
         self.cache.set(cache_key, encode_b64(&result)).await;
         Ok(result)
     }
@@ -162,8 +169,13 @@ impl ImageService {
         }
 
         let result = self
-            .render_with_recovery(|| async { self.renderer.render_loadout(record).await })
-            .await?;
+            .queue
+            .add(cache_key.clone(), || async {
+                self.render_with_recovery(|| async { self.renderer.render_loadout(record).await })
+                    .await
+            })
+            .await
+            .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)?;
 
         self.cache.set(cache_key, encode_b64(&result)).await;
         Ok(result)
@@ -222,6 +234,13 @@ impl ImageService {
 
     pub async fn close(&self) {
         self.renderer.close().await;
+    }
+
+    /// Discard a renderer left mid-request by a caller-level timeout.
+    /// The command timeout cancels its future before `render_with_recovery`
+    /// can observe an error, so it must explicitly reset Chromium.
+    pub async fn recycle(&self) {
+        self.renderer.recycle().await;
     }
 
     pub fn snapshot(&self) -> ServiceSnapshot {

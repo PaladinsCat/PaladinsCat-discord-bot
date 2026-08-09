@@ -138,6 +138,43 @@ impl ApiClient {
         Ok(val)
     }
 
+    /// Return the default player saved for a Discord user.
+    pub async fn saved_discord_player(
+        &self,
+        discord_user_id: &str,
+    ) -> Result<serde_json::Value, reqwest::Error> {
+        let url = format!(
+            "{}/players/discord/saved-player?discordUserId={}",
+            self.base,
+            encode(discord_user_id)
+        );
+        let value = self.get_json(&url).await?;
+        Ok(value.get("player").cloned().unwrap_or(value))
+    }
+
+    /// Persist the authoritative player ID resolved by `/players/discord`.
+    pub async fn save_discord_player(
+        &self,
+        discord_user_id: &str,
+        player_id: &str,
+    ) -> Result<serde_json::Value, reqwest::Error> {
+        let url = format!("{}/players/discord/saved-player", self.base);
+        let mut req = self.inner.put(url).json(&serde_json::json!({
+            "discordUserId": discord_user_id,
+            "playerId": player_id,
+        }));
+        if let Some(token) = &self.service_token {
+            req = req.header("X-PaladinsCat-Service-Token", token);
+        }
+        let value = req
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<serde_json::Value>()
+            .await?;
+        Ok(value.get("player").cloned().unwrap_or(value))
+    }
+
     /// Resolve player name/ID to numeric ID and fetch profile.
     /// Used by history, loadout, current commands to get player ID.
     pub async fn player(&self, name: &str) -> Result<serde_json::Value, reqwest::Error> {
@@ -417,10 +454,17 @@ impl ApiClient {
     /// "global" scope → no tier filter appended.
     pub async fn ranked_items(
         &self,
+        scope: &str,
         limit: usize,
     ) -> Result<Vec<serde_json::Value>, reqwest::Error> {
         let clamped = clamp(limit, 1, 50);
-        let url = format!("{}/stats/items?mode=ranked&limit={}", self.base, clamped);
+        let tiers = lobby_scope_to_tiers(scope)
+            .map(|(min, max)| format!("&tierMin={min}&tierMax={max}"))
+            .unwrap_or_default();
+        let url = format!(
+            "{}/stats/items?mode=ranked&limit={}{}",
+            self.base, clamped, tiers
+        );
         let val = self.get_json(&url).await?;
         match &val {
             serde_json::Value::Array(arr) => Ok(arr.to_vec()),

@@ -344,7 +344,8 @@ async fn preview_composition(
 /// /preview/cmd/items?limit=N
 async fn preview_items(state: &AppState, params: &HashMap<String, String>) -> serde_json::Value {
     let limit = param_int(params, "limit", 10);
-    match state.api.ranked_items(limit).await {
+    let scope = params.get("lobby").map(String::as_str).unwrap_or("global");
+    match state.api.ranked_items(scope, limit).await {
         Ok(rows) => serde_json::json!({ "type": "items", "data": rows }),
         Err(_) => serde_json::json!({ "type": "items", "error": "Failed to fetch item stats" }),
     }

@@ -9,9 +9,11 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
+use tokio::sync::Semaphore;
 
 /// Error returned when the render queue is full.
 #[derive(Debug, Clone)]
@@ -59,18 +61,23 @@ struct QueueInner {
 ///
 /// Mirrors TS `BoundedWorkQueue<T>` from `render-queue.ts`.
 pub struct BoundedWorkQueue<T: Send + Clone + 'static> {
+    concurrency: usize,
     max_queued: usize,
     timeout_ms: u64,
     work_label: String,
     state: StdMutex<QueueInner>,
+    permits: Arc<Semaphore>,
+    active: AtomicUsize,
     /// In-flight deduplication: key → shared result holder.
     in_flight_map: StdMutex<HashMap<String, Arc<tokio::sync::Mutex<Option<T>>>>>,
 }
 
 impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
     /// Create a new bounded work queue.
-    pub fn new(_concurrency: usize, max_queued: usize, timeout_ms: u64, work_label: &str) -> Self {
+    pub fn new(concurrency: usize, max_queued: usize, timeout_ms: u64, work_label: &str) -> Self {
+        let concurrency = concurrency.max(1);
         Self {
+            concurrency,
             max_queued,
             timeout_ms,
             work_label: work_label.to_string(),
@@ -80,6 +87,8 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
                 deduplicated: 0,
                 durations: Vec::new(),
             }),
+            permits: Arc::new(Semaphore::new(concurrency)),
+            active: AtomicUsize::new(0),
             in_flight_map: StdMutex::new(HashMap::new()),
         }
     }
@@ -92,7 +101,7 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
     /// Add work to the queue with deduplication.
     pub async fn add<F, Fut>(&self, key: String, work: F) -> Result<T, QueueFullError>
     where
-        F: FnOnce() -> Fut + Send + 'static,
+        F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send,
     {
         // Check for in-flight deduplication
@@ -114,7 +123,7 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
         // Check queue capacity
         {
             let map = self.in_flight_map.lock().unwrap();
-            if map.len() >= self.max_queued {
+            if map.len() >= self.concurrency + self.max_queued {
                 return Err(QueueFullError {
                     message: format!("The {} queue is busy. Try again shortly.", self.work_label),
                 });
@@ -130,9 +139,20 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
             .unwrap()
             .insert(key.clone(), Arc::clone(&result_holder));
 
-        // Execute work with timeout
+        // Waiting for a permit is queued work; its timeout starts only after
+        // execution begins, matching the legacy TypeScript queue.
+        let _permit = self
+            .permits
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| QueueFullError {
+                message: format!("The {} queue is closed.", self.work_label),
+            })?;
+        self.active.fetch_add(1, Ordering::Relaxed);
         let started = Instant::now();
         let result = tokio::time::timeout(Duration::from_millis(self.timeout_ms), work()).await;
+        self.active.fetch_sub(1, Ordering::Relaxed);
 
         match result {
             Ok(Ok(value)) => {
@@ -244,8 +264,8 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
         };
 
         QueueSnapshot {
-            active: map_len,
-            queued: 0,
+            active: self.active.load(Ordering::Relaxed),
+            queued: map_len.saturating_sub(self.active.load(Ordering::Relaxed)),
             completed: state.completed,
             failed: state.failed,
             deduplicated: state.deduplicated,
