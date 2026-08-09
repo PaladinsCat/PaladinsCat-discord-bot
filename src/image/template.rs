@@ -78,6 +78,47 @@ fn bool_of(value: Option<&serde_json::Value>) -> bool {
     }
 }
 
+fn asset_mime(path: &std::path::Path, bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return "image/png";
+    }
+    if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        return "image/webp";
+    }
+    if bytes.starts_with(b"\xff\xd8\xff") {
+        return "image/jpeg";
+    }
+    if bytes.get(4..8) == Some(b"ftyp")
+        && bytes
+            .get(8..32)
+            .is_some_and(|brands| brands.windows(4).any(|brand| brand == b"avif"))
+    {
+        return "image/avif";
+    }
+    let trimmed = bytes
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .map(|index| &bytes[index..])
+        .unwrap_or(bytes);
+    if trimmed.starts_with(b"<svg") || trimmed.starts_with(b"<?xml") {
+        return "image/svg+xml";
+    }
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
 fn compact(value: i64) -> String {
     if value.abs() >= 1000 {
         format!("{:.1}k", value as f64 / 1000.0)
@@ -346,20 +387,7 @@ impl TemplateEngine {
         let Ok(bytes) = fs::read(&path) else {
             return TRANSPARENT.to_string();
         };
-        let mime = match path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "png" => "image/png",
-            "jpg" | "jpeg" => "image/jpeg",
-            "webp" => "image/webp",
-            "avif" => "image/avif",
-            "svg" => "image/svg+xml",
-            _ => "application/octet-stream",
-        };
+        let mime = asset_mime(&path, &bytes);
         format!(
             "data:{mime};base64,{}",
             base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -1158,6 +1186,21 @@ mod tests {
         assert_eq!(
             scale_card_description("Gain {1,000|250.5} Health.", 3),
             "Gain 1,501 Health."
+        );
+    }
+
+    #[test]
+    fn asset_mime_uses_file_signature_before_misleading_extension() {
+        assert_eq!(
+            asset_mime(
+                std::path::Path::new("card.png"),
+                b"RIFF\x10\x00\x00\x00WEBPVP8 "
+            ),
+            "image/webp"
+        );
+        assert_eq!(
+            asset_mime(std::path::Path::new("card.avif"), b"\x89PNG\r\n\x1a\nrest"),
+            "image/png"
         );
     }
 

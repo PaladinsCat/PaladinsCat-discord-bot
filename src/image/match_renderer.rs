@@ -827,12 +827,12 @@ mod tests {
         let record = serde_json::json!({
             "player": {"id": "16706730", "name": "NabiCookTV"},
             "loadout": {
-                "id": "7968",
-                "champion_id": 2205,
-                "champion_name": "Androxus",
-                "loadout_name": "New Loadout",
-                "card_ids": [11928, 13316, 13293, 13290, 13322],
-                "card_levels": [5, 5, 2, 2, 1]
+                "id": "ying-regression",
+                "champion_id": 2267,
+                "champion_name": "Ying",
+                "loadout_name": "PALADINSCAT.COM",
+                "card_ids": [13385, 13405, 15069, 15068, 13411],
+                "card_levels": [4, 2, 3, 2, 4]
             }
         });
         let png = renderer
@@ -853,6 +853,21 @@ mod tests {
             white_ratio < 0.25,
             "loadout is unexpectedly white: {white_ratio:.1}"
         );
+        for card_index in 0..5 {
+            let left = 16 + card_index * 250;
+            let mut colored = 0;
+            for x in left + 25..left + 220 {
+                for y in 290..410 {
+                    if image.get_pixel(x, y).0.iter().any(|channel| *channel > 45) {
+                        colored += 1;
+                    }
+                }
+            }
+            assert!(
+                colored > 4_000,
+                "loadout card {card_index} artwork is blank ({colored} colored pixels)"
+            );
+        }
         renderer.close().await;
     }
 
