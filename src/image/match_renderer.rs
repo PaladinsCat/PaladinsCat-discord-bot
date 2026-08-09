@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::image::cdp_client::{decode_base64_png, CdpClient};
+use crate::image::cdp_client::CdpClient;
 use crate::image::template::TemplateEngine;
 
 /// Page dimensions for rendering.
@@ -38,9 +38,30 @@ const LOADOUT_TEMPLATE_VERSION: u32 = 9;
 /// Maximum time to wait for the browser debug port to appear.
 const BROWSER_START_TIMEOUT: Duration = Duration::from_secs(8);
 
-/// Production is CPU-capped; allow the canonical Next.js page to hydrate
-/// within the service's 20-second render budget before recycling Chromium.
-const WEB_SCOREBOARD_READY_TIMEOUT: Duration = Duration::from_secs(12);
+const WEB_SCOREBOARD_EXPORT_TIMEOUT: Duration = Duration::from_secs(18);
+const WEB_SCOREBOARD_READY_TITLE: &str = "PALADINSCAT_SCOREBOARD_EXPORT_READY";
+const WEB_SCOREBOARD_BOOTSTRAP: &str = r#"(() => {
+  const timer = setInterval(async () => {
+    if (window.__paladinscatExportStarted || typeof window.__paladinscatMatchScoreboardPng !== 'function') return;
+    window.__paladinscatExportStarted = true;
+    clearInterval(timer);
+    try {
+      const href = await window.__paladinscatMatchScoreboardPng();
+      const image = new Image();
+      image.onload = () => {
+        document.documentElement.style.cssText = 'margin:0;width:2048px;height:1152px;overflow:hidden;background:#161618';
+        document.body.style.cssText = 'margin:0;width:2048px;height:1152px;overflow:hidden';
+        image.style.cssText = 'display:block;width:2048px;height:1152px';
+        document.body.replaceChildren(image);
+        document.title = 'PALADINSCAT_SCOREBOARD_EXPORT_READY';
+      };
+      image.src = href;
+    } catch (_) {
+      window.__paladinscatExportStarted = false;
+    }
+  }, 100);
+  setTimeout(() => clearInterval(timer), 18000);
+})()"#;
 
 /// Configuration for the match renderer.
 #[derive(Debug, Clone)]
@@ -136,6 +157,16 @@ impl MatchRenderer {
         let _render_guard = self.render_lock.lock().await;
         let client = self.ensure_browser().await?;
         client.set_device_scale_factor(1.0, WIDTH, HEIGHT).await?;
+        let bootstrap = client
+            .send(
+                "Page.addScriptToEvaluateOnNewDocument",
+                json!({ "source": WEB_SCOREBOARD_BOOTSTRAP }),
+            )
+            .await?;
+        if let Some(error) = bootstrap.error {
+            return Err(format!("Could not install scoreboard exporter: {error}").into());
+        }
+        let script_id = bootstrap.result["identifier"].as_str().map(str::to_owned);
         // Discord links remain public. Compose config may supply an internal
         // frontend origin for Chromium when the public edge rejects automation.
         // The path/query remain exact and no rewrite occurs without that origin.
@@ -145,48 +176,26 @@ impl MatchRenderer {
             .send("Page.navigate", json!({ "url": render_url }))
             .await?;
 
-        // Page.navigate acknowledges the request before Chromium swaps the
-        // execution context. Evaluating immediately can target the outgoing
-        // context and hang until the CDP command timeout on slower hosts.
-        tokio::time::sleep(Duration::from_secs(2)).await;
-
-        let deadline = Instant::now() + WEB_SCOREBOARD_READY_TIMEOUT;
-        loop {
-            match client
-                .execute("typeof window.__paladinscatMatchScoreboardPng === 'function'")
-                .await
-            {
-                Ok(response) if response.result["result"]["value"] == Value::Bool(true) => break,
-                _ if Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_millis(100)).await
-                }
-                _ => {
-                    let state = client
-                        .execute(
-                            r#"JSON.stringify({ready:document.readyState,title:document.title,scoreboard:!!document.querySelector('#browser-scoreboard'),scripts:document.scripts.length})"#,
-                        )
-                        .await
-                        .ok()
-                        .and_then(|response| response.result["result"]["value"].as_str().map(str::to_owned))
-                        .unwrap_or_else(|| "unavailable".to_string());
-                    return Err(format!("Web scoreboard did not load: {url}; page={state}").into());
-                }
+        let deadline = Instant::now() + WEB_SCOREBOARD_EXPORT_TIMEOUT;
+        let result = loop {
+            if page_target_has_title(self.discover_debug_port(), WEB_SCOREBOARD_READY_TITLE).await {
+                client.set_device_scale_factor(1.0, 2048, 1152).await?;
+                break client.screenshot().await;
+            } else if Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(100)).await
+            } else {
+                break Err(format!("Web scoreboard did not export: {url}").into());
             }
+        };
+        if let Some(identifier) = script_id {
+            let _ = client
+                .send(
+                    "Page.removeScriptToEvaluateOnNewDocument",
+                    json!({ "identifier": identifier }),
+                )
+                .await;
         }
-
-        let response = client
-            .execute_await("window.__paladinscatMatchScoreboardPng()")
-            .await?;
-        if let Some(error) = response.error {
-            return Err(format!("Web scoreboard export failed: {error}").into());
-        }
-        let data_url = response.result["result"]["value"]
-            .as_str()
-            .ok_or("Web scoreboard exporter returned no PNG")?;
-        let payload = data_url
-            .strip_prefix("data:image/png;base64,")
-            .ok_or("Web scoreboard exporter returned an invalid data URL")?;
-        decode_base64_png(payload).map_err(|error| error.into())
+        result
     }
 
     /// Render a loadout card JSON record to PNG bytes.
@@ -395,6 +404,12 @@ impl MatchRenderer {
         ws_url: String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let client = CdpClient::connect(ws_url).await?;
+        for domain in ["Page.enable", "Runtime.enable"] {
+            let response = client.send(domain, json!({})).await?;
+            if let Some(error) = response.error {
+                return Err(format!("Could not initialize CDP domain {domain}: {error}").into());
+            }
+        }
         let mut guard = self.cdp_client.lock().unwrap();
         *guard = Some(Arc::new(client));
         Ok(())
@@ -529,6 +544,21 @@ async fn resolve_page_ws_url(
         .as_str()
         .ok_or("No webSocketDebuggerUrl in /json/new response")?;
     Ok(ws.to_string())
+}
+
+async fn page_target_has_title(port: u16, expected: &str) -> bool {
+    let url = format!("http://127.0.0.1:{port}/json/list");
+    let Ok(response) = reqwest::get(url).await else {
+        return false;
+    };
+    let Ok(targets) = response.json::<Value>().await else {
+        return false;
+    };
+    targets.as_array().is_some_and(|targets| {
+        targets
+            .iter()
+            .any(|target| target["type"] == "page" && target["title"].as_str() == Some(expected))
+    })
 }
 
 /// Build a base64 `data:text/html;base64,...` URI from raw HTML. Base64-encoding
