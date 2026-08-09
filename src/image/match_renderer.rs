@@ -40,13 +40,20 @@ const BROWSER_START_TIMEOUT: Duration = Duration::from_secs(8);
 
 const WEB_SCOREBOARD_EXPORT_TIMEOUT: Duration = Duration::from_secs(18);
 const WEB_SCOREBOARD_READY_TITLE: &str = "PALADINSCAT_SCOREBOARD_EXPORT_READY";
+const WEB_SCOREBOARD_ERROR_TITLE: &str = "PALADINSCAT_SCOREBOARD_EXPORT_ERROR:";
 const WEB_SCOREBOARD_BOOTSTRAP: &str = r#"(() => {
   const timer = setInterval(async () => {
-    if (window.__paladinscatExportStarted || typeof window.__paladinscatMatchScoreboardPng !== 'function') return;
+    if (window.__paladinscatExportStarted) return;
+    if (typeof window.__paladinscatMatchScoreboardPng !== 'function') {
+      document.title = 'PALADINSCAT_SCOREBOARD_EXPORT_WAITING';
+      return;
+    }
     window.__paladinscatExportStarted = true;
     clearInterval(timer);
+    document.title = 'PALADINSCAT_SCOREBOARD_EXPORTING';
     try {
       const href = await window.__paladinscatMatchScoreboardPng();
+      document.title = 'PALADINSCAT_SCOREBOARD_DATA_READY';
       const image = new Image();
       image.onload = () => {
         document.documentElement.style.cssText = 'margin:0;width:2048px;height:1152px;overflow:hidden;background:#161618';
@@ -55,9 +62,11 @@ const WEB_SCOREBOARD_BOOTSTRAP: &str = r#"(() => {
         document.body.replaceChildren(image);
         document.title = 'PALADINSCAT_SCOREBOARD_EXPORT_READY';
       };
+      image.onerror = () => { document.title = 'PALADINSCAT_SCOREBOARD_EXPORT_ERROR:image-load'; };
       image.src = href;
-    } catch (_) {
-      window.__paladinscatExportStarted = false;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      document.title = 'PALADINSCAT_SCOREBOARD_EXPORT_ERROR:' + message.slice(0, 120);
     }
   }, 100);
   setTimeout(() => clearInterval(timer), 18000);
@@ -177,14 +186,20 @@ impl MatchRenderer {
             .await?;
 
         let deadline = Instant::now() + WEB_SCOREBOARD_EXPORT_TIMEOUT;
+        let mut last_title = String::new();
         let result = loop {
-            if page_target_has_title(self.discover_debug_port(), WEB_SCOREBOARD_READY_TITLE).await {
+            if let Some(title) = page_target_title(self.discover_debug_port()).await {
+                last_title = title;
+            }
+            if last_title == WEB_SCOREBOARD_READY_TITLE {
                 client.set_device_scale_factor(1.0, 2048, 1152).await?;
                 break client.screenshot().await;
+            } else if let Some(message) = last_title.strip_prefix(WEB_SCOREBOARD_ERROR_TITLE) {
+                break Err(format!("Web scoreboard export failed: {message}").into());
             } else if Instant::now() < deadline {
                 tokio::time::sleep(Duration::from_millis(100)).await
             } else {
-                break Err(format!("Web scoreboard did not export: {url}").into());
+                break Err(format!("Web scoreboard did not export ({last_title}): {url}").into());
             }
         };
         if let Some(identifier) = script_id {
@@ -546,18 +561,18 @@ async fn resolve_page_ws_url(
     Ok(ws.to_string())
 }
 
-async fn page_target_has_title(port: u16, expected: &str) -> bool {
+async fn page_target_title(port: u16) -> Option<String> {
     let url = format!("http://127.0.0.1:{port}/json/list");
     let Ok(response) = reqwest::get(url).await else {
-        return false;
+        return None;
     };
     let Ok(targets) = response.json::<Value>().await else {
-        return false;
+        return None;
     };
-    targets.as_array().is_some_and(|targets| {
-        targets
-            .iter()
-            .any(|target| target["type"] == "page" && target["title"].as_str() == Some(expected))
+    targets.as_array()?.iter().find_map(|target| {
+        (target["type"] == "page")
+            .then(|| target["title"].as_str().map(str::to_owned))
+            .flatten()
     })
 }
 
