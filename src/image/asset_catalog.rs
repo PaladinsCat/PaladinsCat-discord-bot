@@ -17,6 +17,25 @@ fn is_image_ext(path: &Path) -> bool {
         Some(ref ext) if ext == "png" || ext == "webp" || ext == "jpg" || ext == "jpeg" || ext == "avif")
 }
 
+fn image_format_priority(path: &Path) -> u8 {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("avif") => 0,
+        Some("png") => 1,
+        Some("webp") => 2,
+        Some("jpg" | "jpeg") => 3,
+        _ => 4,
+    }
+}
+
+fn preferred_image<'a>(files: impl Iterator<Item = &'a PathBuf>) -> Option<&'a PathBuf> {
+    files.min_by_key(|path| image_format_priority(path))
+}
+
 #[derive(Clone)]
 pub struct AssetCatalog {
     root: PathBuf,
@@ -100,20 +119,18 @@ impl AssetCatalog {
         }
         let files = self.load_champion_files();
         let wanted = normalized(&format!("champion {} icon", champion_name));
-        let result = files
-            .iter()
-            .find(|f| {
-                f.file_stem()
-                    .map(|s| normalized(&s.to_string_lossy()) == wanted)
-                    .unwrap_or(false)
-            })
-            .or_else(|| {
-                files.iter().find(|f| {
-                    let n = normalized(&f.to_string_lossy());
-                    n.contains(&normalized(champion_name)) && n.contains("icon")
-                })
-            })
-            .cloned();
+        let result = preferred_image(files.iter().filter(|f| {
+            f.file_stem()
+                .map(|s| normalized(&s.to_string_lossy()) == wanted)
+                .unwrap_or(false)
+        }))
+        .or_else(|| {
+            preferred_image(files.iter().filter(|f| {
+                let n = normalized(&f.to_string_lossy());
+                n.contains(&normalized(champion_name)) && n.contains("icon")
+            }))
+        })
+        .cloned();
         self.champion_icons
             .write()
             .unwrap()
@@ -128,23 +145,13 @@ impl AssetCatalog {
         }
         let files = self.load_champion_files();
         let wanted = normalized(&format!("banner {}", champion_name));
-        let result = files
-            .iter()
-            .filter(|f| {
-                f.file_stem()
-                    .map(|s| normalized(&s.to_string_lossy()) == wanted)
-                    .unwrap_or(false)
-            })
-            .find(|f| f.extension().map(|e| e == "png").unwrap_or(false))
-            .or_else(|| {
-                files.iter().find(|f| {
-                    f.file_stem()
-                        .map(|s| normalized(&s.to_string_lossy()) == wanted)
-                        .unwrap_or(false)
-                })
-            })
-            .cloned()
-            .or_else(|| self.champion_icon(champion_name));
+        let result = preferred_image(files.iter().filter(|f| {
+            f.file_stem()
+                .map(|s| normalized(&s.to_string_lossy()) == wanted)
+                .unwrap_or(false)
+        }))
+        .cloned()
+        .or_else(|| self.champion_icon(champion_name));
         self.champion_banners
             .write()
             .unwrap()
@@ -174,22 +181,12 @@ impl AssetCatalog {
             &format!("{} {}", champion_name, talent_name)
         };
         let wanted = normalized(&format!("talent {}", asset_name));
-        let result = files
-            .iter()
-            .filter(|f| {
-                f.file_stem()
-                    .map(|s| normalized(&s.to_string_lossy()) == wanted)
-                    .unwrap_or(false)
-            })
-            .find(|f| f.extension().map(|e| e == "png").unwrap_or(false))
-            .or_else(|| {
-                files.iter().find(|f| {
-                    f.file_stem()
-                        .map(|s| normalized(&s.to_string_lossy()) == wanted)
-                        .unwrap_or(false)
-                })
-            })
-            .cloned();
+        let result = preferred_image(files.iter().filter(|f| {
+            f.file_stem()
+                .map(|s| normalized(&s.to_string_lossy()) == wanted)
+                .unwrap_or(false)
+        }))
+        .cloned();
         self.talent_icons
             .write()
             .unwrap()
@@ -211,28 +208,27 @@ impl AssetCatalog {
             return v.clone();
         }
         let files = self.load_map_files();
-        let result = files
-            .iter()
-            .find(|f| {
-                f.file_stem()
-                    .map(|s| {
-                        normalized(&s.to_string_lossy())
-                            == normalized(&format!("ranked {}", wanted))
-                    })
-                    .unwrap_or(false)
-            })
-            .or_else(|| {
-                files.iter().find(|f| {
-                    let n = normalized(&f.to_string_lossy());
-                    n.contains(&wanted) && n.contains("ranked")
+        let result = preferred_image(files.iter().filter(|f| {
+            f.file_stem()
+                .map(|s| {
+                    normalized(&s.to_string_lossy()) == normalized(&format!("ranked {}", wanted))
                 })
-            })
-            .or_else(|| {
+                .unwrap_or(false)
+        }))
+        .or_else(|| {
+            preferred_image(files.iter().filter(|f| {
+                let n = normalized(&f.to_string_lossy());
+                n.contains(&wanted) && n.contains("ranked")
+            }))
+        })
+        .or_else(|| {
+            preferred_image(
                 files
                     .iter()
-                    .find(|f| normalized(&f.to_string_lossy()).contains(&wanted))
-            })
-            .cloned();
+                    .filter(|f| normalized(&f.to_string_lossy()).contains(&wanted)),
+            )
+        })
+        .cloned();
         self.map_images
             .write()
             .unwrap()
@@ -246,33 +242,37 @@ impl AssetCatalog {
         }
         let files = self.load_rank_files();
         let result = if tier == 0 {
-            files
-                .iter()
-                .find(|f| normalized(&f.to_string_lossy()).contains("rankiconqualifying"))
-                .cloned()
+            preferred_image(
+                files
+                    .iter()
+                    .filter(|f| normalized(&f.to_string_lossy()).contains("rankiconqualifying")),
+            )
+            .cloned()
         } else if tier >= 27 {
-            files
-                .iter()
-                .find(|f| normalized(&f.to_string_lossy()).contains("rankicongrandmaster"))
-                .cloned()
+            preferred_image(
+                files
+                    .iter()
+                    .filter(|f| normalized(&f.to_string_lossy()).contains("rankicongrandmaster")),
+            )
+            .cloned()
         } else if tier == 26 {
-            files
-                .iter()
-                .find(|f| normalized(&f.to_string_lossy()).contains("rankiconmaster"))
-                .cloned()
+            preferred_image(
+                files
+                    .iter()
+                    .filter(|f| normalized(&f.to_string_lossy()).contains("rankiconmaster")),
+            )
+            .cloned()
         } else {
             let groups = ["Bronze", "Silver", "Gold", "Platinum", "Diamond"];
             let group = (tier.saturating_sub(1) / 5).min(4) as usize;
             let division = 5 - ((tier.saturating_sub(1)) % 5);
             let wanted = normalized(&format!("rankicon {} {}", groups[group], division));
-            files
-                .iter()
-                .find(|f| {
-                    f.file_stem()
-                        .map(|s| normalized(&s.to_string_lossy()) == wanted)
-                        .unwrap_or(false)
-                })
-                .cloned()
+            preferred_image(files.iter().filter(|f| {
+                f.file_stem()
+                    .map(|s| normalized(&s.to_string_lossy()) == wanted)
+                    .unwrap_or(false)
+            }))
+            .cloned()
         };
         self.rank_icons
             .write()
@@ -303,14 +303,12 @@ impl AssetCatalog {
             })
             .cloned()
             .or_else(|| {
-                files
-                    .iter()
-                    .find(|f| {
-                        f.file_stem()
-                            .map(|s| normalized(&s.to_string_lossy()) == wanted)
-                            .unwrap_or(false)
-                    })
-                    .cloned()
+                preferred_image(files.iter().filter(|f| {
+                    f.file_stem()
+                        .map(|s| normalized(&s.to_string_lossy()) == wanted)
+                        .unwrap_or(false)
+                }))
+                .cloned()
             });
         self.icons.write().unwrap().insert(key, result.clone());
         result
@@ -357,6 +355,10 @@ impl AssetCatalog {
                     .get("iconUrl")
                     .and_then(|v| v.as_str())
                     .and_then(|url| self.resolve_public_image_path(url));
+                let avif = canonical
+                    .as_ref()
+                    .map(|path| path.with_extension("avif"))
+                    .filter(|path| path.exists());
                 let png = canonical
                     .as_ref()
                     .map(|path| path.with_extension("png"))
@@ -379,7 +381,7 @@ impl AssetCatalog {
                             .and_then(|v| v.as_str())
                             .unwrap_or_default()
                             .to_string(),
-                        icon_path: png.or(canonical),
+                        icon_path: avif.or(png).or(canonical),
                         name,
                     },
                 ))
@@ -458,11 +460,11 @@ impl AssetCatalog {
                     return None;
                 }
                 let path = row
-                    .get("pngUrl")
+                    .get("iconUrl")
                     .and_then(|v| v.as_str())
                     .and_then(|url| self.public_image_path(url))
                     .or_else(|| {
-                        row.get("iconUrl")
+                        row.get("pngUrl")
                             .and_then(|v| v.as_str())
                             .and_then(|url| self.public_image_path(url))
                     })?;
@@ -555,7 +557,42 @@ impl AssetCatalog {
 
 #[cfg(test)]
 mod tests {
-    use super::AssetCatalog;
+    use super::{preferred_image, AssetCatalog};
+
+    #[test]
+    fn asset_selection_prefers_avif_over_png() {
+        let files = ["asset.png", "asset.avif", "asset.webp"]
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            preferred_image(files.iter()).and_then(|path| path.extension()),
+            Some(std::ffi::OsStr::new("avif"))
+        );
+    }
+
+    #[test]
+    fn loadout_card_prefers_avif_when_both_formats_exist() {
+        let fixture =
+            std::env::temp_dir().join(format!("paladinscat-card-catalog-{}", uuid::Uuid::new_v4()));
+        let images = fixture.join("images");
+        let cards = images.join("cards");
+        let data = fixture.join("data");
+        std::fs::create_dir_all(&cards).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(cards.join("Card_Test.avif"), b"avif-fixture").unwrap();
+        std::fs::write(cards.join("Card_Test.png"), b"png-fixture").unwrap();
+        std::fs::write(
+            data.join("paladins-card-reference.json"),
+            br#"[{"id":42,"name":"Test","iconUrl":"/images/cards/Card_Test.avif"}]"#,
+        )
+        .unwrap();
+
+        let asset = AssetCatalog::new(&images).loadout_card(42).unwrap();
+        assert_eq!(asset.icon_path, Some(cards.join("Card_Test.avif")));
+
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
 
     #[test]
     fn resolves_packaged_png_when_referenced_avif_is_absent() {

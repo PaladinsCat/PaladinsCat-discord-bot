@@ -26,21 +26,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY --from=builder /app/target/release/paladinscat-discord-bot .
 COPY dev/prototypes/ dev/prototypes/
-COPY ["src/frontend/public/images/champions/Champion * Icon.avif", "src/frontend/public/images/champions/"]
+COPY ["src/frontend/public/images/champions/Champion * Icon.*", "src/frontend/public/images/champions/"]
 COPY ["src/frontend/public/images/champions/Banner_*", "src/frontend/public/images/champions/"]
-COPY ["src/frontend/public/images/champions/Talent*.png", "src/frontend/public/images/champions/"]
-COPY ["src/frontend/public/images/maps/Match_*.avif", "src/frontend/public/images/maps/"]
+COPY ["src/frontend/public/images/champions/Talent*", "src/frontend/public/images/champions/"]
+COPY ["src/frontend/public/images/maps/Match_*", "src/frontend/public/images/maps/"]
 COPY src/frontend/public/images/cards/ src/frontend/public/images/cards/
 COPY src/frontend/public/images/rank-tiers/ src/frontend/public/images/rank-tiers/
 COPY src/frontend/public/images/icons/ src/frontend/public/images/icons/
 COPY src/frontend/public/data/champion-data.json src/frontend/public/data/
 COPY src/frontend/public/data/paladins-card-reference.json src/frontend/public/data/
 COPY src/frontend/public/data/paladins-loadout-frame-reference.json src/frontend/public/data/
-RUN test "$(find src/frontend/public/images/cards -maxdepth 1 -type f -name 'Card_*.png' | wc -l)" -ge 900 && \
+RUN test "$(find src/frontend/public/images/cards -maxdepth 1 -type f -name 'Card_*.avif' | wc -l)" -ge 900 && \
+    test "$(find src/frontend/public/images/cards -maxdepth 1 -type f -name 'Card_*.png' | wc -l)" -ge 900 && \
+    test "$(find src/frontend/public/images/champions -maxdepth 1 -type f -name 'Banner_*.avif' | wc -l)" -ge 30 && \
     test "$(find src/frontend/public/images/champions -maxdepth 1 -type f -name 'Banner_*.png' | wc -l)" -ge 30 && \
+    test -f src/frontend/public/images/cards/Card_Carry_On.avif && \
     test -f src/frontend/public/images/cards/Card_Carry_On.png && \
+    test -f src/frontend/public/images/cards/Card_Intense_Training.avif && \
     test -f src/frontend/public/images/cards/Card_Intense_Training.png && \
+    test -f src/frontend/public/images/champions/Banner_Ying.avif && \
     test -f src/frontend/public/images/champions/Banner_Ying.png && \
+    test -f src/frontend/public/images/champions/Banner_Cassie.avif && \
     test -f src/frontend/public/images/champions/Banner_Cassie.png
 
 EXPOSE 3020

@@ -688,7 +688,7 @@ impl TemplateEngine {
             let verification_badge = if verified {
                 format!(
                     "<img class=\"verified-player-icon\" src=\"{}\" alt=\"Verified PaladinsCat player\"/>",
-                    self.asset_url(self.assets.icon("Verified_Player_Support_Icon", Some("png")))
+                    self.asset_url(self.assets.icon("Verified_Player_Support_Icon", Some("avif")))
                 )
             } else {
                 String::new()
