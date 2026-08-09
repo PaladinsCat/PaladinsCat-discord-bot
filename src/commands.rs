@@ -9,14 +9,14 @@ use serde_json::Value;
 use twilight_gateway::Event;
 use twilight_http::Client as HttpClient;
 use twilight_model::application::interaction::{
-    application_command::{CommandData, CommandDataOption, CommandOptionValue},
     Interaction, InteractionData, InteractionType,
+    application_command::{CommandData, CommandDataOption, CommandOptionValue},
 };
+use twilight_model::channel::message::MessageFlags;
 use twilight_model::channel::message::component::{
     ActionRow, Component, SelectMenu, SelectMenuOption, SelectMenuType,
 };
 use twilight_model::channel::message::embed::Embed;
-use twilight_model::channel::message::MessageFlags;
 use twilight_model::http::interaction::{
     InteractionResponse, InteractionResponseData, InteractionResponseType,
 };
@@ -34,6 +34,11 @@ struct LoadoutSession {
     player: Value,
     loadouts: Vec<Value>,
     expires_at: u64,
+}
+
+struct PlayerInput {
+    query: String,
+    resolved: Option<Value>,
 }
 
 /// 5-minute TTL for loadout sessions.
@@ -485,9 +490,14 @@ impl Handler {
                     {
                         Ok(saved) => {
                             let name = saved.get("name").and_then(|v| v.as_str()).unwrap_or(&n);
+                            let safe_name: String =
+                                embeds::clean_discord_text(&Value::String(name.to_string()), &n)
+                                    .chars()
+                                    .take(100)
+                                    .collect();
                             let id = value_id(saved.get("id")).unwrap_or(player_id);
                             self.reply_text(interaction, format!(
-                        "Saved **{}** (ID: `{}`) as your default player. Player commands will use it whenever you omit the player option.", name, id
+                        "Saved **{}** (ID: `{}`) as your default player. Player commands will use it whenever you omit the player option.", safe_name, id
                     )).await
                         }
                         Err(error) => {
@@ -514,16 +524,24 @@ impl Handler {
         &self,
         interaction: &Interaction,
         opts: &[CommandDataOption],
-    ) -> Result<String, String> {
+    ) -> Result<PlayerInput, String> {
         if let Some(name) = opt_string(opts, "player") {
-            return Ok(name);
+            return Ok(PlayerInput {
+                query: name.trim().to_string(),
+                resolved: None,
+            });
         }
         match self
             .api
             .saved_discord_player(&extract_user_id(interaction).unwrap_or_default())
             .await
         {
-            Ok(player) => value_id(player.get("id")).ok_or_else(missing_saved_player_message),
+            Ok(player) => value_id(player.get("id"))
+                .map(|query| PlayerInput {
+                    query,
+                    resolved: Some(player),
+                })
+                .ok_or_else(missing_saved_player_message),
             Err(error) if error.status == Some(404) => Err(missing_saved_player_message()),
             Err(error) => Err(api_error_message(
                 &error,
@@ -533,20 +551,20 @@ impl Handler {
     }
 
     async fn player(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let name = match self.player_input(interaction, opts).await {
-            Ok(name) => name,
+        let input = match self.player_input(interaction, opts).await {
+            Ok(input) => input,
             Err(message) => return self.reply_text(interaction, message).await,
         };
-        match self.api.discord_player(&name).await {
+        match self.api.discord_player(&input.query).await {
             Ok(val) => {
                 let embed = embeds::build_player_profile(&val, &self.web_url);
                 self.send_embed(interaction, embed).await;
             }
             Err(e) => {
-                tracing::error!(player = %name, err = %e, "discord_player request failed");
+                tracing::error!(player = %input.query, err = %e, "discord_player request failed");
                 self.reply_text(
                     interaction,
-                    api_error_message(&e, &format!("Failed to look up player '{}'", name)),
+                    api_error_message(&e, &format!("Failed to look up player '{}'", input.query)),
                 )
                 .await;
             }
@@ -600,8 +618,16 @@ impl Handler {
                         async move { renderer.render_web_match(&match_id, &render_url).await };
                     match tokio::time::timeout(RENDER_TIMEOUT, render).await {
                         Ok(Ok(png)) => {
-                            self.send_webhook_image(&match_url, png, "match.png", None, &token)
-                                .await;
+                            let filename = format!("paladinscat-match-{}.png", id);
+                            let description = format!("Paladins match {}", id);
+                            self.send_webhook_image(
+                                &match_url,
+                                png,
+                                &filename,
+                                Some(&description),
+                                &token,
+                            )
+                            .await;
                             return;
                         }
                         Ok(Err(e)) => {
@@ -631,19 +657,21 @@ impl Handler {
     }
 
     async fn history(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let name = match self.player_input(interaction, opts).await {
-            Ok(name) => name,
+        let input = match self.player_input(interaction, opts).await {
+            Ok(input) => input,
             Err(message) => return self.reply_text(interaction, message).await,
         };
-        match self.api.player(&name).await {
-            Ok(val) => {
-                let Some(player_id) = val.get("id") else {
-                    return self
-                        .reply_text(interaction, format!("Player '{}' not found", name))
-                        .await;
-                };
-                let id = value_id(Some(player_id)).unwrap_or_default();
-                let canonical_name = val.get("name").and_then(Value::as_str).unwrap_or(&name);
+        let resolved = match input.resolved {
+            Some(player) => Ok(player),
+            None => self.api.resolve_player(&input.query).await,
+        };
+        match resolved {
+            Ok(player) => {
+                let id = value_id(player.get("id")).unwrap_or_default();
+                let canonical_name = player
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&input.query);
                 match self.api.player_history(&id, 10).await {
                     Ok(rows) => {
                         let embed =
@@ -661,10 +689,10 @@ impl Handler {
                 }
             }
             Err(e) => {
-                tracing::error!(player = name.as_str(), err = %e, "player lookup failed");
+                tracing::error!(player = input.query.as_str(), err = %e, "player lookup failed");
                 self.reply_text(
                     interaction,
-                    api_error_message(&e, &format!("Player '{}' not found", name)),
+                    api_error_message(&e, &format!("Player '{}' not found", input.query)),
                 )
                 .await;
             }
@@ -672,11 +700,11 @@ impl Handler {
     }
 
     async fn current(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let name = match self.player_input(interaction, opts).await {
-            Ok(name) => name,
+        let input = match self.player_input(interaction, opts).await {
+            Ok(input) => input,
             Err(message) => return self.reply_text(interaction, message).await,
         };
-        match self.api.live_match(&name).await {
+        match self.api.live_match(&input.query).await {
             Ok(val) => {
                 let embed = embeds::build_current_payload(&val, &self.web_url);
                 self.send_embed(interaction, embed).await;
@@ -684,7 +712,7 @@ impl Handler {
             Err(error) => {
                 self.reply_text(
                     interaction,
-                    api_error_message(&error, &format!("Player '{}' not found", name)),
+                    api_error_message(&error, &format!("Player '{}' not found", input.query)),
                 )
                 .await;
             }
@@ -693,8 +721,8 @@ impl Handler {
 
     /// Handle `/loadout` — session-based select menu matching the TS bot 1:1.
     async fn loadout(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let name = match self.player_input(interaction, opts).await {
-            Ok(name) => name,
+        let input = match self.player_input(interaction, opts).await {
+            Ok(input) => input,
             Err(message) => return self.reply_text(interaction, message).await,
         };
         let Some(champion) = opt_string(opts, "champion") else {
@@ -703,18 +731,26 @@ impl Handler {
                 .await;
         };
 
-        match self.api.player(&name).await {
+        let resolved = match input.resolved {
+            Some(player) => Ok(player),
+            None => self.api.resolve_player(&input.query).await,
+        };
+        match resolved {
             Ok(val) => {
                 let Some(player_id) = val.get("id") else {
                     let embed = embeds::simple_embed(
-                        &format!("{} · {}", name, champion),
-                        &format!("Player '{}' not found", name),
+                        &format!("{} · {}", input.query, champion),
+                        &format!("Player '{}' not found", input.query),
                         None,
                     );
                     self.send_webhook(&embed, &[], &interaction.token).await;
                     return;
                 };
                 let id = value_id(Some(player_id)).unwrap_or_default();
+                let player_name = val
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&input.query);
 
                 match self.api.loadouts_response(&id).await {
                     Ok(cached) => {
@@ -759,10 +795,15 @@ impl Handler {
                             }
                         }
 
+                        let champion_name = champ_loadouts
+                            .first()
+                            .and_then(|loadout| loadout.get("champion_name"))
+                            .and_then(Value::as_str)
+                            .unwrap_or(&champion);
                         if champ_loadouts.is_empty() {
                             let embed = embeds::build_no_loadouts_payload(
-                                &name,
-                                &champion,
+                                player_name,
+                                champion_name,
                                 refresh_error.as_deref(),
                             );
                             self.send_webhook(&embed, &[], &interaction.token).await;
@@ -791,34 +832,7 @@ impl Handler {
                         let options: Vec<SelectMenuOption> = champ_loadouts
                             .iter()
                             .take(25)
-                            .map(|lo| {
-                                let label = lo
-                                    .get("loadout_name")
-                                    .map(|v| v.to_string())
-                                    .unwrap_or_else(|| "Unnamed Loadout".into())
-                                    .chars()
-                                    .take(100)
-                                    .collect::<String>();
-                                let card_points: i64 = lo
-                                    .get("card_levels")
-                                    .and_then(|v| v.as_array())
-                                    .map(|levels| {
-                                        levels.iter().filter_map(|value| value.as_i64()).sum()
-                                    })
-                                    .unwrap_or(0);
-                                let description = format!("{} card points", card_points)
-                                    .chars()
-                                    .take(100)
-                                    .collect::<String>();
-                                let value = lo.get("id").map(|v| v.to_string()).unwrap_or_default();
-                                SelectMenuOption {
-                                    default: false,
-                                    description: Some(description),
-                                    emoji: None,
-                                    label,
-                                    value,
-                                }
-                            })
+                            .map(loadout_select_option)
                             .collect();
 
                         let select_menu = SelectMenu {
@@ -826,7 +840,7 @@ impl Handler {
                             disabled: false,
                             kind: SelectMenuType::Text,
                             options: Some(options),
-                            placeholder: Some(format!("Choose a {} loadout", champion)),
+                            placeholder: Some(format!("Choose a {} loadout", champion_name)),
                             max_values: Some(1),
                             min_values: Some(1),
                             channel_types: None,
@@ -838,8 +852,8 @@ impl Handler {
                         })];
 
                         let embed = embeds::build_loadout_selection_payload(
-                            &name,
-                            &champion,
+                            player_name,
+                            champion_name,
                             champ_loadouts.len(),
                             &self.web_url,
                             &id,
@@ -861,7 +875,7 @@ impl Handler {
             Err(error) => {
                 self.reply_text(
                     interaction,
-                    api_error_message(&error, &format!("Player '{}' not found", name)),
+                    api_error_message(&error, &format!("Player '{}' not found", input.query)),
                 )
                 .await;
             }
@@ -1158,6 +1172,38 @@ fn loadout_attachment_metadata(player: &Value, loadout: &Value) -> (String, Stri
     )
 }
 
+fn loadout_select_option(loadout: &Value) -> SelectMenuOption {
+    let label = loadout
+        .get("loadout_name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Unnamed Loadout")
+        .chars()
+        .take(100)
+        .collect::<String>();
+    let card_points: i64 = loadout
+        .get("card_levels")
+        .and_then(Value::as_array)
+        .map(|levels| {
+            levels
+                .iter()
+                .filter_map(|value| {
+                    value
+                        .as_i64()
+                        .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
+                })
+                .sum()
+        })
+        .unwrap_or(0);
+    SelectMenuOption {
+        default: false,
+        description: Some(format!("{} card points", card_points)),
+        emoji: None,
+        label,
+        value: value_id(loadout.get("id")).unwrap_or_default(),
+    }
+}
+
 fn api_error_message(error: &ApiError, fallback: &str) -> String {
     if error.message == "The PaladinsCat service request failed." {
         fallback.to_owned()
@@ -1186,9 +1232,11 @@ mod tests {
     fn image_cooldown_rejects_an_immediate_duplicate() {
         let user = format!("cooldown-test-{}", uuid::Uuid::new_v4());
         assert!(claim_image_cooldown(&user).is_ok());
-        assert!(claim_image_cooldown(&user)
-            .unwrap_err()
-            .starts_with("Image cooldown: try again in "));
+        assert!(
+            claim_image_cooldown(&user)
+                .unwrap_err()
+                .starts_with("Image cooldown: try again in ")
+        );
     }
 
     #[test]
@@ -1199,6 +1247,18 @@ mod tests {
         );
         assert_eq!(filename, "paladinscat-loadout-maldamba-42.png");
         assert_eq!(description, "Nabi's Mal'Damba loadout Snake Pit");
+    }
+
+    #[test]
+    fn loadout_menu_keeps_plain_labels_ids_and_card_totals() {
+        let option = loadout_select_option(&serde_json::json!({
+            "id": "deck-1",
+            "loadout_name": "Speed Build",
+            "card_levels": [5, "4", 3, 2, 1]
+        }));
+        assert_eq!(option.label, "Speed Build");
+        assert_eq!(option.value, "deck-1");
+        assert_eq!(option.description.as_deref(), Some("15 card points"));
     }
 
     #[test]

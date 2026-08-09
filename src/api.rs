@@ -4,7 +4,7 @@
 //! Mirrors api.ts: player, match, champion, history lookups.
 
 use moka::future::Cache;
-use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{NON_ALPHANUMERIC, percent_encode};
 use reqwest::Client as HttpClient;
 use std::time::Duration;
 
@@ -45,6 +45,18 @@ mod tests {
         assert_eq!(
             response_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "nope").message,
             "The PaladinsCat service request failed."
+        );
+    }
+
+    #[test]
+    fn player_ids_accept_backend_strings_and_numbers() {
+        assert_eq!(
+            json_id(Some(&serde_json::json!("123"))).as_deref(),
+            Some("123")
+        );
+        assert_eq!(
+            json_id(Some(&serde_json::json!(123))).as_deref(),
+            Some("123")
         );
     }
 }
@@ -340,7 +352,10 @@ impl ApiClient {
         let Some(id) = json_id(result.get("id")) else {
             return Err(player_not_found(trimmed));
         };
-        result["id"] = serde_json::Value::String(id);
+        let Some(object) = result.as_object_mut() else {
+            return Err(player_not_found(trimmed));
+        };
+        object.insert("id".to_string(), serde_json::Value::String(id));
         Ok(result)
     }
 
