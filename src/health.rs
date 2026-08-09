@@ -170,6 +170,14 @@ fn param_int(params: &HashMap<String, String>, key: &str, default: usize) -> usi
         .unwrap_or(default)
 }
 
+fn json_id(value: Option<&serde_json::Value>) -> Option<String> {
+    match value? {
+        serde_json::Value::String(value) => Some(value.clone()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
 // ── Preview implementations ──────────────────────────────────────────────────
 
 /// /preview/cmd/player?name=xxx
@@ -208,10 +216,9 @@ async fn preview_history(state: &AppState, params: &HashMap<String, String>) -> 
     match name {
         Some(n) => match state.api.player(n).await {
             Ok(val) => {
-                let Some(player_id) = val.get("id") else {
+                let Some(id) = json_id(val.get("id")) else {
                     return serde_json::json!({ "type": "history", "error": format!("Player '{}' not found", n) });
                 };
-                let id = player_id.as_str().unwrap_or("");
                 match state.api.player_history(&id, 10).await {
                     Ok(rows) => serde_json::json!({
                         "type": "history",
@@ -281,17 +288,17 @@ async fn preview_loadout(state: &AppState, params: &HashMap<String, String>) -> 
     match (name, champion) {
         (Some(n), Some(c)) => match state.api.player(n).await {
             Ok(val) => {
-                let Some(player_id) = val.get("id") else {
+                let Some(id) = json_id(val.get("id")) else {
                     return serde_json::json!({ "type": "loadout", "error": format!("Player '{}' not found", n) });
                 };
-                let id = player_id.as_str().unwrap_or("");
                 match state.api.loadouts(&id).await {
                     Ok(loadouts) => {
                         let champ_loadouts: Vec<_> = loadouts
                             .iter()
                             .filter(|lo| {
-                                lo.get("champion")
-                                    .map(|v| v.to_string() == *c)
+                                lo.get("champion_name")
+                                    .and_then(|v| v.as_str())
+                                    .map(|name| name.eq_ignore_ascii_case(c))
                                     .unwrap_or(false)
                             })
                             .collect();
