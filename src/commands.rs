@@ -31,8 +31,6 @@ struct LoadoutSession {
     user_id: String,
     player: Value,
     loadouts: Vec<Value>,
-    champion_name: String,
-    player_name: String,
     expires_at: u64,
 }
 
@@ -173,6 +171,10 @@ fn claim_image_cooldown(user_id: &str) -> Result<(), String> {
     }
     cooldowns.insert(user_id.to_string(), now + IMAGE_COOLDOWN_MS);
     Ok(())
+}
+
+fn valid_match_id(id: &str) -> bool {
+    (6..=20).contains(&id.len()) && id.chars().all(|c| c.is_ascii_digit())
 }
 
 impl Handler {
@@ -518,7 +520,7 @@ impl Handler {
         let Some(id) = opt_string(opts, "id") else {
             return self.reply_text(interaction, "Provide a match ID").await;
         };
-        if !(6..=20).contains(&id.len()) || !id.chars().all(|c| c.is_ascii_digit()) {
+        if !valid_match_id(&id) {
             return self
                 .reply_text(interaction, "Enter a valid numeric match ID.")
                 .await;
@@ -710,8 +712,6 @@ impl Handler {
                             user_id,
                             player: val.clone(),
                             loadouts: champ_loadouts.clone(),
-                            champion_name: champion.clone(),
-                            player_name: name.clone(),
                             expires_at: now + LOADOUT_SESSION_TTL_SECS,
                         };
                         insert_session(&token, session);
@@ -1054,4 +1054,25 @@ fn api_error_message(error: &ApiError, fallback: &str) -> String {
 
 fn missing_saved_player_message() -> String {
     "No player name was entered and you do not have a saved player. Enter a player or use `/save player:<name or ID>` first.".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn match_id_validation_matches_legacy_command() {
+        assert!(valid_match_id("1281335238"));
+        assert!(!valid_match_id("12345"));
+        assert!(!valid_match_id("12813x5238"));
+    }
+
+    #[test]
+    fn image_cooldown_rejects_an_immediate_duplicate() {
+        let user = format!("cooldown-test-{}", uuid::Uuid::new_v4());
+        assert!(claim_image_cooldown(&user).is_ok());
+        assert!(claim_image_cooldown(&user)
+            .unwrap_err()
+            .starts_with("Image cooldown: try again in "));
+    }
 }
