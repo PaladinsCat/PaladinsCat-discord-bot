@@ -12,6 +12,7 @@ WORKDIR /app
 COPY src/discord-bot-rust/Cargo.toml .
 COPY src/discord-bot-rust/Cargo.lock .
 COPY src/discord-bot-rust/src/ src/
+COPY src/discord-bot/src/paladins-avatar-assets.ts /discord-bot/src/paladins-avatar-assets.ts
 RUN cargo build --release
 
 # Runtime stage — trixie to match builder's GLIBC 2.39
