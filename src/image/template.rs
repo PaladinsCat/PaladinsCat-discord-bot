@@ -142,14 +142,16 @@ fn match_party_numbers(players: &[serde_json::Value]) -> HashMap<String, i64> {
         .filter_map(|player| {
             let player_id = str_of(player.get("player_id"));
             let raw_party = num(player.get("party_id"));
-            let party = derived.get(&raw_party).copied().unwrap_or_else(|| {
+            let party = if raw_party > 0 {
+                derived.get(&raw_party).copied().unwrap_or(0)
+            } else {
                 let stored = num(player.get("party")).max(num(player.get("party_number")));
                 if stored > 0 {
                     stored
                 } else {
                     0
                 }
-            });
+            };
             (party > 0 && !player_id.is_empty()).then_some((player_id, party))
         })
         .collect()
@@ -471,8 +473,11 @@ impl TemplateEngine {
         let tier_name = tier_name(avg_tier);
         let tier_icon = self.asset_url(self.assets.rank_icon(avg_tier as u32));
         let tier_markup = format!(
-            "<div class=\"tier-meta\"><img src=\"{}\" alt=\"{}\"/><div><div class=\"meta-value\">{}</div><div class=\"meta-label\">Avg tier</div></div></div>",
-            tier_icon, escape_html(&tier_name), escape_html(&tier_name)
+            "<div class=\"tier-meta\"{}><img src=\"{}\" alt=\"{}\"/><div><div class=\"meta-value\">{}</div><div class=\"meta-label\">Avg tier</div></div></div>",
+            if ranked { "" } else { " aria-hidden=\"true\"" },
+            tier_icon,
+            if ranked { escape_html(&tier_name) } else { String::new() },
+            escape_html(&tier_name)
         );
         let brand_icon = self.asset_url(self.assets.icon("paladinscat", None));
 
@@ -979,5 +984,29 @@ mod tests {
             "<style>\n@import url('https://fonts.googleapis.com/css2?family=Inter');\n.player-row{display:grid}\n</style>",
         );
         assert_eq!(css.trim(), ".player-row{display:grid}");
+    }
+
+    #[test]
+    fn party_markers_and_zero_scores_match_typescript_renderer() {
+        let mut record = fake_record();
+        record["match"]["team1_score"] = serde_json::json!(0);
+        for player in record["players"].as_array_mut().unwrap() {
+            player["party"] = serde_json::json!(0);
+            player["party_number"] = serde_json::json!(0);
+        }
+        record["players"][0]["party_id"] = serde_json::json!(9001);
+        record["players"][1]["party_id"] = serde_json::json!(9001);
+        record["players"][2]["party_id"] = serde_json::json!(7777);
+        let engine = TemplateEngine {
+            match_template: Arc::new(String::new()),
+            loadout_template: Arc::new(String::new()),
+            cheater_pattern_url: String::new(),
+            assets: AssetCatalog::new("missing-test-assets"),
+        };
+        let doc = engine.match_document(&record);
+        assert!(doc.contains("team-one-score\">0</span>"));
+        assert_eq!(doc.matches("title=\"Party 1\"").count(), 2);
+        assert!(!doc.contains("Party 7777"));
+        assert!(doc.contains("<span>NA</span><span>Siege</span>"));
     }
 }
