@@ -1,6 +1,7 @@
 //! Slash command handlers — dispatches InteractionCreate events.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, RwLock};
 use std::time::Duration;
 
@@ -74,10 +75,31 @@ pub async fn handle_event(
     http: Arc<HttpClient>,
     web_url: String,
     image_service: Option<Arc<ImageService>>,
+    registration_app_id: Option<
+        twilight_model::id::Id<twilight_model::id::marker::ApplicationMarker>,
+    >,
+    development_guild_id: Option<twilight_model::id::Id<twilight_model::id::marker::GuildMarker>>,
+    registration_started: Arc<AtomicBool>,
 ) {
     match event {
-        Event::Ready(_) => {
+        Event::Ready(ready) => {
             tracing::info!("Gateway connected");
+            if let Some(app_id) = claim_registration(&registration_started, registration_app_id) {
+                let guild_ids: Vec<_> = ready.guilds.iter().map(|guild| guild.id).collect();
+                match crate::register::register_commands(
+                    &http,
+                    app_id,
+                    development_guild_id,
+                    &guild_ids,
+                )
+                .await
+                {
+                    Ok(result) => {
+                        tracing::info!(scope = %result.scope, registered = result.registered, cleared = result.cleared_guild_scopes, failed = result.failed_guild_scopes, "Commands registered")
+                    }
+                    Err(error) => tracing::error!(%error, "Command registration failed"),
+                }
+            }
         }
         Event::InteractionCreate(interaction_box) => {
             let interaction = (*interaction_box).0;
@@ -120,6 +142,13 @@ pub async fn handle_event(
         }
         _ => {}
     }
+}
+
+fn claim_registration(
+    started: &AtomicBool,
+    app_id: Option<twilight_model::id::Id<twilight_model::id::marker::ApplicationMarker>>,
+) -> Option<twilight_model::id::Id<twilight_model::id::marker::ApplicationMarker>> {
+    app_id.filter(|_| !started.swap(true, Ordering::AcqRel))
 }
 
 // ——— Helpers to extract user_id from interaction ———
@@ -1144,6 +1173,7 @@ fn missing_saved_player_message() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
 
     #[test]
     fn match_id_validation_matches_legacy_command() {
@@ -1169,5 +1199,14 @@ mod tests {
         );
         assert_eq!(filename, "paladinscat-loadout-maldamba-42.png");
         assert_eq!(description, "Nabi's Mal'Damba loadout Snake Pit");
+    }
+
+    #[test]
+    fn registration_is_claimed_once_and_skips_dummy_mode() {
+        let started = AtomicBool::new(false);
+        let app_id = twilight_model::id::Id::new(42);
+        assert_eq!(claim_registration(&started, Some(app_id)), Some(app_id));
+        assert_eq!(claim_registration(&started, Some(app_id)), None);
+        assert_eq!(claim_registration(&AtomicBool::new(false), None), None);
     }
 }

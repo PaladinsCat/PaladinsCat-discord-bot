@@ -112,27 +112,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             twilight_model::id::Id::new(1) // dummy; never used
         };
 
-    if app_id_raw > 0 {
-        let dev_guild = cfg.development_guild_id.and_then(|s| {
-            s.parse::<u64>()
-                .ok()
-                .map(|n| twilight_model::id::Id::new(n))
-        });
-        match register::register_commands(&http, app_id, dev_guild, &[]).await {
-            Ok(result) => {
-                tracing::info!(
-                    scope = %result.scope,
-                    registered = result.registered,
-                    cleared = result.cleared_guild_scopes,
-                    failed = result.failed_guild_scopes,
-                    "Commands registered"
-                );
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "Command registration failed");
-            }
-        }
-    }
+    // TS registers after ClientReady so its guild cache can clear stale
+    // development-scope commands. The Ready handler owns registration here too.
+    let registration_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let dev_guild = cfg
+        .development_guild_id
+        .and_then(|s| s.parse::<u64>().ok().map(twilight_model::id::Id::new));
 
     // Check if we should skip gateway (dummy token or missing)
     let is_dummy = cfg.discord_token.starts_with("dummy") || cfg.discord_token.is_empty();
@@ -165,6 +150,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         Arc::clone(&http),
                         cfg.web_url.clone(),
                         image_service.clone(),
+                        should_register.then_some(app_id),
+                        dev_guild,
+                        Arc::clone(&registration_started),
                     ));
                 }
                 Some(Err(err)) => {
