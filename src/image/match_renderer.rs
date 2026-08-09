@@ -10,6 +10,7 @@
 //! 5. Return PNG bytes
 
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
@@ -28,6 +29,7 @@ const MATCH_SCALE: f64 = 1.6;
 
 /// Device scale factor for loadout cards (1280 × 1.0 = 1280px).
 const LOADOUT_SCALE: f64 = 1.0;
+static RENDER_DOCUMENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Template version for cache invalidation keys.
 const TEMPLATE_VERSION: u32 = 17;
@@ -463,7 +465,9 @@ impl MatchRenderer {
 
         // Navigate to the document. Base64-encode the HTML into a data URI so
         // `#` (present in CSS hex colors) isn't interpreted as a URL fragment.
-        let html_url = html_data_uri(document_html);
+        let render_id = RENDER_DOCUMENT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let tagged_html = tagged_render_document(document_html, render_id);
+        let html_url = html_data_uri(&tagged_html);
         client
             .send(
                 "Page.navigate",
@@ -472,6 +476,23 @@ impl MatchRenderer {
                 }),
             )
             .await?;
+
+        // Page.navigate acknowledges the request before the new data document's
+        // JavaScript context is guaranteed to be active. Confirm this exact
+        // document before evaluating readiness or capturing a previous match.
+        let marker = format!(
+            r#"document.querySelector('meta[name="paladinscat-render-id"]')?.content === "{render_id}""#
+        );
+        let navigation_deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if client.evaluate(&marker).await.unwrap_or(Value::Bool(false)) == Value::Bool(true) {
+                break;
+            }
+            if Instant::now() >= navigation_deadline {
+                return Err(format!("render document {render_id} did not become active").into());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
 
         // Set viewport and device scale factor
         client.set_device_scale_factor(scale, WIDTH, HEIGHT).await?;
@@ -500,6 +521,20 @@ impl MatchRenderer {
 
         // Screenshot the element
         client.screenshot_element(selector).await
+    }
+}
+
+fn tagged_render_document(document_html: &str, render_id: u64) -> String {
+    let marker = format!(r#"<meta name="paladinscat-render-id" content="{render_id}">"#);
+    if let Some(head) = document_html.find("<head>") {
+        let insert_at = head + "<head>".len();
+        let mut tagged = String::with_capacity(document_html.len() + marker.len());
+        tagged.push_str(&document_html[..insert_at]);
+        tagged.push_str(&marker);
+        tagged.push_str(&document_html[insert_at..]);
+        tagged
+    } else {
+        format!("{marker}{document_html}")
     }
 }
 
@@ -643,7 +678,7 @@ fn default_chromium_path() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{html_data_uri, internal_render_url};
+    use super::{html_data_uri, internal_render_url, tagged_render_document};
     use std::time::Instant;
 
     #[test]
@@ -692,6 +727,16 @@ mod tests {
     fn html_data_uri_encodes_arbitrary_bytes() {
         let uri = html_data_uri("héllo ← wörld");
         assert!(uri.starts_with("data:text/html;base64,"));
+    }
+
+    #[test]
+    fn render_documents_receive_unique_navigation_markers() {
+        let html = "<html><head></head><body>match</body></html>";
+        let first = tagged_render_document(html, 41);
+        let second = tagged_render_document(html, 42);
+        assert!(first.contains(r#"name="paladinscat-render-id" content="41""#));
+        assert!(second.contains(r#"name="paladinscat-render-id" content="42""#));
+        assert_ne!(first, second);
     }
 
     /// Returns true when the caller opted into the real-browser integration test
@@ -915,6 +960,11 @@ document.querySelector('img').decode=()=>new Promise(resolve=>setTimeout(()=>{do
             .and_then(|v| v.first())
             .unwrap_or(&payload);
         let renderer = test_renderer();
+        let document = renderer.template_engine.match_document(&record);
+        assert!(
+            document.matches("data:image/avif;base64,").count() >= 10,
+            "match document must embed AVIF assets before PNG capture"
+        );
         let png = renderer
             .render(record)
             .await
@@ -938,6 +988,42 @@ document.querySelector('img').decode=()=>new Promise(resolve=>setTimeout(()=>{do
     }
 
     #[tokio::test]
+    async fn chromium_integration_consecutive_api_matches_are_distinct() {
+        if !integration_enabled() {
+            return;
+        }
+        let Ok(base) = std::env::var("PALADINSCAT_MATCH_API_URL") else {
+            return;
+        };
+        let Ok(ids) = std::env::var("PALADINSCAT_MATCH_IDS") else {
+            return;
+        };
+        let mut ids = ids.split(',').map(str::trim).filter(|id| !id.is_empty());
+        let first_id = ids.next().expect("first match id");
+        let second_id = ids.next().expect("second match id");
+        let api = crate::api::ApiClient::new(&base, None);
+        let (first, second) = tokio::join!(api.match_info(first_id), api.match_info(second_id));
+        let first = first.expect("load first match");
+        let second = second.expect("load second match");
+        let renderer = test_renderer();
+        let started = Instant::now();
+        let first_png = renderer.render(&first).await.expect("render first match");
+        let first_elapsed = started.elapsed();
+        let started = Instant::now();
+        let second_png = renderer.render(&second).await.expect("render second match");
+        println!(
+            "consecutive match renders first={}ms second={}ms",
+            first_elapsed.as_millis(),
+            started.elapsed().as_millis()
+        );
+        assert_ne!(
+            first_png, second_png,
+            "consecutive matches reused one image"
+        );
+        renderer.close().await;
+    }
+
+    #[tokio::test]
     async fn chromium_integration_api_record_renders_isolated_scoreboard() {
         if !integration_enabled() {
             return;
@@ -953,6 +1039,11 @@ document.querySelector('img').decode=()=>new Promise(resolve=>setTimeout(()=>{do
         assert!(record["match"].is_object());
         assert!(record["bans"].is_array());
         let renderer = test_renderer();
+        let document = renderer.template_engine.match_document(&record);
+        assert!(
+            document.matches("data:image/avif;base64,").count() >= 10,
+            "match document must embed AVIF assets before PNG capture"
+        );
         let png = renderer
             .render(&record)
             .await

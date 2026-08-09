@@ -3,11 +3,13 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use base64::Engine as _;
 
 use super::asset_catalog::AssetCatalog;
+
+static ASSET_DATA_URL_CACHE: OnceLock<RwLock<HashMap<PathBuf, String>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct TemplateConfig {
@@ -384,14 +386,24 @@ impl TemplateEngine {
         let Some(path) = path else {
             return TRANSPARENT.to_string();
         };
+        let cache = ASSET_DATA_URL_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+        if let Ok(guard) = cache.read() {
+            if let Some(url) = guard.get(&path) {
+                return url.clone();
+            }
+        }
         let Ok(bytes) = fs::read(&path) else {
             return TRANSPARENT.to_string();
         };
         let mime = asset_mime(&path, &bytes);
-        format!(
+        let url = format!(
             "data:{mime};base64,{}",
             base64::engine::general_purpose::STANDARD.encode(bytes)
-        )
+        );
+        if let Ok(mut guard) = cache.write() {
+            guard.insert(path, url.clone());
+        }
+        url
     }
 
     /// Build a complete, data-bound scoreboard document with a real

@@ -225,7 +225,10 @@ impl CdpClient {
 
     pub async fn screenshot(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         let resp = self
-            .send("Page.captureScreenshot", json!({ "format": "png" }))
+            .send(
+                "Page.captureScreenshot",
+                json!({ "format": "png", "optimizeForSpeed": true }),
+            )
             .await?;
         match &resp.error {
             Some(err) => Err(format!("Screenshot error: {}", err).into()),
@@ -260,6 +263,7 @@ impl CdpClient {
                 "Page.captureScreenshot",
                 json!({
                     "format": "png",
+                    "optimizeForSpeed": true,
                     "clip": { "x": x, "y": y, "width": w, "height": h, "scale": 1.0 },
                 }),
             )
