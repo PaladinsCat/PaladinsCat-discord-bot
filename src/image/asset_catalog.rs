@@ -1,6 +1,6 @@
 //! Game asset lookup — mirrors TS `asset-catalog.ts`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
@@ -30,6 +30,22 @@ pub struct AssetCatalog {
     map_images: Arc<RwLock<HashMap<String, Option<PathBuf>>>>,
     rank_icons: Arc<RwLock<HashMap<u32, Option<PathBuf>>>>,
     icons: Arc<RwLock<HashMap<String, Option<PathBuf>>>>,
+    card_reference: Arc<RwLock<Option<HashMap<u32, LoadoutCardAsset>>>>,
+    frame_reference: Arc<RwLock<Option<HashMap<u32, LoadoutFrameAsset>>>>,
+}
+
+#[derive(Clone)]
+pub struct LoadoutCardAsset {
+    pub name: String,
+    pub description: String,
+    pub short_description: String,
+    pub icon_path: Option<PathBuf>,
+}
+
+#[derive(Clone)]
+pub struct LoadoutFrameAsset {
+    pub rarity: String,
+    pub icon_path: PathBuf,
 }
 
 impl AssetCatalog {
@@ -46,7 +62,35 @@ impl AssetCatalog {
             map_images: Arc::new(RwLock::new(HashMap::new())),
             rank_icons: Arc::new(RwLock::new(HashMap::new())),
             icons: Arc::new(RwLock::new(HashMap::new())),
+            card_reference: Arc::new(RwLock::new(None)),
+            frame_reference: Arc::new(RwLock::new(None)),
         }
+    }
+
+    pub fn loadout_card(&self, card_id: u32) -> Option<LoadoutCardAsset> {
+        if self.card_reference.read().unwrap().is_none() {
+            let loaded = self.load_card_reference();
+            *self.card_reference.write().unwrap() = Some(loaded);
+        }
+        self.card_reference
+            .read()
+            .unwrap()
+            .as_ref()?
+            .get(&card_id)
+            .cloned()
+    }
+
+    pub fn loadout_frame(&self, level: u32) -> Option<LoadoutFrameAsset> {
+        if self.frame_reference.read().unwrap().is_none() {
+            let loaded = self.load_frame_reference();
+            *self.frame_reference.write().unwrap() = Some(loaded);
+        }
+        self.frame_reference
+            .read()
+            .unwrap()
+            .as_ref()?
+            .get(&level.clamp(1, 5))
+            .cloned()
     }
 
     pub fn champion_icon(&self, champion_name: &str) -> Option<PathBuf> {
@@ -274,6 +318,163 @@ impl AssetCatalog {
 
     fn load_champion_files(&self) -> Vec<PathBuf> {
         self.load_files_with_lock(&self.champion_files, "champions", false)
+    }
+
+    fn public_image_path(&self, url: &str) -> Option<PathBuf> {
+        let relative = url.strip_prefix("/images/")?;
+        let path = self.root.join(relative);
+        path.exists().then_some(path)
+    }
+
+    fn load_card_reference(&self) -> HashMap<u32, LoadoutCardAsset> {
+        let path = self
+            .root
+            .parent()
+            .unwrap_or(&self.root)
+            .join("data/paladins-card-reference.json");
+        let Ok(bytes) = std::fs::read(path) else {
+            return HashMap::new();
+        };
+        let Ok(rows) = serde_json::from_slice::<Vec<serde_json::Value>>(&bytes) else {
+            return HashMap::new();
+        };
+        let descriptions = self.load_champion_card_descriptions();
+        rows.into_iter()
+            .filter_map(|row| {
+                let id = row.get("id")?.as_u64()? as u32;
+                if id == 0 {
+                    return None;
+                }
+                let name = row
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown Card")
+                    .to_string();
+                let canonical = row
+                    .get("iconUrl")
+                    .and_then(|v| v.as_str())
+                    .and_then(|url| self.public_image_path(url));
+                let png = canonical
+                    .as_ref()
+                    .map(|path| path.with_extension("png"))
+                    .filter(|path| path.exists());
+                Some((
+                    id,
+                    LoadoutCardAsset {
+                        description: descriptions
+                            .get(&normalized(&name))
+                            .cloned()
+                            .or_else(|| {
+                                row.get("description")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_owned)
+                            })
+                            .unwrap_or_default(),
+                        short_description: row
+                            .get("shortDescription")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        icon_path: png.or(canonical),
+                        name,
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    fn load_champion_card_descriptions(&self) -> HashMap<String, String> {
+        let path = self
+            .root
+            .parent()
+            .unwrap_or(&self.root)
+            .join("data/champion-data.json");
+        let Ok(bytes) = std::fs::read(path) else {
+            return HashMap::new();
+        };
+        let Ok(champions) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            return HashMap::new();
+        };
+        let mut descriptions = HashMap::new();
+        let mut ambiguous = HashSet::new();
+        for champion in champions
+            .as_object()
+            .into_iter()
+            .flat_map(|value| value.values())
+        {
+            for card in champion
+                .get("loadouts")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+            {
+                let name = card
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let description = card
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .trim();
+                let key = normalized(name);
+                if key.is_empty() || description.is_empty() || ambiguous.contains(&key) {
+                    continue;
+                }
+                if descriptions
+                    .get(&key)
+                    .is_some_and(|existing| existing != description)
+                {
+                    descriptions.remove(&key);
+                    ambiguous.insert(key);
+                } else {
+                    descriptions.insert(key, description.to_string());
+                }
+            }
+        }
+        descriptions
+    }
+
+    fn load_frame_reference(&self) -> HashMap<u32, LoadoutFrameAsset> {
+        let path = self
+            .root
+            .parent()
+            .unwrap_or(&self.root)
+            .join("data/paladins-loadout-frame-reference.json");
+        let Ok(bytes) = std::fs::read(path) else {
+            return HashMap::new();
+        };
+        let Ok(rows) = serde_json::from_slice::<Vec<serde_json::Value>>(&bytes) else {
+            return HashMap::new();
+        };
+        rows.into_iter()
+            .filter_map(|row| {
+                let level = row.get("level")?.as_u64()? as u32;
+                if !(1..=5).contains(&level) {
+                    return None;
+                }
+                let path = row
+                    .get("pngUrl")
+                    .and_then(|v| v.as_str())
+                    .and_then(|url| self.public_image_path(url))
+                    .or_else(|| {
+                        row.get("iconUrl")
+                            .and_then(|v| v.as_str())
+                            .and_then(|url| self.public_image_path(url))
+                    })?;
+                Some((
+                    level,
+                    LoadoutFrameAsset {
+                        rarity: row
+                            .get("rarity")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown")
+                            .to_string(),
+                        icon_path: path,
+                    },
+                ))
+            })
+            .collect()
     }
     fn load_map_files(&self) -> Vec<PathBuf> {
         self.load_files_with_lock(&self.map_files, "maps", false)

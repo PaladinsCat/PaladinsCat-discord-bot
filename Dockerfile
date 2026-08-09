@@ -27,10 +27,15 @@ WORKDIR /app
 COPY --from=builder /app/target/release/paladinscat-discord-bot .
 COPY dev/prototypes/ dev/prototypes/
 COPY ["src/frontend/public/images/champions/Champion * Icon.avif", "src/frontend/public/images/champions/"]
+COPY ["src/frontend/public/images/champions/Banner_*", "src/frontend/public/images/champions/"]
 COPY ["src/frontend/public/images/champions/Talent*.png", "src/frontend/public/images/champions/"]
 COPY ["src/frontend/public/images/maps/Match_*.avif", "src/frontend/public/images/maps/"]
+COPY src/frontend/public/images/cards/ src/frontend/public/images/cards/
 COPY src/frontend/public/images/rank-tiers/ src/frontend/public/images/rank-tiers/
 COPY src/frontend/public/images/icons/ src/frontend/public/images/icons/
+COPY src/frontend/public/data/champion-data.json src/frontend/public/data/
+COPY src/frontend/public/data/paladins-card-reference.json src/frontend/public/data/
+COPY src/frontend/public/data/paladins-loadout-frame-reference.json src/frontend/public/data/
 
 EXPOSE 3020
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

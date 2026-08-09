@@ -103,6 +103,56 @@ fn number(value: i64) -> String {
     }
 }
 
+fn format_scaled_number(value: f64) -> String {
+    let rounded = (value * 100.0).round() / 100.0;
+    if rounded.fract().abs() < f64::EPSILON {
+        return number(rounded as i64);
+    }
+    let text = format!("{rounded:.2}").trim_end_matches('0').to_string();
+    let (whole, decimal) = text.split_once('.').unwrap_or((&text, ""));
+    let grouped = number(whole.parse::<i64>().unwrap_or(0));
+    format!("{grouped}.{decimal}")
+}
+
+fn scale_card_description(description: &str, level: i64) -> String {
+    let safe_level = level.clamp(1, 5);
+    let mut source = description.trim();
+    if source.starts_with('[') {
+        if let Some(close) = source.find(']') {
+            source = source[close + 1..].trim_start();
+        }
+    }
+
+    let mut output = String::with_capacity(source.len());
+    let mut remainder = source;
+    while let Some(open) = remainder.find('{') {
+        output.push_str(&remainder[..open]);
+        let after_open = &remainder[open + 1..];
+        let Some(close) = after_open.find('}') else {
+            output.push_str(&remainder[open..]);
+            remainder = "";
+            break;
+        };
+        let expression = after_open[..close]
+            .strip_prefix("scale=")
+            .or_else(|| after_open[..close].strip_prefix("SCALE="))
+            .unwrap_or(&after_open[..close]);
+        let replacement = expression.split_once('|').and_then(|(base, step)| {
+            let base = base.replace(',', "").parse::<f64>().ok()?;
+            let step = step.replace(',', "").parse::<f64>().ok()?;
+            Some(format_scaled_number(base + step * (safe_level - 1) as f64))
+        });
+        if let Some(replacement) = replacement {
+            output.push_str(&replacement);
+        } else {
+            output.push_str(&remainder[open..open + close + 2]);
+        }
+        remainder = &after_open[close + 1..];
+    }
+    output.push_str(remainder);
+    output.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn queue_presentation(queue_id: i64) -> (&'static str, &'static str, bool) {
     match queue_id {
         424 => ("Casual", "Siege", false),
@@ -767,24 +817,109 @@ impl TemplateEngine {
     }
 
     pub fn loadout_document(&self, data: &serde_json::Value) -> String {
-        let json_str = escape_html(&serde_json::to_string(data).unwrap_or_default());
-        let tmpl = self.loadout_template.as_ref();
-        if let Some(pos) = tmpl.find("</head>") {
-            format!(
-                "{}<script>var __renderData={};</script>{}",
-                &tmpl[..pos],
-                json_str,
-                &tmpl[pos..]
-            )
+        let player = data.get("player");
+        let loadout = data.get("loadout");
+        let player_name = escape_html(&str_of(player.and_then(|v| v.get("name"))));
+        let champion_name = str_of(loadout.and_then(|v| v.get("champion_name")));
+        let loadout_name = str_of(loadout.and_then(|v| v.get("loadout_name")));
+        let loadout_name = if loadout_name.is_empty() {
+            "Unnamed Loadout"
         } else {
-            format!("<script>var __renderData={};</script>{}", json_str, tmpl)
+            &loadout_name
+        };
+        let champion_banner = self.asset_url(self.assets.champion_banner(&champion_name));
+        let champion_icon = self.asset_url(self.assets.champion_icon(&champion_name));
+        let background = if champion_banner.contains("image/svg+xml") {
+            champion_icon
+        } else {
+            champion_banner
+        };
+        let brand_icon = self.asset_url(self.assets.icon("paladinscat", None));
+        let ids = loadout
+            .and_then(|v| v.get("card_ids"))
+            .and_then(|v| v.as_array());
+        let levels = loadout
+            .and_then(|v| v.get("card_levels"))
+            .and_then(|v| v.as_array());
+        let mut cards = String::new();
+        for (index, card_id_value) in ids.into_iter().flatten().take(5).enumerate() {
+            let card_id = num(Some(card_id_value)).max(0) as u32;
+            let level = levels
+                .and_then(|values| values.get(index))
+                .map(|v| num(Some(v)))
+                .unwrap_or(1)
+                .clamp(1, 5);
+            let card = self.assets.loadout_card(card_id);
+            let name = card
+                .as_ref()
+                .map(|card| card.name.clone())
+                .unwrap_or_else(|| "Unknown Card".to_string());
+            let fallback_name = format!("Card {card_id}");
+            let name = if name == "Unknown Card" {
+                fallback_name
+            } else {
+                name
+            };
+            let description = card
+                .as_ref()
+                .map(|card| {
+                    if !card.description.is_empty() {
+                        card.description.as_str()
+                    } else if !card.short_description.is_empty() {
+                        card.short_description.as_str()
+                    } else {
+                        "Card details unavailable."
+                    }
+                })
+                .unwrap_or("Card details unavailable.");
+            let description = scale_card_description(description, level);
+            let artwork = self.asset_url(card.and_then(|card| card.icon_path));
+            let frame = self.assets.loadout_frame(level as u32);
+            let rarity = frame
+                .as_ref()
+                .map(|frame| frame.rarity.clone())
+                .unwrap_or_default();
+            let frame_url = self.asset_url(frame.map(|frame| frame.icon_path));
+            let title_class = if name.chars().count() >= 21 {
+                "long-card-name"
+            } else {
+                ""
+            };
+            cards.push_str(&format!(
+                "<article class=\"loadout-card level-{level}\" aria-label=\"{name}, level {level} {rarity}\"><img class=\"card-art\" src=\"{artwork}\" alt=\"\"/><img class=\"card-frame\" src=\"{frame_url}\" alt=\"\"/><h2 class=\"{title_class}\">{name}</h2><p class=\"card-description\">{description}</p><span class=\"level-badge\">{level}</span></article>",
+                name = escape_html(&name), rarity = escape_html(&rarity), description = escape_html(&description)
+            ));
         }
+
+        let css = Self::extract_css(self.match_template.as_ref());
+        format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><style>{css}{loadout_css}</style></head><body data-theme=\"dark\"><main id=\"loadout\" style=\"--loadout-background:url('{background}')\"><header class=\"loadout-header\"><div class=\"loadout-identity\"><div class=\"brand-line\"><span class=\"brand-name\"><img src=\"{brand_icon}\" alt=\"\">PaladinsCat</span><div class=\"status-tags\"><span class=\"status-tag loadout-status\">Loadout</span></div></div><h1>{player_name}</h1><div class=\"match-context loadout-context\"><span>{champion}</span><span class=\"deck\">{deck}</span></div></div></header><section class=\"cards\">{cards}</section></main></body></html>",
+            loadout_css = LOADOUT_DOCUMENT_CSS,
+            champion = escape_html(&champion_name),
+            deck = escape_html(loadout_name),
+        )
     }
 
     pub fn cheater_pattern_url(&self) -> &str {
         &self.cheater_pattern_url
     }
 }
+
+const LOADOUT_DOCUMENT_CSS: &str = r#"
+*{box-sizing:border-box}html,body{margin:0;width:1280px;height:720px;min-height:720px;overflow:hidden;padding:0;background:transparent;color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#loadout{position:relative;width:1280px;height:720px;overflow:hidden;border:1px solid rgba(111,130,153,.35);border-radius:20px;background:var(--bg)}
+#loadout::before{content:"";position:absolute;inset:0;background-image:var(--loadout-background);background-size:cover;background-position:center 24%;filter:saturate(1.15);opacity:.7;pointer-events:none}
+#loadout>*{z-index:1}.loadout-header{position:relative;height:238px;padding:28px 38px;display:flex;align-items:flex-start;background:rgba(5,9,15,.58);border-bottom:1px solid rgba(72,211,190,.22)}
+.loadout-header::before{content:"";position:absolute;inset:0;pointer-events:none;-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);-webkit-mask-image:linear-gradient(90deg,#000,transparent 20%,transparent 80%,#000);mask-image:linear-gradient(90deg,#000,transparent 20%,transparent 80%,#000)}
+.loadout-header>*{position:relative;z-index:1}.loadout-identity{min-width:0}.brand-line{display:flex;align-items:center;gap:12px;justify-content:flex-start}.brand-name{display:inline-flex;align-items:center;gap:11px;font-size:25px;line-height:1;font-weight:800;letter-spacing:-.02em}.brand-name img{width:32px;height:32px;border-radius:0;object-fit:contain}.loadout-status{height:23px;padding:0 9px;color:#bff7ee;border-color:rgba(55,214,192,.34);background:rgba(15,118,110,.25);font-size:10px;font-weight:760}
+h1{margin:10px 0 0;padding-bottom:4px;max-width:760px;overflow:hidden;color:var(--text);font-size:54px;line-height:1.08;font-weight:720;letter-spacing:-.01em;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 3px 5px rgba(0,0,0,.45)}
+.loadout-context{display:flex;align-items:center;gap:10px;margin-top:8px;color:#d3dce7;font-size:15px;line-height:1.1;font-weight:740;letter-spacing:.14em}.loadout-context span{font-weight:740}.loadout-context .deck{color:#d3dce7}.loadout-context span+span::before{margin-right:9px}
+.cards{position:relative;z-index:2;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;padding:0 16px 18px;align-items:start;background:color-mix(in srgb,var(--bg) 80%,transparent);border-bottom:1px solid var(--line)}
+.cards::before{content:"";position:absolute;inset:0;pointer-events:none;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}.cards>*{position:relative;z-index:1}.loadout-card{position:relative;width:100%;aspect-ratio:316/480;filter:drop-shadow(0 3px 5px rgba(0,0,0,.45))}
+.card-art{position:absolute;z-index:1;left:6.5%;top:8.7%;width:87%;height:44%;object-fit:cover;background:#071014}.card-frame{position:absolute;z-index:2;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none}
+.loadout-card h2{position:absolute;z-index:3;left:9%;top:51.2%;width:82%;height:6.8%;margin:0;padding:0 5px;transform:translateY(-1px);display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;line-height:1;font-weight:500;text-align:center;text-shadow:0 2px 2px #111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.loadout-card h2.long-card-name{padding-inline:2px;font-size:14px;letter-spacing:-.015em}
+.card-description{position:absolute;z-index:3;left:9.5%;top:59.5%;width:81%;height:29%;margin:0;padding:4px 9px 0;display:flex;align-items:flex-start;justify-content:center;color:#303943;font-size:14px;line-height:1.25;font-weight:700;text-align:center;overflow:hidden}.level-badge{position:absolute;z-index:3;left:13.2%;top:92.7%;width:20%;aspect-ratio:1;transform:translate(-47%,-44%);display:flex;align-items:center;justify-content:center;padding:0;color:#f7fbff;font-size:27px;line-height:1;font-weight:680;font-variant-numeric:tabular-nums;text-align:center;text-shadow:0 2px 3px #10151d}
+"#;
 
 /// Strip leading queue tokens (Ranked/Live/WIP + numbers) from a map name,
 /// mirroring the TS normalization.
@@ -984,6 +1119,46 @@ mod tests {
             "<style>\n@import url('https://fonts.googleapis.com/css2?family=Inter');\n.player-row{display:grid}\n</style>",
         );
         assert_eq!(css.trim(), ".player-row{display:grid}");
+    }
+
+    #[test]
+    fn loadout_document_builds_data_bound_capture_target() {
+        let engine = TemplateEngine {
+            match_template: Arc::new("<style>:root{--bg:#080d13;--text:#fff}</style>".into()),
+            loadout_template: Arc::new(String::new()),
+            cheater_pattern_url: String::new(),
+            assets: AssetCatalog::new("missing-test-assets"),
+        };
+        let record = serde_json::json!({
+            "player": {"id": "16706730", "name": "Nabi<Cook>TV"},
+            "loadout": {
+                "id": "7968",
+                "champion_name": "Androxus",
+                "loadout_name": "New Loadout",
+                "card_ids": [11928, 13316, 13293, 13290, 13322],
+                "card_levels": [5, 5, 2, 2, 1]
+            }
+        });
+        let doc = engine.loadout_document(&record);
+        assert!(doc.contains("id=\"loadout\""));
+        assert!(doc.contains("Nabi&lt;Cook&gt;TV"));
+        assert!(doc.contains("Androxus"));
+        assert!(doc.contains("New Loadout"));
+        assert_eq!(doc.matches("class=\"loadout-card level-").count(), 5);
+        assert!(!doc.contains("__renderData"));
+        assert!(!doc.contains("http://localhost"));
+    }
+
+    #[test]
+    fn card_description_scaling_matches_typescript() {
+        assert_eq!(
+            scale_card_description("[Ability] Increase speed by {scale=10|10}%.", 5),
+            "Increase speed by 50%."
+        );
+        assert_eq!(
+            scale_card_description("Gain {1,000|250.5} Health.", 3),
+            "Gain 1,501 Health."
+        );
     }
 
     #[test]
