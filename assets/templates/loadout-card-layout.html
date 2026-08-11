@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PaladinsCat Loadout Prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #161618;
+      --panel: rgba(12, 18, 27, .94);
+      --line: rgba(148, 163, 184, .14);
+      --text: #f4f7fb;
+      --muted: #8c99ab;
+      --teal: #37d6c0;
+      --asset-root: "http://localhost:3000";
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 32px;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 20% 10%, rgba(45, 212, 191, .12), transparent 34%),
+        radial-gradient(circle at 85% 90%, rgba(91, 140, 255, .12), transparent 34%),
+        #05080d;
+    }
+
+    .prototype-note {
+      width: min(1280px, 100%);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 0 auto 12px;
+      color: #8996a8;
+      font-size: 12px;
+      letter-spacing: .04em;
+    }
+    .prototype-tools { display: flex; align-items: center; gap: 10px; }
+    .prototype-size { font: 700 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .theme-toggle {
+      display: inline-flex;
+      height: 32px;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      border: 1px solid rgba(140, 153, 171, .42);
+      border-radius: 999px;
+      color: #dce5ef;
+      background: #161618;
+      font: 650 12px/1 Inter, system-ui, sans-serif;
+      cursor: pointer;
+    }
+    .theme-toggle-track { position: relative; width: 34px; height: 18px; border-radius: 999px; background: #303741; }
+    .theme-toggle-thumb { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: #f5f7fa; box-shadow: 0 1px 4px rgba(0, 0, 0, .35); transition: transform .18s ease; }
+    .theme-toggle[aria-checked="true"] .theme-toggle-track { background: #23837f; }
+    .theme-toggle[aria-checked="true"] .theme-toggle-thumb { transform: translateX(16px); }
+
+    .viewport { width: 1280px; max-width: 100%; margin: auto; }
+    .loadout-canvas { width: 1280px; height: 720px; transform-origin: top left; }
+    .loadout {
+      position: relative;
+      width: 1280px;
+      height: 720px;
+      overflow: hidden;
+      border: 1px solid rgba(111, 130, 153, .35);
+      border-radius: 20px;
+      background: var(--bg);
+    }
+    .loadout::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: var(--champion-banner, url("http://localhost:3000/images/champions/Banner_Ash.png")) center 24% / cover no-repeat;
+      filter: saturate(1.15);
+      opacity: .7;
+    }
+
+    .loadout-header {
+      position: relative;
+      z-index: 1;
+      height: 238px;
+      display: flex;
+      align-items: flex-start;
+      padding: 28px 38px;
+      border-bottom: 1px solid rgba(72, 211, 190, .22);
+      background: rgba(5, 9, 15, .58);
+    }
+    .loadout-header::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      -webkit-backdrop-filter: blur(7px);
+      backdrop-filter: blur(7px);
+      -webkit-mask-image: linear-gradient(90deg, #000, transparent 20%, transparent 80%, #000);
+      mask-image: linear-gradient(90deg, #000, transparent 20%, transparent 80%, #000);
+    }
+    .loadout-header > * { position: relative; z-index: 1; }
+    .brand-line { display: flex; align-items: center; gap: 12px; }
+    .brand-name { display: inline-flex; align-items: center; gap: 11px; font-size: 25px; line-height: 1; font-weight: 820; letter-spacing: -.025em; }
+    .brand-name img { width: 32px; height: 32px; object-fit: contain; }
+    .status-tag { display: inline-flex; height: 23px; align-items: center; padding: 0 9px; border: 1px solid rgba(55, 214, 192, .34); border-radius: 999px; color: #bff7ee; background: rgba(15, 118, 110, .25); font-size: 10px; font-weight: 760; letter-spacing: .035em; }
+    .player-name { margin: 10px 0 0; padding-bottom: 4px; color: var(--text); font-size: 54px; line-height: 1.08; font-weight: 760; letter-spacing: -.02em; text-shadow: 0 3px 5px rgba(0, 0, 0, .45); }
+    .loadout-context { display: flex; align-items: center; gap: 10px; margin-top: 8px; color: #d3dce7; font-size: 15px; line-height: 1.1; font-weight: 760; text-transform: uppercase; letter-spacing: .11em; }
+    .loadout-context span + span::before { content: "·"; margin-right: 6px; color: #667386; }
+
+    .cards {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 4px;
+      align-items: start;
+      padding: 0 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--bg) 80%, transparent);
+    }
+    .cards::before { content: ""; position: absolute; inset: 0; pointer-events: none; -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+    .card { position: relative; z-index: 1; width: 100%; aspect-ratio: 316 / 480; filter: drop-shadow(0 3px 5px rgba(0, 0, 0, .45)); }
+    .card-art { position: absolute; z-index: 1; left: 6.5%; top: 8.7%; width: 87%; height: 44%; object-fit: cover; background: #071014; }
+    .card-frame { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+    .card h2 { position: absolute; z-index: 3; left: 9%; top: 51.2%; width: 82%; height: 6.8%; margin: 0; padding: 0 5px; display: flex; align-items: center; justify-content: center; overflow: hidden; color: #fff; font-size: 18px; line-height: 1; text-align: center; text-overflow: ellipsis; text-shadow: 0 2px 2px #111; white-space: nowrap; }
+    .card p { position: absolute; z-index: 3; left: 9.5%; top: 59.5%; width: 81%; height: 29%; margin: 0; padding: 4px 9px 0; display: flex; align-items: flex-start; justify-content: center; overflow: hidden; color: #303943; font-size: 14px; line-height: 1.25; font-weight: 700; text-align: center; }
+    .level { position: absolute; z-index: 3; left: 13.2%; top: 92.7%; width: 20%; aspect-ratio: 1; transform: translate(-47%, -44%); display: flex; align-items: center; justify-content: center; padding: 0; color: #f7fbff; font-size: 27px; line-height: 1; font-weight: 820; font-variant-numeric: tabular-nums; text-shadow: 0 2px 3px #10151d; }
+
+    body[data-theme="light"] { --bg: #f5f7f9; --text: #11161d; --muted: #596675; }
+    body[data-theme="light"] .loadout::before { filter: saturate(1.4); opacity: .6; }
+    body[data-theme="light"] .loadout-header { background: rgba(248, 250, 252, .7); }
+    body[data-theme="light"] .brand-name img { filter: brightness(0); opacity: .9; }
+    body[data-theme="light"] .loadout-context { color: #1f2933; }
+  </style>
+</head>
+<body data-theme="dark">
+  <header class="prototype-note">
+    <span>PaladinsCat loadout image · editable HTML/CSS layout prototype</span>
+    <div class="prototype-tools">
+      <span class="prototype-size">1280 × 720</span>
+      <button class="theme-toggle" type="button" role="switch" aria-checked="false">
+        <span class="theme-toggle-track"><span class="theme-toggle-thumb"></span></span>
+        <span class="theme-label">Dark</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="viewport">
+    <div class="loadout-canvas">
+      <section class="loadout" aria-label="Ash saved loadout preview">
+        <header class="loadout-header">
+          <div>
+            <div class="brand-line">
+              <span class="brand-name"><img src="http://localhost:3000/images/icons/paladinscat.png" alt="" />PaladinsCat</span>
+              <span class="status-tag">Loadout</span>
+            </div>
+            <h1 class="player-name">bosshog27170</h1>
+            <div class="loadout-context"><span>Ash</span><span>New Loadout</span></div>
+          </div>
+        </header>
+
+        <section class="cards" aria-label="Saved loadout cards">
+          <article class="card">
+            <img class="card-art" src="http://localhost:3000/images/cards/Card_War_Machine.avif" alt="" />
+            <img class="card-frame" src="http://localhost:3000/images/cards/frames/Card_Frame_Level_4_Epic.png" alt="" />
+            <h2>War Machine</h2><p>Reduce your active Cooldowns by 40% after getting an Elimination.</p><span class="level">4</span>
+          </article>
+          <article class="card">
+            <img class="card-art" src="http://localhost:3000/images/cards/Card_Gate_Crasher.avif" alt="" />
+            <img class="card-frame" src="http://localhost:3000/images/cards/frames/Card_Frame_Level_3_Rare.png" alt="" />
+            <h2>Gate-Crasher</h2><p>Reduce the Cooldown of Shoulder Bash by 2.4s.</p><span class="level">3</span>
+          </article>
+          <article class="card">
+            <img class="card-art" src="http://localhost:3000/images/cards/Card_Vanguard.avif" alt="" />
+            <img class="card-frame" src="http://localhost:3000/images/cards/frames/Card_Frame_Level_4_Epic.png" alt="" />
+            <h2>Vanguard</h2><p>Reduce your damage taken by 32% for 2s after using Shoulder Bash.</p><span class="level">4</span>
+          </article>
+          <article class="card">
+            <img class="card-art" src="http://localhost:3000/images/cards/Card_Indomitable.avif" alt="" />
+            <img class="card-frame" src="http://localhost:3000/images/cards/frames/Card_Frame_Level_2_Uncommon.png" alt="" />
+            <h2>Indomitable</h2><p>Gain 20% Lifesteal.</p><span class="level">2</span>
+          </article>
+          <article class="card">
+            <img class="card-art" src="http://localhost:3000/images/cards/Card_Heavy_Metal.avif" alt="" />
+            <img class="card-frame" src="http://localhost:3000/images/cards/frames/Card_Frame_Level_2_Uncommon.png" alt="" />
+            <h2>Heavy Metal</h2><p>Increase your maximum Health by 300.</p><span class="level">2</span>
+          </article>
+        </section>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const body = document.body;
+    const toggle = document.querySelector('.theme-toggle');
+    const label = document.querySelector('.theme-label');
+    const viewport = document.querySelector('.viewport');
+    const canvas = document.querySelector('.loadout-canvas');
+
+    const samples = {
+      furia: {
+        champion: 'Furia',
+        loadout: 'Burning Oath',
+        banner: 'http://localhost:3000/images/champions/Banner_Furia.png',
+        cards: [
+          ['Ignition', 'Reduce the Cooldown of Wings of Wrath by 1s after hitting an enemy with Pyre Strike.', 3],
+          ['Solar Flare', 'Increase the radius of Pyre Strike by 10%.', 3],
+          ['Stoke the Fire', 'Reduce the Cooldown of Pyre Strike by 0.8s for each successful hit by Wings of Wrath.', 4],
+          ['Hallowed Sight', 'Generate 15% Wrath after hitting an enemy with Pyre Strike.', 1],
+          ['Devout Dexterity', 'Regenerate 1 Ammo every 0.5s for 1s after earning an Elimination.', 4],
+        ],
+      },
+    };
+
+    const frameByLevel = {
+      1: 'Card_Frame_Level_1_Common.png',
+      2: 'Card_Frame_Level_2_Uncommon.png',
+      3: 'Card_Frame_Level_3_Rare.png',
+      4: 'Card_Frame_Level_4_Epic.png',
+      5: 'Card_Frame_Level_5_Legendary.png',
+    };
+
+    function cardAssetName(name) {
+      return `Card_${name.replaceAll(' ', '_')}.avif`;
+    }
+
+    function loadSample() {
+      const sample = samples[new URLSearchParams(location.search).get('sample')];
+      if (!sample) return;
+
+      const loadout = document.querySelector('.loadout');
+      loadout.style.setProperty('--champion-banner', `url("${sample.banner}")`);
+      loadout.setAttribute('aria-label', `${sample.champion} saved loadout preview`);
+      document.querySelector('.loadout-context span:first-child').textContent = sample.champion;
+      document.querySelector('.loadout-context span:last-child').textContent = sample.loadout;
+
+      document.querySelectorAll('.card').forEach((card, index) => {
+        const [name, description, level] = sample.cards[index];
+        const art = card.querySelector('.card-art');
+        art.src = `http://localhost:3000/images/cards/${cardAssetName(name)}`;
+        art.alt = name;
+        card.querySelector('.card-frame').src = `http://localhost:3000/images/cards/frames/${frameByLevel[level]}`;
+        card.querySelector('h2').textContent = name;
+        card.querySelector('p').textContent = description;
+        card.querySelector('.level').textContent = level;
+      });
+    }
+
+    function resizeCanvas() {
+      const scale = Math.min(1, viewport.clientWidth / 1280);
+      canvas.style.transform = `scale(${scale})`;
+      viewport.style.height = `${720 * scale}px`;
+    }
+
+    toggle.addEventListener('click', () => {
+      const light = body.dataset.theme !== 'light';
+      body.dataset.theme = light ? 'light' : 'dark';
+      toggle.setAttribute('aria-checked', String(light));
+      label.textContent = light ? 'Light' : 'Dark';
+    });
+    window.addEventListener('resize', resizeCanvas);
+    loadSample();
+    resizeCanvas();
+  </script>
+</body>
+</html>

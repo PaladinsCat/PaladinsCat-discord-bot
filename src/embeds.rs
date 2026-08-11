@@ -1232,7 +1232,7 @@ fn month_short(month: u32) -> &'static str {
 
 // Keep the extension manifest single-sourced from the legacy bot.  Avatar IDs
 // with animated assets must use the canonical GitHub URL for Discord to retain GIF animation.
-const AVATAR_MANIFEST: &str = include_str!("../../discord-bot/src/paladins-avatar-assets.ts");
+const AVATAR_MANIFEST: &str = include_str!("../legacy-node/src/paladins-avatar-assets.ts");
 const AVATAR_ASSET_BASE: &str =
     "https://raw.githubusercontent.com/EthanHicks1/PaladinsArtAssets/master/avatars";
 

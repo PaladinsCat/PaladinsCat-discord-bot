@@ -1,0 +1,1197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PaladinsCat Match Result Prototype</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    :root {
+      color-scheme: dark;
+      --bg: #161618;
+      --panel: rgba(12, 18, 27, .94);
+      --line: rgba(148, 163, 184, .14);
+      --text: #f4f7fb;
+      --muted: #8c99ab;
+      --teal: #37d6c0;
+      --blue: #0c4493;
+      --rose: #a52b2b;
+      --score-blue: #3488f0;
+      --score-rose: #ef4444;
+      --team-one-row-a: #0d3387;
+      --team-one-row-b: #001342;
+      --team-two-row-a: #801414;
+      --team-two-row-b: #420000;
+      --police-light: #221111;
+      --cheater-pattern: url('./cheater-police-line.svg');
+      --moderation-tag-bg: #161618;
+      --cheater-tag-text: #ff0f0f;
+      --suspicious-tag-text: #ffc124;
+      --gold: #f9c95f;
+      --heal: #66e3a4;
+      --shield: #87a8ff;
+      --map-image: url('http://localhost:3000/images/maps/Ranked_Frog_Isle.png');
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 32px 332px 32px 32px;
+      background:
+        radial-gradient(circle at 20% 10%, rgba(45, 212, 191, .12), transparent 34%),
+        radial-gradient(circle at 85% 90%, rgba(91, 140, 255, .12), transparent 34%),
+        #05080d;
+    }
+
+    .prototype-note {
+      width: min(2048px, 100%);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      color: #8996a8;
+      font-size: 12px;
+      letter-spacing: .04em;
+    }
+    .prototype-tools { display: flex; align-items: center; gap: 14px; }
+    .prototype-modes { display: inline-flex; padding: 2px; border: 1px solid rgba(140, 153, 171, .28); border-radius: 999px; background: rgba(22, 22, 24, .72); }
+    .prototype-flags { display: inline-flex; padding: 2px; border: 1px solid rgba(140, 153, 171, .28); border-radius: 999px; background: rgba(22, 22, 24, .72); }
+    .prototype-mode-link { padding: 6px 9px; border-radius: 999px; color: #8996a8; text-decoration: none; font-size: 10px; font-weight: 700; letter-spacing: .02em; }
+    .prototype-mode-link.active { color: #eff6ff; background: rgba(71, 85, 105, .62); }
+    .theme-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 118px;
+      height: 32px;
+      padding: 0 10px;
+      border: 1px solid rgba(140, 153, 171, .42);
+      border-radius: 999px;
+      color: #dce5ef;
+      background: #161618;
+      font: 650 12px/1 Inter, system-ui, sans-serif;
+      cursor: pointer;
+    }
+    .theme-toggle-track {
+      position: relative;
+      width: 34px;
+      height: 18px;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      background: #303741;
+      transition: background .18s ease;
+    }
+    .theme-toggle-thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #f5f7fa;
+      box-shadow: 0 1px 4px rgba(0,0,0,.35);
+      transition: transform .18s ease;
+    }
+    .theme-toggle[aria-checked="true"] .theme-toggle-track { background: #23837f; }
+    .theme-toggle[aria-checked="true"] .theme-toggle-thumb { transform: translateX(16px); }
+
+    .color-lab {
+      position: fixed;
+      z-index: 100;
+      top: 20px;
+      right: 20px;
+      width: 280px;
+      max-height: calc(100vh - 40px);
+      overflow: auto;
+      padding: 16px;
+      border: 1px solid rgba(148, 163, 184, .28);
+      border-radius: 18px;
+      color: #e5eaf1;
+      background: rgba(18, 20, 24, .97);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, .42);
+      scrollbar-width: thin;
+    }
+    .color-lab-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .color-lab-title { margin: 0; font-size: 16px; line-height: 1; letter-spacing: -.01em; }
+    .color-lab-reset,
+    .color-lab-copy {
+      border: 1px solid rgba(148, 163, 184, .28);
+      border-radius: 8px;
+      color: #cbd5e1;
+      background: #252930;
+      font: 700 10px/1 Inter, system-ui, sans-serif;
+      cursor: pointer;
+    }
+    .color-lab-reset { padding: 7px 9px; }
+    .color-lab-copy { width: 100%; padding: 9px 10px; }
+    .color-lab-reset:hover,
+    .color-lab-copy:hover { border-color: rgba(148, 163, 184, .52); color: #fff; }
+    .color-lab-help { margin: 0 0 12px; color: #8f99a8; font-size: 10px; line-height: 1.45; }
+    .wallpaper-lab {
+      margin-bottom: 12px;
+      padding: 10px;
+      border: 1px solid rgba(148, 163, 184, .2);
+      border-radius: 12px;
+      background: #171a1f;
+    }
+    .wallpaper-lab-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 9px;
+    }
+    .wallpaper-lab-title { margin: 0; color: #f4f7fb; font-size: 12px; line-height: 1.2; }
+    .wallpaper-progress { color: #8f99a8; font-size: 10px; font-weight: 700; }
+    .wallpaper-field { display: grid; gap: 5px; margin-bottom: 8px; }
+    .wallpaper-field-label { color: #9eabbc; font-size: 10px; font-weight: 700; }
+    .wallpaper-select {
+      width: 100%;
+      height: 36px;
+      padding: 0 9px;
+      border: 1px solid rgba(148, 163, 184, .24);
+      border-radius: 8px;
+      color: #f4f7fb;
+      background: #101216;
+      font: 650 11px/1 Inter, system-ui, sans-serif;
+    }
+    .wallpaper-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+    .wallpaper-file-label,
+    .wallpaper-reset {
+      display: flex;
+      min-height: 36px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 10px;
+      border: 1px solid rgba(148, 163, 184, .28);
+      border-radius: 8px;
+      color: #dbe4ef;
+      background: #252930;
+      font: 700 10px/1 Inter, system-ui, sans-serif;
+      cursor: pointer;
+    }
+    .wallpaper-file-label:hover,
+    .wallpaper-reset:hover { border-color: rgba(148, 163, 184, .52); color: #fff; }
+    .wallpaper-file-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .wallpaper-file-label:focus-within { border-color: #5e8dd6; box-shadow: 0 0 0 2px rgba(94, 141, 214, .14); }
+    .wallpaper-status { min-height: 30px; margin: 8px 0 0; color: #8f99a8; font-size: 10px; line-height: 1.45; }
+    .color-targets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+    .color-target {
+      display: grid;
+      min-width: 0;
+      grid-template-columns: 18px minmax(0, 1fr);
+      align-items: center;
+      gap: 7px;
+      min-height: 34px;
+      padding: 6px 7px;
+      border: 1px solid rgba(148, 163, 184, .16);
+      border-radius: 8px;
+      color: #aab4c1;
+      background: #1a1d22;
+      font: 650 9px/1.15 Inter, system-ui, sans-serif;
+      text-align: left;
+      cursor: pointer;
+    }
+    .color-target:hover { border-color: rgba(148, 163, 184, .36); color: #e5eaf1; }
+    .color-target[aria-pressed="true"] { border-color: #5e8dd6; color: #fff; background: #252e3c; box-shadow: 0 0 0 1px rgba(94, 141, 214, .18); }
+    .color-target-swatch { width: 18px; height: 18px; border: 1px solid rgba(255,255,255,.2); border-radius: 5px; background: var(--target-color); }
+    .color-editor { padding: 10px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 12px; background: #171a1f; }
+    .color-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .color-editor-target { overflow: hidden; color: #f4f7fb; font-size: 11px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .color-editor-hex { color: #9eabbc; font: 700 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .color-input-row { display: grid; grid-template-columns: 56px 1fr; gap: 8px; margin-bottom: 10px; }
+    .color-native {
+      width: 56px;
+      height: 42px;
+      padding: 0;
+      overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, .26);
+      border-radius: 8px;
+      background: transparent;
+      cursor: pointer;
+    }
+    .color-native::-webkit-color-swatch-wrapper { padding: 0; }
+    .color-native::-webkit-color-swatch { border: 0; }
+    .color-hex-input {
+      min-width: 0;
+      height: 42px;
+      padding: 0 10px;
+      border: 1px solid rgba(148, 163, 184, .24);
+      border-radius: 8px;
+      outline: none;
+      color: #f4f7fb;
+      background: #101216;
+      font: 700 12px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .color-hex-input:focus { border-color: #5e8dd6; box-shadow: 0 0 0 2px rgba(94, 141, 214, .14); }
+    .color-slider { display: grid; grid-template-columns: 14px 1fr 30px; align-items: center; gap: 7px; margin-top: 7px; }
+    .color-slider label,
+    .color-slider output { color: #8f99a8; font: 700 9px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .color-slider output { text-align: right; }
+    .color-slider input { width: 100%; accent-color: #7ca7e8; cursor: ew-resize; }
+    .color-palette-output {
+      width: 100%;
+      min-height: 58px;
+      max-height: 92px;
+      margin: 10px 0 8px;
+      overflow: auto;
+      padding: 8px;
+      border: 1px solid rgba(148, 163, 184, .16);
+      border-radius: 8px;
+      color: #9eabbc;
+      background: #101216;
+      font: 600 8px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+      white-space: pre-wrap;
+    }
+    .color-lab-status { min-height: 14px; margin: 8px 0 0; color: #6f7a88; font-size: 9px; line-height: 1.35; text-align: center; }
+    .scoreboard [data-palette-target] { cursor: crosshair; }
+
+    @media (max-width: 760px) {
+      body { padding: 24px; }
+      .color-lab { top: auto; right: 12px; bottom: 12px; left: 12px; width: auto; max-height: 44vh; }
+    }
+
+    .viewport { width: 2048px; max-width: calc(100vw - 64px); }
+    .scoreboard-canvas {
+      width: 2048px;
+      height: 1152px;
+      transform-origin: top left;
+    }
+    .scoreboard {
+      position: relative;
+      display: grid;
+      grid-template-rows: 26px 275px 29px 86px 275px 29px;
+      width: 1280px;
+      height: 720px;
+      overflow: hidden;
+      border: 1px solid rgba(111, 130, 153, .35);
+      border-radius: 20px;
+      background: var(--bg);
+      box-shadow: none;
+      transform-origin: top left;
+      transform: scale(1.6);
+    }
+    .scoreboard::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: var(--map-image) center / cover no-repeat;
+      filter: saturate(1.15);
+      opacity: .7;
+    }
+    .scoreboard > * { position: relative; z-index: 1; }
+
+    .hero {
+      position: relative;
+      grid-row: 4;
+      height: 86px;
+      padding: 7px 38px 9px;
+      display: grid;
+      grid-template-columns: 285px 590px minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr);
+      align-items: center;
+      background: rgba(5, 9, 15, .58);
+      border-bottom: 1px solid rgba(72, 211, 190, .22);
+    }
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      -webkit-backdrop-filter: blur(7px);
+      backdrop-filter: blur(7px);
+      -webkit-mask-image: linear-gradient(90deg, #000, transparent 20%, transparent 80%, #000);
+      mask-image: linear-gradient(90deg, #000, transparent 20%, transparent 80%, #000);
+    }
+    .hero > * { position: relative; z-index: 1; }
+    .hero::after {
+      content: none;
+    }
+    .match-identity { align-self: stretch; display: flex; min-width: 0; flex-direction: column; justify-content: space-between; padding: 1px 0 3px; }
+    .brand-line { display: flex; align-items: center; gap: 9px; color: var(--text); font-size: 13px; font-weight: 750; }
+    .brand-name { display: inline-flex; align-items: center; gap: 9px; flex: 0 0 auto; font-size: 16px; font-weight: 800; letter-spacing: -.02em; }
+    .brand-line img { width: 24px; height: 24px; object-fit: contain; }
+    .status-tags { display: flex; min-width: 0; align-items: center; gap: 5px; }
+    .status-tag { display: inline-flex; height: 17px; align-items: center; padding: 0 7px; border: 1px solid rgba(148, 163, 184, .28); border-radius: 999px; color: #cbd5e1; background: rgba(71, 85, 105, .28); font-size: 8px; font-weight: 760; line-height: 1; letter-spacing: .035em; white-space: nowrap; }
+    .status-tag.ranked { color: #f7d877; border-color: rgba(234, 179, 8, .36); background: rgba(161, 98, 7, .25); }
+    .status-tag.casual { color: #d1d5db; border-color: rgba(156, 163, 175, .32); background: rgba(75, 85, 99, .3); }
+    .status-tag.recovered { color: #86efac; border-color: rgba(34, 197, 94, .34); background: rgba(21, 128, 61, .25); }
+    .status-tag.broken { color: #fda4af; border-color: rgba(244, 63, 94, .34); background: rgba(159, 18, 57, .25); }
+    .status-tag.private { color: #d8b4fe; border-color: rgba(168, 85, 247, .34); background: rgba(107, 33, 168, .25); }
+    .map-line { display: flex; align-items: center; margin-top: 0; white-space: nowrap; }
+    .map-name { color: var(--text); font-size: 23px; line-height: 1; font-weight: 760; letter-spacing: -.02em; }
+    .map-name.long { max-width: 285px; font-size: 19px; letter-spacing: -.035em; }
+    .match-context { display: flex; align-items: center; gap: 7px; color: #bdc8d6; font-size: 10px; line-height: 1; font-weight: 740; text-transform: uppercase; letter-spacing: .14em; }
+    .match-context span + span::before { content: "·"; margin-right: 6px; color: #667386; }
+
+    .score { grid-column: 2; justify-self: stretch; display: grid; width: 100%; grid-template-columns: 1fr auto auto auto 1fr; align-items: center; gap: 8px; }
+    .score-number { font-size: 41px; line-height: 1; font-weight: 820; letter-spacing: -.05em; }
+    .score-number.team-one-score { color: var(--score-blue); text-shadow: 0 0 12px rgba(52, 136, 240, .38); transform: translate(-10px, -5px); }
+    .score-number.team-two-score { color: var(--score-rose); text-shadow: 0 0 12px rgba(239, 68, 68, .38); transform: translate(10px, 5px); }
+    .score-separator { color: #607086; font-size: 17px; font-weight: 600; }
+    .score.casual { width: auto; justify-self: center; grid-template-columns: auto auto auto; gap: 14px; }
+    .score-bans { display: flex; min-width: 0; flex-direction: column; gap: 7px; transform: translateY(-4px); }
+    .score-bans.left, .score-bans.right { align-items: center; }
+    .score-bans .ban-label { color: #d3dbe5; font-size: 9px; line-height: 1; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; }
+    .ban-picks { display: grid; grid-auto-flow: column; grid-auto-columns: 49px; align-items: start; justify-content: center; gap: 3px; }
+    .score-bans .ban-pick { flex-direction: column; min-width: 0; overflow: hidden; font-size: 0; line-height: 0; text-align: center; white-space: nowrap; }
+    .score-bans .ban-pick img { width: 48px; height: 48px; }
+
+    .match-meta { grid-column: 3; align-self: center; justify-self: stretch; display: grid; height: 100%; grid-template-columns: 135px minmax(0, 1fr); grid-template-areas: "tier timestamp" "duration match"; column-gap: 20px; row-gap: 7px; align-items: end; text-align: right; transform: translateY(-3px); }
+    .match-meta.casual-meta .tier-meta { visibility: hidden; }
+    .tier-meta { display: flex; align-items: center; justify-content: flex-end; gap: 7px; text-align: right; }
+    .tier-meta { grid-area: tier; }
+    .tier-meta .meta-value { white-space: nowrap; }
+    .timestamp-meta { grid-area: timestamp; align-self: center; color: var(--text); font-size: 11px; font-weight: 690; line-height: 1; white-space: nowrap; }
+    .duration-meta { grid-area: duration; }
+    .match-id-meta { grid-area: match; }
+    .tier-meta > div, .duration-meta, .match-id-meta { display: flex; flex-direction: column; }
+    .tier-meta img { width: 30px; height: 30px; object-fit: contain; filter: drop-shadow(0 3px 5px rgba(0,0,0,.45)); }
+    .meta-value { color: var(--text); font-size: 14px; font-weight: 690; font-variant-numeric: tabular-nums; }
+    .meta-label { order: -1; margin: 0 0 3px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .13em; }
+
+    .grid-row {
+      display: grid;
+      grid-template-columns: 52px 44px 58px 210px 56px 50px 102px 108px 64px repeat(4, 100px);
+      column-gap: 8px;
+      align-items: center;
+      padding: 0 20px;
+    }
+    .columns {
+      grid-row: 1;
+      height: 26px;
+      color: #758397;
+      background: color-mix(in srgb, #161618 80%, transparent);
+      border-bottom: 1px solid var(--line);
+      font-size: 8.5px;
+      font-weight: 760;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .columns > :not(:nth-child(3)) { text-align: center; }
+    .team-bar {
+      height: 29px;
+      padding: 0 20px;
+      display: grid;
+      align-items: center;
+      background: color-mix(in srgb, #161618 80%, transparent);
+      border-bottom: 1px solid var(--line);
+    }
+    #team-one { grid-row: 2; }
+    #team-one-summary { grid-row: 3; }
+    #team-two { grid-row: 5; }
+    #team-two-summary { grid-row: 6; }
+    .team-name { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 780; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+    .team-name::before { content: ""; width: 6px; height: 6px; border-radius: 99px; background: currentColor; box-shadow: 0 0 12px currentColor; }
+    .team-one .team-name { color: var(--blue); }
+    .team-two .team-name { color: var(--rose); }
+    .result { color: #a9b4c2; font-size: 8px; letter-spacing: .08em; }
+    .team-two .result { color: #ff9caf; }
+    .team-heading { grid-column: 1 / 3; display: flex; align-items: center; min-width: 0; }
+    .ban-pick { display: flex; align-items: center; gap: 4px; color: #8f9caf; }
+    .ban-pick img { width: 24px; height: 24px; object-fit: cover; border-radius: 6px; border: 1px solid rgba(255,255,255,.14); filter: saturate(.72); }
+    .team-total { color: #d7dee7; text-align: center; font-size: 12.5px; font-weight: 760; font-variant-numeric: tabular-nums; }
+    .average-total { display: flex; align-items: baseline; justify-content: center; gap: 2px; }
+    .team-average-label { color: var(--muted); font-size: 6.5px; font-weight: 760; letter-spacing: .04em; }
+    .team-total b { color: #c5ced9; font-weight: 740; }
+    .team-total.level-total { grid-column: 3; }
+    .team-total.elo-total { grid-column: 5; }
+    .team-total.credits-total { grid-column: 7; }
+    .team-total.kda-total { grid-column: 8; }
+    .team-total.objective-total { grid-column: 9; }
+    .team-total.damage-total { grid-column: 10; }
+    .team-total.taken-total { grid-column: 11; }
+    .team-total.shield-total { grid-column: 12; }
+    .team-total.healing-total { grid-column: 13; }
+
+    .player-row {
+      position: relative;
+      height: 55px;
+      background: color-mix(in srgb, var(--team-one-row-a) 80%, transparent);
+      border-bottom: 1px solid rgba(148, 163, 184, .18);
+      font-variant-numeric: tabular-nums;
+    }
+    .player-row > * { position: relative; z-index: 3; }
+    .player-row.cheater-row::before {
+      content: "";
+      position: absolute;
+      z-index: 1;
+      inset: 0;
+      overflow: hidden;
+      background-color: var(--police-light);
+      background-image: var(--cheater-pattern);
+      background-position: 0 0;
+      background-repeat: repeat-x;
+      background-size: 90.51px 55px;
+      pointer-events: none;
+    }
+    .player-row::after {
+      content: "";
+      position: absolute;
+      z-index: 2;
+      inset: 5px 20px;
+      pointer-events: none;
+      opacity: .55;
+      background:
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 56px 0 / 1px 100% no-repeat,
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 108px 0 / 1px 100% no-repeat,
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 174px 0 / 1px 100% no-repeat,
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 392px 0 / 1px 100% no-repeat,
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 456px 0 / 1px 100% no-repeat,
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 514px 0 / 1px 100% no-repeat,
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 624px 0 / 1px 100% no-repeat,
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 740px 0 / 1px 100% no-repeat,
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 812px 0 / 1px 100% no-repeat,
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 920px 0 / 1px 100% no-repeat,
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 1028px 0 / 1px 100% no-repeat,
+        linear-gradient(to bottom, transparent, rgba(148, 163, 184, .28) 28%, rgba(148, 163, 184, .28) 72%, transparent) 1136px 0 / 1px 100% no-repeat;
+    }
+    #team-one .player-row:nth-child(even) { background: color-mix(in srgb, var(--team-one-row-b) 80%, transparent); }
+    #team-two .player-row { background: color-mix(in srgb, var(--team-two-row-a) 80%, transparent); }
+    #team-two .player-row:nth-child(even) { background: color-mix(in srgb, var(--team-two-row-b) 80%, transparent); }
+    .champion-wrap { position: relative; width: 52px; height: 52px; justify-self: center; }
+    .champion-icon { width: 52px; height: 52px; object-fit: cover; border-radius: 9px; border: 1px solid rgba(255,255,255,.16); }
+    .player { min-width: 0; padding-left: 8px; }
+    .player-name { display: flex; min-width: 0; align-items: center; gap: 5px; overflow: hidden; color: var(--text); font-size: 18px; font-weight: 720; line-height: 1.04; letter-spacing: -.01em; white-space: nowrap; }
+    .player-name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .verified-player-icon { width: 14px; height: 14px; flex: 0 0 auto; object-fit: contain; }
+    .player-status-tag { display: inline-flex; flex: 0 0 auto; align-items: center; border-radius: 3px; padding: 2px 5px; font-size: 8px; font-weight: 800; line-height: 1; letter-spacing: .02em; }
+    .player-status-tag.cheater { color: var(--cheater-tag-text); background: var(--moderation-tag-bg); }
+    .player-status-tag.suspicious { color: var(--suspicious-tag-text); background: var(--moderation-tag-bg); }
+    .player-elo { color: #dbe2eb; text-align: center; font-size: 16.5px; font-weight: 680; letter-spacing: .01em; white-space: nowrap; }
+    .player-sub { margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 12.5px; font-weight: 550; letter-spacing: .035em; text-overflow: ellipsis; white-space: nowrap; }
+    .talent-icon { width: 50px; height: 50px; justify-self: center; object-fit: contain; }
+    .level { color: #c8d1dc; text-align: center; font-size: 16.5px; font-weight: 680; }
+    .party-badge {
+      position: absolute;
+      right: -4px;
+      top: -4px;
+      display: grid;
+      min-width: 21px;
+      height: 17px;
+      place-items: center;
+      padding: 0 5px;
+      border: 1px solid rgba(148, 240, 226, .98);
+      border-radius: 99px;
+      color: #f5fffd;
+      background: rgba(15, 118, 110, .9);
+      font-size: 9px;
+      font-weight: 850;
+      box-shadow: 0 2px 7px rgba(0, 0, 0, .45);
+    }
+    .rank { display: grid; place-items: center; }
+    .rank img { width: 42px; height: 42px; object-fit: contain; filter: drop-shadow(0 3px 5px rgba(0,0,0,.4)); }
+    .metric { justify-self: stretch; padding: 5px 0; color: #dbe2eb; text-align: center; font-size: 22px; font-weight: 720; line-height: 1; letter-spacing: -.025em; }
+    .metric.kda { color: #f5f7fb; font-size: 18px; }
+    .metric.damage { --accent: #ff6675; }
+    .metric.taken { --accent: #c94f60; }
+    .metric.shield { --accent: var(--shield); }
+    .metric.heal { --accent: var(--heal); }
+    .metric.obj { --accent: #f4b974; }
+    .metric.credits { --accent: var(--gold); }
+    .credits, .credits-header, .credits-total { display: flex; align-items: center; justify-content: center; gap: 4px; }
+    .credits img { width: 15px; height: 15px; object-fit: contain; }
+    .credits-header img { width: 12px; height: 12px; object-fit: contain; }
+    .credits-total img { width: 12px; height: 12px; object-fit: contain; }
+    .metric.peak { position: relative; font-weight: 820; }
+    .metric.peak::after {
+      content: "";
+      position: absolute;
+      left: 22%;
+      right: 22%;
+      bottom: 0;
+      height: 2px;
+      border-radius: 99px;
+      background: linear-gradient(90deg, transparent, var(--accent) 28%, var(--accent) 72%, transparent);
+      box-shadow: 0 -4px 8px var(--accent);
+      opacity: .6;
+    }
+
+    body[data-theme="light"] {
+      --bg: #f5f7f9;
+      --panel: rgba(255, 255, 255, .96);
+      --line: rgba(66, 79, 92, .22);
+      --text: #11161d;
+      --muted: #596675;
+      --team-one-row-a: #5b7fae;
+      --team-one-row-b: #345f9b;
+      --team-two-row-a: #b66e6e;
+      --team-two-row-b: #a34a4a;
+      --gold: #976700;
+      --heal: #087a4d;
+      --shield: #315eb8;
+      background:
+        radial-gradient(circle at 20% 10%, rgba(45, 165, 153, .16), transparent 36%),
+        radial-gradient(circle at 85% 90%, rgba(91, 140, 255, .14), transparent 36%),
+        #edf2f5;
+    }
+    body[data-theme="light"] .prototype-note { color: #34414d; }
+    body[data-theme="light"] .prototype-modes,
+    body[data-theme="light"] .prototype-flags { background: rgba(247, 249, 251, .82); border-color: #aeb8c2; }
+    body[data-theme="light"] .prototype-mode-link.active { color: #17202a; background: #dce4ea; }
+    body[data-theme="light"] .theme-toggle { color: #17202a; background: #f7f9fb; border-color: #aeb8c2; }
+    body[data-theme="light"] .brand-line img { filter: brightness(0); opacity: .9; }
+    body[data-theme="light"] .rank img,
+    body[data-theme="light"] .tier-meta img { filter: none; }
+    body[data-theme="light"] .party-badge { box-shadow: none; }
+    body[data-theme="light"] .credits img,
+    body[data-theme="light"] .credits-total img { filter: brightness(0); opacity: .82; }
+    body[data-theme="light"] .metric.damage { --accent: #ff3158; }
+    body[data-theme="light"] .metric.taken { --accent: #e1254b; }
+    body[data-theme="light"] .metric.shield { --accent: #346dff; }
+    body[data-theme="light"] .metric.heal { --accent: #00a96b; }
+    body[data-theme="light"] .metric.obj { --accent: #ee8b16; }
+    body[data-theme="light"] .metric.credits { --accent: #b87800; }
+    body[data-theme="light"] .metric.peak::after {
+      height: 3px;
+      box-shadow: 0 -5px 11px var(--accent);
+      opacity: .5;
+    }
+    body[data-theme="light"] .scoreboard { border-color: rgba(67, 83, 99, .38); }
+    body[data-theme="light"] .scoreboard::before { filter: saturate(1.4); opacity: .6; }
+    body[data-theme="light"] .columns,
+    body[data-theme="light"] .team-bar { color: #000; background: color-mix(in srgb, #e9edf1 80%, transparent); }
+    body[data-theme="light"] .columns { border-bottom-color: rgba(57, 69, 81, .28); }
+    body[data-theme="light"] .player-row { border-bottom-color: rgba(63, 76, 90, .25); }
+    body[data-theme="light"] .player-row::after { opacity: .72; filter: brightness(.62); }
+    body[data-theme="light"] .player-row.cheater-row::before {
+      background-color: var(--police-light);
+    }
+    body[data-theme="light"] .player-row,
+    body[data-theme="light"] .player-name,
+    body[data-theme="light"] .metric.kda,
+    body[data-theme="light"] .meta-value,
+    body[data-theme="light"] .brand-line,
+    body[data-theme="light"] .map-name { color: #000; }
+    body[data-theme="light"] .player-elo,
+    body[data-theme="light"] .level,
+    body[data-theme="light"] .metric,
+    body[data-theme="light"] .team-total { color: #000; }
+    body[data-theme="light"] .player-sub,
+    body[data-theme="light"] .meta-label,
+    body[data-theme="light"] .timestamp-meta { color: #000; }
+    body[data-theme="light"] .match-context,
+    body[data-theme="light"] .score-bans .ban-label { color: #1f2933; }
+    body[data-theme="light"] .hero {
+      background-image: none;
+      background-color: rgba(232, 237, 241, .16);
+      border-bottom-color: rgba(20, 115, 108, .3);
+    }
+    body[data-theme="light"] .hero .brand-line,
+    body[data-theme="light"] .hero .map-name,
+    body[data-theme="light"] .hero .match-context,
+    body[data-theme="light"] .hero .score-bans,
+    body[data-theme="light"] .hero .meta-value,
+    body[data-theme="light"] .hero .meta-label {
+      text-shadow: none;
+    }
+    body[data-theme="light"] .score-separator { color: #667382; }
+    body[data-theme="light"] .result { color: #56616e; }
+    body[data-theme="light"] .team-two .result { color: #9f2944; }
+    body[data-theme="light"] .team-bar .team-name,
+    body[data-theme="light"] .team-bar .result,
+    body[data-theme="light"] .team-average-label,
+    body[data-theme="light"] .team-total b,
+    body[data-theme="light"] .party-badge { color: #000; }
+    body[data-theme="light"] .team-one .team-name,
+    body[data-theme="light"] .team-one .result { color: var(--blue); }
+    body[data-theme="light"] .team-two .team-name,
+    body[data-theme="light"] .team-two .result { color: var(--rose); }
+
+  </style>
+</head>
+<body>
+  <aside class="color-lab" id="color-lab" aria-label="Prototype color picker">
+    <div class="color-lab-header">
+      <h2 class="color-lab-title">Color lab</h2>
+      <button class="color-lab-reset" id="color-lab-reset" type="button">Reset</button>
+    </div>
+    <section class="wallpaper-lab" aria-labelledby="wallpaper-lab-title">
+      <div class="wallpaper-lab-heading">
+        <h3 class="wallpaper-lab-title" id="wallpaper-lab-title">Wallpaper test</h3>
+        <span class="wallpaper-progress" id="wallpaper-progress">Loading maps…</span>
+      </div>
+      <label class="wallpaper-field">
+        <span class="wallpaper-field-label">Map under review</span>
+        <select class="wallpaper-select" id="wallpaper-map"></select>
+      </label>
+      <div class="wallpaper-actions">
+        <label class="wallpaper-file-label" for="wallpaper-file">
+          Choose local image
+          <input class="wallpaper-file-input" id="wallpaper-file" type="file" accept="image/png,image/jpeg,image/webp,image/avif" />
+        </label>
+        <button class="wallpaper-reset" id="wallpaper-current" type="button">Current PNG</button>
+      </div>
+      <p class="wallpaper-status" id="wallpaper-status">Loading the map review queue…</p>
+    </section>
+    <p class="color-lab-help">Select a target here or click a supported scoreboard element. Color changes apply live and are mirrored into the URL.</p>
+    <div class="color-targets" id="color-targets" role="group" aria-label="Color targets"></div>
+    <div class="color-editor">
+      <div class="color-editor-heading">
+        <span class="color-editor-target" id="color-editor-target">Police · dark band</span>
+        <span class="color-editor-hex" id="color-editor-value">#0d0d0d</span>
+      </div>
+      <div class="color-input-row">
+        <input class="color-native" id="color-native" type="color" value="#0d0d0d" aria-label="Selected target color" />
+        <input class="color-hex-input" id="color-hex" type="text" value="#0d0d0d" maxlength="7" spellcheck="false" aria-label="Selected target hexadecimal color" />
+      </div>
+      <div class="color-slider"><label for="color-hue">H</label><input id="color-hue" type="range" min="0" max="360" step="1" /><output id="color-hue-value">0</output></div>
+      <div class="color-slider"><label for="color-saturation">S</label><input id="color-saturation" type="range" min="0" max="100" step="1" /><output id="color-saturation-value">0</output></div>
+      <div class="color-slider"><label for="color-lightness">L</label><input id="color-lightness" type="range" min="0" max="100" step="1" /><output id="color-lightness-value">5</output></div>
+    </div>
+    <pre class="color-palette-output" id="color-palette-output" aria-label="Current palette JSON"></pre>
+    <button class="color-lab-copy" id="color-lab-copy" type="button">Copy palette JSON</button>
+    <p class="color-lab-status" id="color-lab-status">Palette values are encoded in this page URL.</p>
+  </aside>
+  <main class="viewport">
+    <div class="prototype-note">
+      <span>HTML/CSS PROTOTYPE · 2048 × 1152</span>
+      <div class="prototype-tools">
+        <span>Status variants</span>
+        <nav class="prototype-modes" aria-label="Prototype match type">
+          <a class="prototype-mode-link" data-mode="ranked" href="?mode=ranked&amp;flags=recovered">Ranked</a>
+          <a class="prototype-mode-link" data-mode="casual" href="?mode=casual&amp;flags=recovered">Casual</a>
+        </nav>
+        <nav class="prototype-flags" aria-label="Prototype status tags">
+          <a class="prototype-mode-link" data-flags="none" href="?mode=ranked&amp;flags=none">Direct</a>
+          <a class="prototype-mode-link" data-flags="recovered" href="?mode=ranked&amp;flags=recovered">Recovered</a>
+          <a class="prototype-mode-link" data-flags="broken" href="?mode=ranked&amp;flags=broken">Broken</a>
+          <a class="prototype-mode-link" data-flags="private" href="?mode=ranked&amp;flags=private">Private</a>
+          <a class="prototype-mode-link" data-flags="recovered-private" href="?mode=ranked&amp;flags=recovered-private">Recovered + Private</a>
+          <a class="prototype-mode-link" data-flags="broken-private" href="?mode=ranked&amp;flags=broken-private">Broken + Private</a>
+        </nav>
+        <button class="theme-toggle" id="theme-toggle" type="button" role="switch" aria-checked="false" aria-label="Use light scoreboard theme">
+          <span class="theme-toggle-track" aria-hidden="true"><span class="theme-toggle-thumb"></span></span>
+          <span id="theme-toggle-label">Dark mode</span>
+        </button>
+      </div>
+    </div>
+    <div class="scoreboard-canvas" id="scoreboard-canvas">
+    <section class="scoreboard" aria-label="Paladins match scoreboard">
+      <header class="hero">
+        <div class="match-identity">
+          <div class="brand-line">
+            <span class="brand-name"><img src="http://localhost:3000/images/icons/paladinscat.avif" alt="" /> PaladinsCat</span>
+            <div class="status-tags"><span class="status-tag casual">Casual</span><span class="status-tag recovered">Recovered</span></div>
+          </div>
+          <div class="map-line"><div class="map-name">Frog Isle</div></div>
+          <div class="match-context"><span>EU</span><span>Onslaught</span></div>
+        </div>
+        <div class="score">
+          <div class="score-bans left">
+            <span class="ban-label">Bans</span>
+            <div class="ban-picks">
+            </div>
+          </div>
+          <span class="score-number team-one-score" data-palette-target="scoreBlue" title="Edit Team 1 score color">1</span>
+          <span class="score-separator">/</span>
+          <span class="score-number team-two-score" data-palette-target="scoreRose" title="Edit Team 2 score color">0</span>
+          <div class="score-bans right">
+            <span class="ban-label">Bans</span>
+            <div class="ban-picks">
+            </div>
+          </div>
+        </div>
+        <div class="match-meta">
+          <div class="tier-meta">
+            <img id="avg-tier-icon" src="http://localhost:3000/images/rank-tiers/gold/RankIcon_Gold_2.avif" alt="Gold II" />
+            <div><div class="meta-value" id="avg-tier-name">Gold II</div><div class="meta-label">Avg tier</div></div>
+          </div>
+          <time class="timestamp-meta" datetime="2026-07-15T02:06:55Z">Jul 15, 2026 · 2:06 AM UTC</time>
+          <div class="duration-meta"><div class="meta-value">5:58</div><div class="meta-label">Duration</div></div>
+          <div class="match-id-meta"><div class="meta-value">1280794399</div><div class="meta-label">Match ID</div></div>
+        </div>
+      </header>
+
+      <div class="columns grid-row">
+        <div>Party</div><div></div><div>Level</div><div>Player</div><div>Elo</div><div>Talent</div><div>Credits</div>
+        <div>K / D / A</div><div>OB. Time</div><div>Damage</div><div>Taken</div><div>Shielding</div><div>Healing</div>
+      </div>
+
+      <div class="players" id="team-one"></div>
+      <div class="team-bar team-one grid-row" id="team-one-summary">
+        <div class="team-heading">
+          <div class="team-name">Team 1 <span class="result">Defeat</span></div>
+        </div>
+      </div>
+
+      <div class="players" id="team-two"></div>
+      <div class="team-bar team-two grid-row" id="team-two-summary">
+        <div class="team-heading">
+          <div class="team-name">Team 2 <span class="result">Win</span></div>
+        </div>
+      </div>
+
+    </section>
+    </div>
+  </main>
+
+  <script>
+    const root = 'http://localhost:3000/images';
+    const wallpaperMapSelect = document.querySelector('#wallpaper-map');
+    const wallpaperFileInput = document.querySelector('#wallpaper-file');
+    const wallpaperCurrentButton = document.querySelector('#wallpaper-current');
+    const wallpaperStatus = document.querySelector('#wallpaper-status');
+    const wallpaperProgress = document.querySelector('#wallpaper-progress');
+    const scoreboard = document.querySelector('.scoreboard');
+    let wallpaperReviewMaps = [];
+    let localWallpaperUrl = null;
+    let wallpaperLoadToken = 0;
+
+    function selectedWallpaperMap() {
+      return wallpaperReviewMaps.find(map => map.name === wallpaperMapSelect.value) ?? wallpaperReviewMaps[0];
+    }
+
+    function setWallpaperImage(url) {
+      scoreboard.style.setProperty('--map-image', `url("${url}")`);
+    }
+
+    function clearLocalWallpaperUrl() {
+      if (!localWallpaperUrl) return;
+      URL.revokeObjectURL(localWallpaperUrl);
+      localWallpaperUrl = null;
+    }
+
+    function useCurrentMapPng() {
+      const map = selectedWallpaperMap();
+      if (!map) return;
+      clearLocalWallpaperUrl();
+      wallpaperFileInput.value = '';
+      document.querySelector('.map-name').textContent = map.name;
+      const loadToken = ++wallpaperLoadToken;
+      wallpaperStatus.textContent = `${map.name} · loading current project PNG…`;
+      const probe = new Image();
+      probe.addEventListener('load', () => {
+        if (loadToken !== wallpaperLoadToken) return;
+        setWallpaperImage(map.currentPng);
+        wallpaperStatus.textContent = `${map.name} · ${map.status} · current project PNG · ${probe.naturalWidth}×${probe.naturalHeight}`;
+      }, { once: true });
+      probe.addEventListener('error', () => {
+        if (loadToken !== wallpaperLoadToken) return;
+        wallpaperStatus.textContent = `${map.name} · unable to load the current project PNG`;
+      }, { once: true });
+      probe.src = map.currentPng;
+    }
+
+    function formatFileSize(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+      return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+    }
+
+    async function initializeWallpaperReview() {
+      try {
+        const response = await fetch('./scoreboard-map-image-review.json', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Map queue returned ${response.status}`);
+        const review = await response.json();
+        wallpaperReviewMaps = Array.isArray(review.maps) ? review.maps : [];
+        if (!wallpaperReviewMaps.length) throw new Error('Map queue is empty');
+
+        wallpaperMapSelect.innerHTML = wallpaperReviewMaps.map(map =>
+          `<option value="${map.name.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}">${map.name} — ${map.status}</option>`
+        ).join('');
+        const initialMap = wallpaperReviewMaps.find(map => map.status === 'testing') ?? wallpaperReviewMaps[0];
+        wallpaperMapSelect.value = initialMap.name;
+        const approvedCount = wallpaperReviewMaps.filter(map => map.status === 'approved').length;
+        wallpaperProgress.textContent = `${approvedCount}/${wallpaperReviewMaps.length} approved`;
+        useCurrentMapPng();
+      } catch (error) {
+        wallpaperProgress.textContent = 'Queue unavailable';
+        wallpaperStatus.textContent = error instanceof Error ? error.message : 'Unable to load the map queue.';
+        wallpaperMapSelect.disabled = true;
+        wallpaperFileInput.disabled = true;
+        wallpaperCurrentButton.disabled = true;
+      }
+    }
+
+    wallpaperMapSelect.addEventListener('change', useCurrentMapPng);
+    wallpaperCurrentButton.addEventListener('click', useCurrentMapPng);
+    wallpaperFileInput.addEventListener('change', event => {
+      const file = event.target.files?.[0];
+      const map = selectedWallpaperMap();
+      if (!file || !map) return;
+
+      clearLocalWallpaperUrl();
+      localWallpaperUrl = URL.createObjectURL(file);
+      document.querySelector('.map-name').textContent = map.name;
+      const candidateUrl = localWallpaperUrl;
+      const loadToken = ++wallpaperLoadToken;
+      wallpaperStatus.textContent = `${map.name} · decoding ${file.name}…`;
+
+      const probe = new Image();
+      probe.addEventListener('load', () => {
+        if (loadToken !== wallpaperLoadToken) return;
+        setWallpaperImage(candidateUrl);
+        wallpaperStatus.textContent = `${map.name} · local preview only · ${file.name} · ${probe.naturalWidth}×${probe.naturalHeight} · ${formatFileSize(file.size)}`;
+      }, { once: true });
+      probe.addEventListener('error', () => {
+        if (loadToken !== wallpaperLoadToken) return;
+        wallpaperStatus.textContent = `${map.name} · unable to decode ${file.name}`;
+      }, { once: true });
+      probe.src = candidateUrl;
+    });
+    window.addEventListener('beforeunload', clearLocalWallpaperUrl);
+    initializeWallpaperReview();
+
+    const tiers = {
+      0: 'Unranked', 1: 'Bronze V', 2: 'Bronze IV', 3: 'Bronze III', 4: 'Bronze II', 5: 'Bronze I',
+      6: 'Silver V', 7: 'Silver IV', 8: 'Silver III', 9: 'Silver II', 10: 'Silver I',
+      11: 'Gold V', 12: 'Gold IV', 13: 'Gold III', 14: 'Gold II', 15: 'Gold I',
+      16: 'Platinum V', 17: 'Platinum IV', 18: 'Platinum III', 19: 'Platinum II', 20: 'Platinum I',
+      21: 'Diamond V', 22: 'Diamond IV', 23: 'Diamond III', 24: 'Diamond II', 25: 'Diamond I', 26: 'Master', 27: 'Grandmaster'
+    };
+    let players = [
+      { team:1, champion:'Kinessa', talent:'Steady Aim', name:'DipomaticSK', pid:'8855774', level:842, tier:0, rank:0, queueEloPre:null, kda:'0 / 1 / 0', damage:0, taken:2100, shield:0, healing:0, obj:0, credits:2040 },
+      { team:1, champion:'Cassie', talent:'Impulse', name:'ŸűmmŸŁűŁűß', pid:'703573063', level:1532, tier:26, rank:7, queueEloPre:2036.19, kda:'0 / 5 / 0', damage:0, taken:12250, shield:0, healing:0, obj:0, credits:2080 },
+      { team:1, champion:'Rei', talent:'Focus', name:'areku67', pid:'705457933', level:1687, tier:19, rank:371, queueEloPre:null, kda:'0 / 9 / 0', damage:0, taken:19800, shield:0, healing:0, obj:0, credits:2100 },
+      { team:1, champion:'Lian', talent:'Precision', name:'Kittyryuthm', pid:'731790048', level:234, tier:26, rank:110, queueEloPre:1937.35, kda:'0 / 1 / 0', damage:0, taken:2350, shield:0, healing:0, obj:0, credits:510 },
+      { team:1, champion:'Fernando', talent:'Scorch', name:'àçbridfpojDGSIP', pid:'736167863', level:80, tier:0, rank:0, queueEloPre:null, kda:'0 / 6 / 0', damage:780, taken:57120, shield:0, healing:0, obj:0, credits:2220 },
+      { team:2, champion:'Terminus', talent:'Undying', name:'Kamuî', pid:'1741222', level:897, tier:25, rank:159, queueEloPre:1236.14, moderation:'cheater', kda:'22 / 0 / 0', damage:93620, taken:0, shield:0, healing:0, obj:130, credits:3520 },
+      { team:2, champion:'Androxus', talent:'Dark Stalker', name:'samí  ', pid:'10269045', party:2, level:740, tier:26, rank:130, queueEloPre:1805.75, moderation:'cheater', kda:'0 / 0 / 0', damage:0, taken:0, shield:0, healing:0, obj:250, credits:3040 },
+      { team:2, champion:'Strix', talent:'Nocturnal', name:'УльТроЕжиК', pid:'14843017', party:1, level:37, tier:0, rank:0, queueEloPre:null, kda:'0 / 0 / 0', damage:0, taken:407, shield:0, healing:0, obj:134, credits:2576 },
+      { team:2, champion:'Jenos', talent:'Luminary', name:'QvredinsQ', pid:'724092723', party:1, level:18, tier:0, rank:0, queueEloPre:null, kda:'0 / 0 / 0', damage:0, taken:373, shield:200, healing:1133, obj:199, credits:2836 },
+      { team:2, champion:'VII', talent:'Tribunal Upgrades', name:'ASMORODEUS', pid:'727923453', party:2, level:1346, tier:22, rank:259, queueEloPre:1731.45, moderation:'suspicious', kda:'0 / 0 / 0', damage:0, taken:0, shield:0, healing:0, obj:289, credits:3196 },
+    ];
+
+    const number = value => Number(value).toLocaleString('en-US');
+    const compact = value => value >= 1000 ? `${(value / 1000).toFixed(1)}k` : number(value);
+    const effectiveTier = (tier, rank = 0) => tier === 26 && rank > 0 && rank <= 100 ? 27 : tier;
+    const rankIcon = (tier, rank = 0) => {
+      const displayTier = effectiveTier(tier, rank);
+      if (!displayTier) return `${root}/rank-tiers/qualifying/RankIcon_Qualifying.avif`;
+      if (displayTier === 26) return `${root}/rank-tiers/master/RankIcon_Master.avif`;
+      if (displayTier === 27) return `${root}/rank-tiers/grandmaster/RankIcon_Grandmaster.avif`;
+      const groups = [['bronze','Bronze'],['silver','Silver'],['gold','Gold'],['platinum','Platinum'],['diamond','Diamond']];
+      const [folder, name] = groups[Math.floor((displayTier - 1) / 5)];
+      const division = 5 - ((displayTier - 1) % 5);
+      return `${root}/rank-tiers/${folder}/RankIcon_${name}_${division}.avif`;
+    };
+    const championIcon = champion => `${root}/champions/${encodeURIComponent(`Champion ${champion} Icon.avif`)}`;
+    const canonicalTalentNames = { 'Barik:Tinkerin': "Talent Barik Tinkerin'.avif" };
+    const talentIcon = (champion, talent) => `${root}/champions/${encodeURIComponent(canonicalTalentNames[`${champion}:${talent}`] || `Talent ${champion} ${talent}.avif`)}`;
+    const moderationTag = moderation => moderation === 'cheater'
+      ? '<span class="player-status-tag cheater" data-palette-target="cheaterTagText" title="Edit cheater tag text">CHEATER</span>'
+      : moderation === 'suspicious'
+        ? '<span class="player-status-tag suspicious" data-palette-target="suspiciousTagText" title="Edit suspicious tag text">SUS</span>'
+        : '';
+
+    function renderTeam(team) {
+      const rows = players.filter(player => player.team === team);
+      const maxima = ['damage','taken','shield','healing','obj','credits'].reduce((acc, key) => {
+        acc[key] = Math.max(...rows.map(player => player[key])); return acc;
+      }, {});
+      document.querySelector(team === 1 ? '#team-one' : '#team-two').innerHTML = rows.map((player, index) => `
+        <div class="player-row grid-row${player.moderation === 'cheater' ? ' cheater-row' : ''}" data-palette-target="${player.moderation === 'cheater' ? 'policeDark' : team === 1 ? index % 2 ? 'teamOneB' : 'teamOneA' : index % 2 ? 'teamTwoB' : 'teamTwoA'}" title="Select row color target">
+          <div class="champion-wrap">
+            <img class="champion-icon" src="${championIcon(player.champion)}" alt="${player.champion}" />
+            ${player.party ? `<span class="party-badge" title="Party ${player.party}">${player.party}</span>` : ''}
+          </div>
+          <div class="rank"><img src="${rankIcon(player.tier, player.rank)}" alt="${tiers[effectiveTier(player.tier, player.rank)]}" title="${tiers[effectiveTier(player.tier, player.rank)]}" /></div>
+          <div class="level">${player.level}</div>
+          <div class="player"><div class="player-name"><span class="player-name-text">${player.name}</span>${moderationTag(player.moderation)}</div><div class="player-sub">PID ${player.pid}</div></div>
+          <div class="player-elo">${player.queueEloPre != null && Number.isFinite(Number(player.queueEloPre)) ? number(Math.round(player.queueEloPre)) : '—'}</div>
+          <img class="talent-icon" src="${talentIcon(player.champion, player.talent)}" alt="${player.talent}" title="${player.talent}" />
+          <div class="metric credits ${player.credits === maxima.credits ? 'peak' : ''}"><img src="${root}/icons/Currency_Credits.avif" alt="" />${number(player.credits)}</div>
+          <div class="metric kda">${player.kda}</div>
+          <div class="metric obj ${player.obj === maxima.obj ? 'peak' : ''}">${number(player.obj)}</div>
+          <div class="metric damage ${player.damage === maxima.damage ? 'peak' : ''}">${number(player.damage)}</div>
+          <div class="metric taken ${player.taken === maxima.taken ? 'peak' : ''}">${number(player.taken)}</div>
+          <div class="metric shield ${player.shield === maxima.shield && player.shield ? 'peak' : ''}">${number(player.shield)}</div>
+          <div class="metric heal ${player.healing === maxima.healing && player.healing ? 'peak' : ''}">${number(player.healing)}</div>
+        </div>`).join('');
+
+      const kda = rows.reduce((totals, player) => {
+        const [kills, deaths, assists] = player.kda.split('/').map(value => Number(value.trim()));
+        totals[0] += kills; totals[1] += deaths; totals[2] += assists;
+        return totals;
+      }, [0, 0, 0]);
+      const total = key => rows.reduce((sum, player) => sum + player[key], 0);
+      const average = key => {
+        const values = rows.map(player => player[key]).filter(value => value != null).map(Number).filter(Number.isFinite);
+        return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
+      };
+      document.querySelector(team === 1 ? '#team-one-summary' : '#team-two-summary').insertAdjacentHTML('beforeend', `
+        <div class="team-total level-total average-total" title="Average level"><span class="team-average-label">AVG</span>${number(average('level'))}</div>
+        <div class="team-total elo-total average-total" title="Average Elo"><span class="team-average-label">AVG</span>${average('queueEloPre') == null ? '—' : number(average('queueEloPre'))}</div>
+        <div class="team-total credits-total" title="Total credits"><img src="${root}/icons/Currency_Credits.avif" alt="" />${compact(total('credits'))}</div>
+        <div class="team-total kda-total" title="Team K / D / A">${kda.join(' / ')}</div>
+        <div class="team-total objective-total" title="Total objective time">${number(total('obj'))}</div>
+        <div class="team-total damage-total" title="Total damage">${compact(total('damage'))}</div>
+        <div class="team-total taken-total" title="Total damage taken">${compact(total('taken'))}</div>
+        <div class="team-total shield-total" title="Total shielding">${compact(total('shield'))}</div>
+        <div class="team-total healing-total" title="Total healing">${compact(total('healing'))}</div>`);
+    }
+    renderTeam(1); renderTeam(2);
+
+    function renderLobbyAverages() {
+      const playerTiers = players.map(player => Number(player.tier)).filter(tier => Number.isFinite(tier) && tier >= 0);
+      const averageTier = playerTiers.length ? playerTiers.reduce((sum, value) => sum + value, 0) / playerTiers.length : 0;
+      const displayedTier = Math.floor(averageTier);
+      const tierName = tiers[displayedTier] ?? 'Unranked';
+      const tierIcon = document.querySelector('#avg-tier-icon');
+      tierIcon.src = rankIcon(displayedTier);
+      tierIcon.alt = tierName;
+      document.querySelector('#avg-tier-name').textContent = tierName;
+    }
+    renderLobbyAverages();
+
+    const previewParams = new URLSearchParams(window.location.search);
+    const requestedMode = previewParams.get('mode');
+    const previewMode = requestedMode === 'ranked' || requestedMode === 'casual' ? requestedMode : 'casual';
+    const allowedFlagSets = new Set(['none', 'recovered', 'broken', 'private', 'recovered-private', 'broken-private']);
+    const requestedFlagSet = previewParams.get('flags');
+    const previewFlagSet = allowedFlagSets.has(requestedFlagSet)
+      ? requestedFlagSet
+      : 'recovered';
+    const modeTag = `<span class="status-tag ${previewMode}">${previewMode === 'casual' ? 'Casual' : 'Ranked'}</span>`;
+    const flagTags = {
+      none: '',
+      recovered: '<span class="status-tag recovered">Recovered</span>',
+      broken: '<span class="status-tag broken">Broken</span>',
+      private: '<span class="status-tag private">Private</span>',
+      'recovered-private': '<span class="status-tag recovered">Recovered</span><span class="status-tag private">Private</span>',
+      'broken-private': '<span class="status-tag broken">Broken</span><span class="status-tag private">Private</span>',
+    };
+    document.querySelector('.status-tags').innerHTML = modeTag + flagTags[previewFlagSet];
+    document.querySelector(`[data-mode="${previewMode}"]`)?.classList.add('active');
+    document.querySelector(`[data-flags="${previewFlagSet}"]`)?.classList.add('active');
+    function syncVariantLinks() {
+      const currentParams = new URLSearchParams(window.location.search);
+      document.querySelectorAll('[data-mode]').forEach(link => {
+        const params = new URLSearchParams(currentParams);
+        params.set('mode', link.dataset.mode);
+        params.set('flags', previewFlagSet);
+        link.href = `?${params.toString()}`;
+      });
+      document.querySelectorAll('[data-flags]').forEach(link => {
+        const params = new URLSearchParams(currentParams);
+        params.set('mode', previewMode);
+        params.set('flags', link.dataset.flags);
+        link.href = `?${params.toString()}`;
+      });
+    }
+    syncVariantLinks();
+
+    const paletteTargets = {
+      policeLight: { label: 'Police · light', query: 'pl', css: '--police-light', default: '#221111' },
+      policeDark: { label: 'Police · dark', query: 'pd', default: '#0d0d0d' },
+      policeText: { label: 'Police · text', query: 'pt', default: '#610000' },
+      scoreBlue: { label: 'Score · Team 1', query: 'sb', css: '--score-blue', default: '#3488f0' },
+      scoreRose: { label: 'Score · Team 2', query: 'sr', css: '--score-rose', default: '#ef4444' },
+      teamOneA: { label: 'Team 1 · row A', query: 't1a', css: '--team-one-row-a', default: '#0d3387' },
+      teamOneB: { label: 'Team 1 · row B', query: 't1b', css: '--team-one-row-b', default: '#001342' },
+      teamTwoA: { label: 'Team 2 · row A', query: 't2a', css: '--team-two-row-a', default: '#801414' },
+      teamTwoB: { label: 'Team 2 · row B', query: 't2b', css: '--team-two-row-b', default: '#420000' },
+      tagBackground: { label: 'Tags · background', query: 'tb', css: '--moderation-tag-bg', default: '#161618' },
+      cheaterTagText: { label: 'Tag · cheater', query: 'ct', css: '--cheater-tag-text', default: '#ff0f0f' },
+      suspiciousTagText: { label: 'Tag · suspicious', query: 'st', css: '--suspicious-tag-text', default: '#ffc124' },
+    };
+    const palette = Object.fromEntries(Object.entries(paletteTargets).map(([key, target]) => {
+      const queryValue = previewParams.get(target.query);
+      return [key, normalizeHex(queryValue) ?? target.default];
+    }));
+    let activePaletteTarget = 'policeDark';
+
+    const colorTargets = document.querySelector('#color-targets');
+    const colorNative = document.querySelector('#color-native');
+    const colorHex = document.querySelector('#color-hex');
+    const colorHue = document.querySelector('#color-hue');
+    const colorSaturation = document.querySelector('#color-saturation');
+    const colorLightness = document.querySelector('#color-lightness');
+    const colorStatus = document.querySelector('#color-lab-status');
+
+    function normalizeHex(value) {
+      if (!value) return null;
+      const candidate = String(value).trim().replace(/^#/, '');
+      if (/^[0-9a-f]{3}$/i.test(candidate)) {
+        return `#${candidate.split('').map(character => character + character).join('').toLowerCase()}`;
+      }
+      return /^[0-9a-f]{6}$/i.test(candidate) ? `#${candidate.toLowerCase()}` : null;
+    }
+
+    function hexToHsl(hex) {
+      const value = normalizeHex(hex).slice(1);
+      const red = parseInt(value.slice(0, 2), 16) / 255;
+      const green = parseInt(value.slice(2, 4), 16) / 255;
+      const blue = parseInt(value.slice(4, 6), 16) / 255;
+      const max = Math.max(red, green, blue);
+      const min = Math.min(red, green, blue);
+      const delta = max - min;
+      let hue = 0;
+      if (delta) {
+        if (max === red) hue = 60 * (((green - blue) / delta) % 6);
+        else if (max === green) hue = 60 * ((blue - red) / delta + 2);
+        else hue = 60 * ((red - green) / delta + 4);
+      }
+      if (hue < 0) hue += 360;
+      const lightness = (max + min) / 2;
+      const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1));
+      return { h: Math.round(hue), s: Math.round(saturation * 100), l: Math.round(lightness * 100) };
+    }
+
+    function hslToHex(hue, saturation, lightness) {
+      const h = ((Number(hue) % 360) + 360) % 360;
+      const s = Number(saturation) / 100;
+      const l = Number(lightness) / 100;
+      const chroma = (1 - Math.abs(2 * l - 1)) * s;
+      const section = h / 60;
+      const intermediate = chroma * (1 - Math.abs((section % 2) - 1));
+      const channels = section < 1 ? [chroma, intermediate, 0]
+        : section < 2 ? [intermediate, chroma, 0]
+          : section < 3 ? [0, chroma, intermediate]
+            : section < 4 ? [0, intermediate, chroma]
+              : section < 5 ? [intermediate, 0, chroma]
+                : [chroma, 0, intermediate];
+      const offset = l - chroma / 2;
+      return `#${channels.map(channel => Math.round((channel + offset) * 255).toString(16).padStart(2, '0')).join('')}`;
+    }
+
+    function policePatternUrl() {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="90.51" height="55" viewBox="0 0 90.51 55"><g fill="${palette.policeDark}"><path d="M38.814 0h22.627L6.441 55h-22.627z"/><path d="M-6.441 0h22.627l-55 55h-22.627z"/><path d="M84.069 0h22.627l-55 55H29.069z"/><path d="M129.324 0h22.627l-55 55H74.324z"/></g><g fill="${palette.policeText}" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="900" text-anchor="middle" dominant-baseline="central" alignment-baseline="central"><text x="-22.627" y="27.5" textLength="60" lengthAdjust="spacingAndGlyphs" transform="rotate(-45 -22.627 27.5)">CHEATER</text><text x="22.627" y="27.5" textLength="60" lengthAdjust="spacingAndGlyphs" transform="rotate(-45 22.627 27.5)">CHEATER</text><text x="67.882" y="27.5" textLength="60" lengthAdjust="spacingAndGlyphs" transform="rotate(-45 67.882 27.5)">CHEATER</text><text x="113.137" y="27.5" textLength="60" lengthAdjust="spacingAndGlyphs" transform="rotate(-45 113.137 27.5)">CHEATER</text></g></svg>`;
+      return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+    }
+
+    function updatePaletteUrl() {
+      const params = new URLSearchParams(window.location.search);
+      Object.entries(paletteTargets).forEach(([key, target]) => params.set(target.query, palette[key].slice(1)));
+      window.history.replaceState(null, '', `?${params.toString()}${window.location.hash}`);
+      syncVariantLinks();
+    }
+
+    function renderPaletteEditor() {
+      const target = paletteTargets[activePaletteTarget];
+      const value = palette[activePaletteTarget];
+      const hsl = hexToHsl(value);
+      document.querySelector('#color-editor-target').textContent = target.label;
+      document.querySelector('#color-editor-value').textContent = value;
+      colorNative.value = value;
+      colorHex.value = value;
+      colorHue.value = hsl.h;
+      colorSaturation.value = hsl.s;
+      colorLightness.value = hsl.l;
+      document.querySelector('#color-hue-value').textContent = hsl.h;
+      document.querySelector('#color-saturation-value').textContent = hsl.s;
+      document.querySelector('#color-lightness-value').textContent = hsl.l;
+      document.querySelectorAll('.color-target').forEach(button => {
+        const key = button.dataset.colorTarget;
+        button.setAttribute('aria-pressed', String(key === activePaletteTarget));
+        button.style.setProperty('--target-color', palette[key]);
+      });
+      document.querySelector('#color-palette-output').textContent = JSON.stringify(palette, null, 2);
+    }
+
+    function applyPalette({ updateUrl = false } = {}) {
+      Object.entries(paletteTargets).forEach(([key, target]) => {
+        if (target.css) document.body.style.setProperty(target.css, palette[key]);
+      });
+      document.body.style.setProperty('--cheater-pattern', policePatternUrl());
+      renderPaletteEditor();
+      if (updateUrl) {
+        updatePaletteUrl();
+        colorStatus.textContent = `URL updated · ${paletteTargets[activePaletteTarget].label} ${palette[activePaletteTarget]}`;
+      }
+    }
+
+    function selectPaletteTarget(key) {
+      if (!paletteTargets[key]) return;
+      activePaletteTarget = key;
+      renderPaletteEditor();
+      colorStatus.textContent = `Editing ${paletteTargets[key].label}`;
+    }
+
+    function setActivePaletteColor(value) {
+      const normalized = normalizeHex(value);
+      if (!normalized) return false;
+      palette[activePaletteTarget] = normalized;
+      applyPalette({ updateUrl: true });
+      return true;
+    }
+
+    Object.entries(paletteTargets).forEach(([key, target]) => {
+      colorTargets.insertAdjacentHTML('beforeend', `<button class="color-target" type="button" data-color-target="${key}" aria-pressed="false"><span class="color-target-swatch"></span><span>${target.label}</span></button>`);
+    });
+    colorTargets.addEventListener('click', event => selectPaletteTarget(event.target.closest('[data-color-target]')?.dataset.colorTarget));
+    document.querySelector('.scoreboard').addEventListener('click', event => selectPaletteTarget(event.target.closest('[data-palette-target]')?.dataset.paletteTarget));
+    colorNative.addEventListener('input', event => setActivePaletteColor(event.target.value));
+    colorHex.addEventListener('input', event => {
+      colorHex.setAttribute('aria-invalid', String(!normalizeHex(event.target.value)));
+      setActivePaletteColor(event.target.value);
+    });
+    [colorHue, colorSaturation, colorLightness].forEach(input => input.addEventListener('input', () => {
+      setActivePaletteColor(hslToHex(colorHue.value, colorSaturation.value, colorLightness.value));
+    }));
+    document.querySelector('#color-lab-reset').addEventListener('click', () => {
+      Object.entries(paletteTargets).forEach(([key, target]) => { palette[key] = target.default; });
+      applyPalette({ updateUrl: true });
+      colorStatus.textContent = 'Prototype palette reset to defaults.';
+    });
+    document.querySelector('#color-lab-copy').addEventListener('click', async () => {
+      const output = JSON.stringify(palette, null, 2);
+      try {
+        await navigator.clipboard.writeText(output);
+      } catch {
+        const fallback = document.createElement('textarea');
+        fallback.value = output;
+        document.body.append(fallback);
+        fallback.select();
+        document.execCommand('copy');
+        fallback.remove();
+      }
+      colorStatus.textContent = 'Palette JSON copied.';
+    });
+    window.getPrototypePalette = () => ({ ...palette });
+    applyPalette();
+
+    const hero = document.querySelector('.hero');
+    const casual = previewMode === 'casual';
+    hero.classList.toggle('casual', casual);
+    hero.querySelector('.score').classList.toggle('casual', casual);
+    hero.querySelectorAll('.score-bans').forEach(element => { element.hidden = casual; });
+    hero.querySelector('.match-meta').classList.toggle('casual-meta', casual);
+
+    function applyTheme(theme) {
+      const isLight = theme === 'light';
+      document.body.dataset.theme = isLight ? 'light' : 'dark';
+      const toggle = document.querySelector('#theme-toggle');
+      toggle.setAttribute('aria-checked', String(isLight));
+      toggle.setAttribute('aria-label', isLight ? 'Use dark scoreboard theme' : 'Use light scoreboard theme');
+      document.querySelector('#theme-toggle-label').textContent = isLight ? 'Light mode' : 'Dark mode';
+    }
+    let storedTheme = null;
+    try { storedTheme = window.localStorage.getItem('pc-scoreboard-theme'); } catch {}
+    applyTheme(storedTheme === 'light' ? 'light' : 'dark');
+    document.querySelector('#theme-toggle').addEventListener('click', () => {
+      const nextTheme = document.body.dataset.theme === 'light' ? 'dark' : 'light';
+      applyTheme(nextTheme);
+      try { window.localStorage.setItem('pc-scoreboard-theme', nextTheme); } catch {}
+    });
+
+    function fitPreview() {
+      const viewport = document.querySelector('.viewport');
+      const canvas = document.querySelector('.scoreboard-canvas');
+      const colorLabReserve = window.innerWidth > 760 ? 300 : 0;
+      const availableWidth = Math.max(320, window.innerWidth - 64 - colorLabReserve);
+      const scale = Math.min(1, availableWidth / 2048);
+      viewport.style.width = `${2048 * scale}px`;
+      canvas.style.transform = `scale(${scale})`;
+      canvas.style.marginBottom = `${1152 * (scale - 1)}px`;
+    }
+    fitPreview();
+    window.addEventListener('resize', fitPreview);
+  </script>
+</body>
+</html>

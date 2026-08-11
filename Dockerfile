@@ -1,59 +1,21 @@
-# Multi-stage build for the Rust PaladinsCat Discord bot.
-# Builds from REPO ROOT context (deploy-script convention). The bot crate lives
-# under src/discord-bot-rust; the standalone Dockerfile there builds with that
-# dir as context, so this wrapper copies the crate in from the repo root.
-FROM rust:slim AS builder
+FROM rust:1.97-bookworm AS builder
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY legacy-node/src/paladins-avatar-assets.ts ./legacy-node/src/paladins-avatar-assets.ts
+COPY assets/templates ./assets/templates
+RUN cargo build --release --locked
 
-# OpenSSL headers (required by reqwest)
-RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && \
-    rm -rf /var/lib/apt/lists/*
-
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl chromium fontconfig fonts-inter fonts-dejavu-core fonts-noto-core fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 1000 --create-home paladinscat
 WORKDIR /app
-COPY src/discord-bot-rust/Cargo.toml .
-COPY src/discord-bot-rust/Cargo.lock .
-COPY src/discord-bot-rust/src/ src/
-COPY src/discord-bot/src/paladins-avatar-assets.ts /discord-bot/src/paladins-avatar-assets.ts
-RUN cargo build --release
-
-# Runtime stage — trixie to match builder's GLIBC 2.39
-FROM debian:trixie-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl chromium fontconfig fonts-inter fonts-dejavu-core \
-    fonts-noto-core fonts-noto-cjk && \
-    rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-COPY --from=builder /app/target/release/paladinscat-discord-bot .
-COPY dev/prototypes/ dev/prototypes/
-COPY ["src/frontend/public/images/champions/Champion * Icon.*", "src/frontend/public/images/champions/"]
-COPY ["src/frontend/public/images/champions/Banner_*", "src/frontend/public/images/champions/"]
-COPY ["src/frontend/public/images/champions/Talent*", "src/frontend/public/images/champions/"]
-COPY ["src/frontend/public/images/maps/Match_*", "src/frontend/public/images/maps/"]
-COPY src/frontend/public/images/cards/ src/frontend/public/images/cards/
-COPY src/frontend/public/images/rank-tiers/ src/frontend/public/images/rank-tiers/
-COPY src/frontend/public/images/icons/ src/frontend/public/images/icons/
-COPY src/frontend/public/data/champion-data.json src/frontend/public/data/
-COPY src/frontend/public/data/paladins-card-reference.json src/frontend/public/data/
-COPY src/frontend/public/data/paladins-loadout-frame-reference.json src/frontend/public/data/
-RUN test "$(find src/frontend/public/images/cards -maxdepth 1 -type f -name 'Card_*.avif' | wc -l)" -ge 900 && \
-    test "$(find src/frontend/public/images/cards -maxdepth 1 -type f -name 'Card_*.png' | wc -l)" -ge 900 && \
-    test "$(find src/frontend/public/images/champions -maxdepth 1 -type f -name 'Banner_*.avif' | wc -l)" -ge 30 && \
-    test "$(find src/frontend/public/images/champions -maxdepth 1 -type f -name 'Banner_*.png' | wc -l)" -ge 30 && \
-    test -f src/frontend/public/images/cards/Card_Carry_On.avif && \
-    test -f src/frontend/public/images/cards/Card_Carry_On.png && \
-    test -f src/frontend/public/images/cards/Card_Intense_Training.avif && \
-    test -f src/frontend/public/images/cards/Card_Intense_Training.png && \
-    test -f src/frontend/public/images/champions/Banner_Ying.avif && \
-    test -f src/frontend/public/images/champions/Banner_Ying.png && \
-    test -f src/frontend/public/images/champions/Banner_Cassie.avif && \
-    test -f src/frontend/public/images/champions/Banner_Cassie.png
-
+COPY --from=builder /build/target/release/paladinscat-discord-bot /usr/local/bin/paladinscat-discord-bot
+COPY assets/templates ./assets/templates
+USER 1000:1000
 EXPOSE 3020
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -sf http://localhost:3020/health || exit 1
-ENV RUST_LOG=info \
-    HEALTH_PORT=3020 \
-    CHROME_PATH=/usr/bin/chromium \
-    PALADINSCAT_RENDER_WEB_URL=http://frontend:3000
-ENTRYPOINT ["./paladinscat-discord-bot"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD curl -sf http://127.0.0.1:3020/health || exit 1
+ENV RUST_LOG=info HEALTH_PORT=3020 CHROME_PATH=/usr/bin/chromium
+ENTRYPOINT ["/usr/local/bin/paladinscat-discord-bot"]

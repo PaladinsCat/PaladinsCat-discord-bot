@@ -22,9 +22,9 @@ pub struct TemplateConfig {
 impl TemplateConfig {
     pub fn dev_defaults() -> Self {
         Self {
-            match_template_path: "dev/prototypes/match-result-scoreboard.html".into(),
-            loadout_template_path: "dev/prototypes/loadout-card-layout.html".into(),
-            cheater_pattern_path: "dev/prototypes/cheater-police-line.svg".into(),
+            match_template_path: "assets/templates/match-result-scoreboard.html".into(),
+            loadout_template_path: "assets/templates/loadout-card-layout.html".into(),
+            cheater_pattern_path: "assets/templates/cheater-police-line.svg".into(),
             asset_root_path: "src/frontend/public/images".into(),
         }
     }

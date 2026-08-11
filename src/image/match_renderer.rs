@@ -779,15 +779,15 @@ mod tests {
             .expect("repo root");
         let cfg = TemplateConfig {
             match_template_path: root
-                .join("dev/prototypes/match-result-scoreboard.html")
+                .join("assets/templates/match-result-scoreboard.html")
                 .to_string_lossy()
                 .into_owned(),
             loadout_template_path: root
-                .join("dev/prototypes/loadout-card-layout.html")
+                .join("assets/templates/loadout-card-layout.html")
                 .to_string_lossy()
                 .into_owned(),
             cheater_pattern_path: root
-                .join("dev/prototypes/cheater-police-line.svg")
+                .join("assets/templates/cheater-police-line.svg")
                 .to_string_lossy()
                 .into_owned(),
             asset_root_path: root
