@@ -20,7 +20,7 @@ impl Config {
     pub fn load() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Config {
             bot_mode: std::env::var("DISCORD_BOT_MODE").unwrap_or_else(|_| "render".into()),
-            discord_token: std::env::var("DISCORD_TOKEN")?,
+            discord_token: required_secret("DISCORD_TOKEN")?,
             api_base_url: std::env::var("API_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:3001/api".into()),
             cache_bytes: parse_env("CACHE_BYTES", 32 * 1024 * 1024),
@@ -32,6 +32,27 @@ impl Config {
             chrome_path: std::env::var("CHROME_PATH").ok().unwrap_or_default(),
         })
     }
+}
+
+pub fn optional_secret(
+    name: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    if let Ok(value) = std::env::var(name) {
+        if !value.trim().is_empty() {
+            return Ok(Some(value.trim().to_owned()));
+        }
+    }
+    let file_name = format!("{name}_FILE");
+    let Ok(path) = std::env::var(&file_name) else {
+        return Ok(None);
+    };
+    let value = std::fs::read_to_string(path)?;
+    let value = value.trim();
+    Ok((!value.is_empty()).then(|| value.to_owned()))
+}
+
+fn required_secret(name: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    optional_secret(name)?.ok_or_else(|| format!("{name} or {name}_FILE is required").into())
 }
 
 fn parse_env<T: std::str::FromStr>(key: &str, default: T) -> T {

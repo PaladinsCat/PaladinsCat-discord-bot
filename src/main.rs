@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cfg = config::Config::load()?;
     tracing::info!(bot_mode = %cfg.bot_mode, "Starting PaladinsCat Discord Bot");
 
-    let service_token = std::env::var("PALADINSCAT_SERVICE_TOKEN").ok();
+    let service_token = config::optional_secret("PALADINSCAT_SERVICE_TOKEN")?;
     let api = Arc::new(api::ApiClient::new(
         &cfg.api_base_url,
         service_token.as_deref(),
