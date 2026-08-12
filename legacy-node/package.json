@@ -12,7 +12,7 @@
     "test:assets": "tsx --test test/asset-catalog.test.ts"
   },
   "dependencies": {
-    "discord.js": "14.26.5",
+    "discord.js": "14.27.0",
     "puppeteer-core": "^24.15.0",
     "sharp": "0.35.3",
     "zod": "4.4.3"
