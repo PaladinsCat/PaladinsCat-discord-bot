@@ -17,11 +17,13 @@ updates:
       - dependency-name: "image"
         versions: [">=0.25.0"]
       - dependency-name: "tokio-tungstenite"
-        versions: [">=0.30.0"]
+        versions: [">=0.27.0"]
       - dependency-name: "reqwest"
         versions: [">=0.13.0"]
       - dependency-name: "config"
         versions: [">=0.15.0"]
+      - dependency-name: "base64"
+        versions: [">=0.23.0"]
       - dependency-name: "twilight-*"
         versions: [">=0.17.0"]
   - package-ecosystem: "github-actions"
