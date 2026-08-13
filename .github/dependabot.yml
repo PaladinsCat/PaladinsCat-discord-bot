@@ -22,6 +22,8 @@ updates:
         versions: [">=0.13.0"]
       - dependency-name: "config"
         versions: [">=0.15.0"]
+      - dependency-name: "twilight-*"
+        versions: [">=0.17.0"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
