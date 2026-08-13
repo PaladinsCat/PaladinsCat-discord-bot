@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Empty variable names in the committed Discord environment template"
+paths = ['''^legacy-node/\.env\.example$''']
+regexTarget = "match"
+regexes = ['''^DISCORD_TOKEN=\r?\nDISCORD_APPLICATION_ID=\r?$''']

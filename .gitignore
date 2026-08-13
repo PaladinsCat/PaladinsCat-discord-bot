@@ -1,7 +1,11 @@
 /target/
+/legacy-node/node_modules/
 /.env
 /.env.*
 !/.env.example
+/legacy-node/.env
+/legacy-node/.env.*
+!/legacy-node/.env.example
 /env/
 /secrets/
 /local/
