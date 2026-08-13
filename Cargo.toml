@@ -19,7 +19,7 @@ futures = "0.3"
 futures-util = "0.3"
 
 # HTTP client (PaladinsCat API + browser discovery)
-reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+reqwest = { version = "0.13", features = ["json", "stream", "multipart"] }
 
 # Image processing (replaces sharp)
 image = "0.24"
