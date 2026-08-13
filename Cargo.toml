@@ -7,7 +7,7 @@ description = "High-performance PaladinsCat Discord bot -- Twilight + Tokio"
 [dependencies]
 # Discord gateway & REST
 twilight-gateway = "0.16"
-twilight-http = "0.16"
+twilight-http = "0.17"
 twilight-model = "0.16"
 twilight-cache-inmemory = "0.16"
 twilight-util = { version = "0.16", features = ["builder"] }
