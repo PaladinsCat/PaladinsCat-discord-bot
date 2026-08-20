@@ -472,10 +472,17 @@
     .player-status-tag { display: inline-flex; flex: 0 0 auto; align-items: center; border-radius: 3px; padding: 2px 5px; font-size: 8px; font-weight: 800; line-height: 1; letter-spacing: .02em; }
     .player-status-tag.cheater { color: var(--cheater-tag-text); background: var(--moderation-tag-bg); }
     .player-status-tag.suspicious { color: var(--suspicious-tag-text); background: var(--moderation-tag-bg); }
-    .player-status-tag.dropper, .player-status-tag.master-feeding { color: #fecdd3; background: var(--moderation-tag-bg); }
-    .player-status-tag.afk { color: #bae6fd; background: var(--moderation-tag-bg); }
-    .player-status-tag.wall-shooter { color: #cffafe; background: var(--moderation-tag-bg); }
-    .player-status-tag.performance-diff { color: #e0e7ff; background: var(--moderation-tag-bg); }
+    .player-status-tag.dropper, .player-status-tag.master-feeding { color: #fda4af; background: var(--moderation-tag-bg); }
+    .player-status-tag.afk { border: 1px solid rgba(56, 189, 248, .5); color: #7dd3fc; background: var(--moderation-tag-bg); }
+    .player-status-tag.afk.automatic-only { border-color: rgba(248, 113, 113, .5); color: #fca5a5; }
+    .player-status-tag.afk.automatic-community { border-color: rgba(248, 113, 113, .5); color: #7dd3fc; }
+    .player-status-tag.wall-shooter { color: #67e8f9; background: var(--moderation-tag-bg); }
+    .player-status-tag.performance-diff.tank-diff { color: #7dd3fc; background: var(--moderation-tag-bg); }
+    .player-status-tag.performance-diff.support-diff { color: #6ee7b7; background: var(--moderation-tag-bg); }
+    .player-status-tag.performance-diff.dps-diff { color: #fdba74; background: var(--moderation-tag-bg); }
+    .player-status-tag.performance-diff.flank-diff { color: #c4b5fd; background: var(--moderation-tag-bg); }
+    .player-status-tag.performance-diff.noob { color: #fcd34d; background: var(--moderation-tag-bg); }
+    .player-status-tag.performance-diff.hypercarry { color: #67e8f9; background: var(--moderation-tag-bg); }
     .player-status-tag.boosted { color: #fdba74; background: var(--moderation-tag-bg); }
     .player-status-tag.alt { color: #ddd6fe; background: var(--moderation-tag-bg); }
     .player-elo { color: #dbe2eb; text-align: center; font-size: 16.5px; font-weight: 680; letter-spacing: .01em; white-space: nowrap; }

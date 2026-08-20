@@ -718,21 +718,30 @@ impl TemplateEngine {
                 if suspicious {
                     moderation_tags.push(("suspicious", "SUS"));
                 }
-                if (bool_of(player.get("afk_wintrade"))
-                    && num(player.get("afk_wintrade_vote_count")) >= PLAYER_TAG_MINIMUM_COUNT)
-                    || num(player.get("automatic_afk_count")) >= PLAYER_TAG_MINIMUM_COUNT
-                {
-                    moderation_tags.push(("afk", "AFK"));
+                let community_afk = bool_of(player.get("afk_wintrade"))
+                    && num(player.get("afk_wintrade_vote_count")) >= PLAYER_TAG_MINIMUM_COUNT;
+                let automatic_afk =
+                    num(player.get("automatic_afk_count")) >= PLAYER_TAG_MINIMUM_COUNT;
+                if community_afk || automatic_afk {
+                    moderation_tags.push((
+                        match (automatic_afk, community_afk) {
+                            (true, true) => "afk automatic-community",
+                            (true, false) => "afk automatic-only",
+                            (false, true) => "afk community-only",
+                            (false, false) => unreachable!(),
+                        },
+                        "AFK",
+                    ));
                 }
                 for (field, class, label) in [
                     ("wall_shooter_count", "wall-shooter", "WALL"),
                     ("master_feeding_count", "master-feeding", "FEED"),
-                    ("tank_diff_count", "performance-diff", "TANK"),
-                    ("support_diff_count", "performance-diff", "SUP"),
-                    ("dps_diff_count", "performance-diff", "DPS"),
-                    ("flank_diff_count", "performance-diff", "FLANK"),
-                    ("noob_count", "performance-diff", "NOOB"),
-                    ("hypercarry_count", "performance-diff", "CARRY"),
+                    ("tank_diff_count", "performance-diff tank-diff", "TANK"),
+                    ("support_diff_count", "performance-diff support-diff", "SUP"),
+                    ("dps_diff_count", "performance-diff dps-diff", "DPS"),
+                    ("flank_diff_count", "performance-diff flank-diff", "FLANK"),
+                    ("noob_count", "performance-diff noob", "NOOB"),
+                    ("hypercarry_count", "performance-diff hypercarry", "CARRY"),
                 ] {
                     if num(player.get(field)) >= PLAYER_TAG_MINIMUM_COUNT {
                         moderation_tags.push((class, label));
@@ -1204,6 +1213,10 @@ mod tests {
         record["players"][1]["dropper"] = serde_json::json!(true);
         record["players"][1]["dropper_vote_count"] = serde_json::json!(5);
         record["players"][1]["wall_shooter_count"] = serde_json::json!(5);
+        record["players"][1]["afk_wintrade"] = serde_json::json!(true);
+        record["players"][1]["afk_wintrade_vote_count"] = serde_json::json!(5);
+        record["players"][1]["automatic_afk_count"] = serde_json::json!(5);
+        record["players"][1]["tank_diff_count"] = serde_json::json!(5);
         record["players"][1]["boosted"] = serde_json::json!(true);
         record["players"][1]["boosted_match_count"] = serde_json::json!(5);
         let engine = TemplateEngine {
@@ -1216,7 +1229,9 @@ mod tests {
 
         assert_eq!(doc.matches("player-status-tag suspicious").count(), 1);
         assert!(doc.contains("player-status-tag dropper\">DROP"));
+        assert!(doc.contains("player-status-tag afk automatic-community\">AFK"));
         assert!(doc.contains("player-status-tag wall-shooter\">WALL"));
+        assert!(doc.contains("player-status-tag performance-diff tank-diff\">TANK"));
         assert!(doc.contains("player-status-tag boosted\">BOOST"));
     }
 
