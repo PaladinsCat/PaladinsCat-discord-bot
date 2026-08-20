@@ -10,6 +10,7 @@ use base64::Engine as _;
 use super::asset_catalog::AssetCatalog;
 
 static ASSET_DATA_URL_CACHE: OnceLock<RwLock<HashMap<PathBuf, String>>> = OnceLock::new();
+const PLAYER_TAG_MINIMUM_COUNT: i64 = 5;
 
 #[derive(Debug, Clone)]
 pub struct TemplateConfig {
@@ -689,7 +690,7 @@ impl TemplateEngine {
                         .and_then(|p| p.get("sus_count")))
                 }
             };
-            let suspicious = !cheater && sus_count > 0;
+            let suspicious = !cheater && sus_count >= PLAYER_TAG_MINIMUM_COUNT;
             let verified = bool_of(player.get("verified"))
                 || bool_of(
                     player
@@ -705,13 +706,55 @@ impl TemplateEngine {
             } else {
                 String::new()
             };
-            let moderation_tag = if cheater {
-                "<span class=\"player-status-tag cheater\">CHEATER</span>".to_string()
-            } else if suspicious {
-                "<span class=\"player-status-tag suspicious\">SUS</span>".to_string()
+            let mut moderation_tags = Vec::new();
+            if cheater {
+                moderation_tags.push(("cheater", "CHEATER"));
             } else {
-                String::new()
-            };
+                if bool_of(player.get("dropper"))
+                    && num(player.get("dropper_vote_count")) >= PLAYER_TAG_MINIMUM_COUNT
+                {
+                    moderation_tags.push(("dropper", "DROP"));
+                }
+                if suspicious {
+                    moderation_tags.push(("suspicious", "SUS"));
+                }
+                if (bool_of(player.get("afk_wintrade"))
+                    && num(player.get("afk_wintrade_vote_count")) >= PLAYER_TAG_MINIMUM_COUNT)
+                    || num(player.get("automatic_afk_count")) >= PLAYER_TAG_MINIMUM_COUNT
+                {
+                    moderation_tags.push(("afk", "AFK"));
+                }
+                for (field, class, label) in [
+                    ("wall_shooter_count", "wall-shooter", "WALL"),
+                    ("master_feeding_count", "master-feeding", "FEED"),
+                    ("tank_diff_count", "performance-diff", "TANK"),
+                    ("support_diff_count", "performance-diff", "SUP"),
+                    ("dps_diff_count", "performance-diff", "DPS"),
+                    ("flank_diff_count", "performance-diff", "FLANK"),
+                    ("noob_count", "performance-diff", "NOOB"),
+                    ("hypercarry_count", "performance-diff", "CARRY"),
+                ] {
+                    if num(player.get(field)) >= PLAYER_TAG_MINIMUM_COUNT {
+                        moderation_tags.push((class, label));
+                    }
+                }
+                if bool_of(player.get("boosted"))
+                    && num(player.get("boosted_match_count")) >= PLAYER_TAG_MINIMUM_COUNT
+                {
+                    moderation_tags.push(("boosted", "BOOST"));
+                }
+                if bool_of(player.get("alt_account"))
+                    && num(player.get("alt_account_vote_count")) >= PLAYER_TAG_MINIMUM_COUNT
+                {
+                    moderation_tags.push(("alt", "ALT"));
+                }
+            }
+            let moderation_tag = moderation_tags
+                .into_iter()
+                .map(|(class, label)| {
+                    format!("<span class=\"player-status-tag {class}\">{label}</span>")
+                })
+                .collect::<String>();
             let party_number = party_numbers.get(&pid).copied().unwrap_or(0);
             let party_badge = if party_number > 0 {
                 format!("<span class=\"party-badge\" title=\"Party {party_number}\">{party_number}</span>")
@@ -1151,6 +1194,30 @@ mod tests {
         let doc = engine.match_document(&record);
         assert!(doc.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
         assert!(!doc.contains("<script>alert(1)</script>"));
+    }
+
+    #[test]
+    fn match_document_uses_the_inclusive_five_count_tag_boundary() {
+        let mut record = fake_record();
+        record["players"][0]["sus_count"] = serde_json::json!(4);
+        record["players"][1]["sus_count"] = serde_json::json!(5);
+        record["players"][1]["dropper"] = serde_json::json!(true);
+        record["players"][1]["dropper_vote_count"] = serde_json::json!(5);
+        record["players"][1]["wall_shooter_count"] = serde_json::json!(5);
+        record["players"][1]["boosted"] = serde_json::json!(true);
+        record["players"][1]["boosted_match_count"] = serde_json::json!(5);
+        let engine = TemplateEngine {
+            match_template: Arc::new(String::new()),
+            loadout_template: Arc::new(String::new()),
+            cheater_pattern_url: String::new(),
+            assets: AssetCatalog::new("missing-test-assets"),
+        };
+        let doc = engine.match_document(&record);
+
+        assert_eq!(doc.matches("player-status-tag suspicious").count(), 1);
+        assert!(doc.contains("player-status-tag dropper\">DROP"));
+        assert!(doc.contains("player-status-tag wall-shooter\">WALL"));
+        assert!(doc.contains("player-status-tag boosted\">BOOST"));
     }
 
     #[test]

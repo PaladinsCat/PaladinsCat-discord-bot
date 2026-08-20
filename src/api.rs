@@ -6,7 +6,7 @@
 use moka::future::Cache;
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use reqwest::Client as HttpClient;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 #[derive(Debug)]
 pub struct ApiError {
@@ -58,6 +58,24 @@ mod tests {
             json_id(Some(&serde_json::json!(123))).as_deref(),
             Some("123")
         );
+    }
+
+    #[test]
+    fn match_players_receive_the_shared_public_tag_counts() {
+        let mut player = serde_json::Map::new();
+        merge_public_moderation(
+            &mut player,
+            &serde_json::json!({
+                "sus_count": 5,
+                "automatic_afk_count": 4,
+                "wall_shooter_count": 5,
+                "hypercarry_count": 6
+            }),
+        );
+        assert_eq!(player["sus_count"], 5);
+        assert_eq!(player["automatic_afk_count"], 4);
+        assert_eq!(player["wall_shooter_count"], 5);
+        assert_eq!(player["hypercarry_count"], 6);
     }
 }
 impl std::fmt::Display for ApiError {
@@ -136,6 +154,40 @@ fn json_id(value: Option<&serde_json::Value>) -> Option<String> {
         serde_json::Value::Number(id) => Some(id.to_string()),
         _ => None,
     })
+}
+
+const PUBLIC_MODERATION_FIELDS: [&str; 20] = [
+    "cheater",
+    "sus_count",
+    "dropper",
+    "dropper_vote_count",
+    "afk_wintrade",
+    "afk_wintrade_vote_count",
+    "boosted",
+    "boosted_match_count",
+    "alt_account",
+    "alt_account_vote_count",
+    "automatic_afk_count",
+    "wall_shooter_count",
+    "master_feeding_count",
+    "tank_diff_count",
+    "support_diff_count",
+    "dps_diff_count",
+    "flank_diff_count",
+    "noob_count",
+    "hypercarry_count",
+    "verified",
+];
+
+fn merge_public_moderation(
+    player: &mut serde_json::Map<String, serde_json::Value>,
+    moderation: &serde_json::Value,
+) {
+    for field in PUBLIC_MODERATION_FIELDS {
+        if let Some(value) = moderation.get(field).filter(|value| !value.is_null()) {
+            player.insert(field.to_string(), value.clone());
+        }
+    }
 }
 
 /// Clamp a value to the given range.
@@ -412,6 +464,33 @@ impl ApiClient {
             .cloned()
             .unwrap_or_else(|| std::mem::take(&mut val));
 
+        let player_ids = record
+            .get("players")
+            .and_then(|players| players.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|player| json_id(player.get("player_id")))
+            .filter(|id| id.parse::<u64>().is_ok_and(|id| id > 0))
+            .collect::<Vec<_>>();
+        let moderation_by_id = if player_ids.is_empty() {
+            HashMap::new()
+        } else {
+            let bulk_url = format!("{}/players/bulk?ids={}", self.base, player_ids.join(","));
+            self.get_json(&bulk_url)
+                .await
+                .ok()
+                .and_then(|payload| {
+                    payload
+                        .get("players")
+                        .and_then(|rows| rows.as_array())
+                        .cloned()
+                })
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|row| json_id(row.get("id")).map(|id| (id, row)))
+                .collect::<HashMap<_, _>>()
+        };
+
         if let Some(obj) = record.as_object_mut() {
             // Mirror TS hydrateMatchPlayer: promote the joined profile snapshot
             // fields used by the standalone scoreboard into each player row.
@@ -438,6 +517,13 @@ impl ApiClient {
                         if let Some(value) = snapshot.get(source).filter(|v| !v.is_null()) {
                             player_obj.insert(target.to_string(), value.clone());
                         }
+                    }
+                    let player_id = json_id(player_obj.get("player_id"));
+                    if let Some(moderation) = player_id
+                        .as_ref()
+                        .and_then(|player_id| moderation_by_id.get(player_id))
+                    {
+                        merge_public_moderation(player_obj, moderation);
                     }
                 }
             }
