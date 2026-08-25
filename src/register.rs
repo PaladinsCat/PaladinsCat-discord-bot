@@ -48,6 +48,12 @@ fn command(name: &str, description: &str, options: Vec<CommandOption>) -> Comman
     }
 }
 
+fn user_command(name: &str) -> Command {
+    let mut command = command(name, "", vec![]);
+    command.kind = CommandType::User;
+    command
+}
+
 fn string_option(name: &str, description: &str, required: bool) -> CommandOption {
     CommandOption {
         name: name.to_string(),
@@ -110,6 +116,41 @@ fn string_option_autocomplete(name: &str, description: &str, required: bool) -> 
     }
 }
 
+fn boolean_option(name: &str, description: &str) -> CommandOption {
+    let mut option = string_option(name, description, false);
+    option.kind = CommandOptionType::Boolean;
+    option
+}
+
+fn integer_option(name: &str, description: &str) -> CommandOption {
+    let mut option = string_option(name, description, false);
+    option.kind = CommandOptionType::Integer;
+    option
+}
+
+fn choices(values: &[(&str, &str)]) -> Vec<CommandOptionChoice> {
+    values
+        .iter()
+        .map(|(name, value)| CommandOptionChoice {
+            name: (*name).to_string(),
+            name_localizations: None,
+            value: CommandOptionChoiceValue::String((*value).to_string()),
+        })
+        .collect()
+}
+
+fn option_slot(required: bool, include_all: bool) -> CommandOption {
+    let mut values = vec![
+        ("Primary", "primary"),
+        ("Alternate 1", "alt1"),
+        ("Alternate 2", "alt2"),
+    ];
+    if include_all {
+        values.push(("All saved players", "all"));
+    }
+    string_option_with_choices("slot", "Saved player slot", required, choices(&values))
+}
+
 fn lobby_choices() -> Vec<CommandOptionChoice> {
     RANKED_LOBBY_CHOICES
         .iter()
@@ -142,23 +183,36 @@ fn option_match_id() -> CommandOption {
     string_option("id", "Match ID", true)
 }
 
-pub fn all_command_definitions() -> Vec<Command> {
-    vec![
+pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
+    let mut commands = vec![
         command("help", "List PaladinsCat bot commands", vec![]),
         command(
             "save",
-            "Save your default Paladins player",
-            vec![string_option("player", "Player name or ID", true)],
+            "Save a Paladins player",
+            vec![
+                string_option("player", "Player name or ID", true),
+                option_slot(false, false),
+            ],
+        ),
+        command(
+            "forget",
+            "Delete a saved Paladins player link",
+            vec![option_slot(false, true)],
+        ),
+        command(
+            "privacy",
+            "Show what the bot stores and how to delete it",
+            vec![],
         ),
         command(
             "profile",
             "Show a Paladins player profile",
-            vec![option_player()],
+            vec![option_player(), option_slot(false, false)],
         ),
         command(
             "player",
             "Show a Paladins player profile",
-            vec![option_player()],
+            vec![option_player(), option_slot(false, false)],
         ),
         command(
             "match",
@@ -168,18 +222,118 @@ pub fn all_command_definitions() -> Vec<Command> {
         command(
             "history",
             "Show recent matches for a player",
-            vec![option_player()],
+            vec![
+                option_player(),
+                option_slot(false, false),
+                string_option_with_choices(
+                    "queue",
+                    "Queue filter",
+                    false,
+                    choices(&[
+                        ("Ranked", "486"),
+                        ("Siege", "424"),
+                        ("Onslaught", "452"),
+                        ("Team Deathmatch", "469"),
+                    ]),
+                ),
+                string_option_autocomplete("champion", "Champion filter", false),
+                string_option_with_choices(
+                    "result",
+                    "Match result filter",
+                    false,
+                    choices(&[("Wins", "Winner"), ("Losses", "Loser")]),
+                ),
+                integer_option("page", "History page (10 matches per page)"),
+            ],
         ),
         command(
             "current",
             "Check a player's current live match",
-            vec![option_player()],
+            vec![
+                option_player(),
+                option_slot(false, false),
+                boolean_option("details", "Show champion-specific Elo, win rate, and KDA"),
+            ],
         ),
         command(
             "loadout",
             "Render one of a player's saved champion loadouts",
-            vec![option_champion(), option_player()],
+            vec![
+                option_champion(),
+                option_player(),
+                option_slot(false, false),
+            ],
         ),
+        command(
+            "champions",
+            "Show a player's champion statistics",
+            vec![
+                option_player(),
+                option_slot(false, false),
+                string_option_with_choices(
+                    "sort",
+                    "Sort champion statistics",
+                    false,
+                    choices(&[
+                        ("Matches", "matches"),
+                        ("Win rate", "winrate"),
+                        ("KDA", "kda"),
+                    ]),
+                ),
+                string_option_with_choices(
+                    "role",
+                    "Champion role",
+                    false,
+                    choices(&[
+                        ("Frontline", "Frontline"),
+                        ("Damage", "Damage"),
+                        ("Flank", "Flank"),
+                        ("Support", "Support"),
+                    ]),
+                ),
+            ],
+        ),
+        command(
+            "leaderboard",
+            "Show PaladinsCat leaderboards",
+            vec![
+                string_option_with_choices(
+                    "category",
+                    "Leaderboard type",
+                    true,
+                    choices(&[
+                        ("Performance", "performance"),
+                        ("Class Elo", "class"),
+                        ("Champion Elo", "champion"),
+                    ]),
+                ),
+                string_option_with_choices(
+                    "metric",
+                    "Performance metric",
+                    false,
+                    choices(&[
+                        ("Damage per minute", "dpm"),
+                        ("Healing per minute", "hpm"),
+                        ("Credits per minute", "gpm"),
+                        ("Mitigation per minute", "mpm"),
+                    ]),
+                ),
+                string_option_with_choices(
+                    "role",
+                    "Role",
+                    false,
+                    choices(&[
+                        ("Frontline", "Frontline"),
+                        ("Damage", "Damage"),
+                        ("Flank", "Flank"),
+                        ("Support", "Support"),
+                    ]),
+                ),
+                string_option_autocomplete("champion", "Champion for champion Elo", false),
+            ],
+        ),
+        command("activity", "Show observed Paladins player activity", vec![]),
+        command("status", "Show Paladins service status", vec![]),
         command(
             "champion",
             "Show champion ranked statistics",
@@ -196,7 +350,45 @@ pub fn all_command_definitions() -> Vec<Command> {
             "Show global ranked item statistics",
             vec![option_lobby()],
         ),
-    ]
+        user_command("Paladins Profile"),
+        user_command("Paladins History"),
+        user_command("Paladins Current"),
+    ];
+    if social_commands_enabled {
+        commands.push(command(
+            "random",
+            "Pick a random champion, map, or balanced role team",
+            vec![
+                string_option_with_choices(
+                    "kind",
+                    "What to generate",
+                    true,
+                    choices(&[
+                        ("Champion", "champion"),
+                        ("Map", "map"),
+                        ("Role team", "team"),
+                    ]),
+                ),
+                string_option_with_choices(
+                    "role",
+                    "Champion role filter",
+                    false,
+                    choices(&[
+                        ("Frontline", "Frontline"),
+                        ("Damage", "Damage"),
+                        ("Flank", "Flank"),
+                        ("Support", "Support"),
+                    ]),
+                ),
+            ],
+        ));
+        commands.push(command(
+            "teams",
+            "Split your current voice channel into two random teams",
+            vec![],
+        ));
+    }
+    commands
 }
 
 #[allow(dead_code)] // Kept for manual registration scenarios
@@ -204,7 +396,7 @@ pub async fn register_global_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
 ) -> Result<RegistrationResult, twilight_http::Error> {
-    let commands = all_command_definitions();
+    let commands = all_command_definitions(false);
     http.interaction(application_id)
         .set_global_commands(&commands)
         .await?;
@@ -220,8 +412,9 @@ pub async fn register_guild_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
     guild_id: Id<GuildMarker>,
+    social_commands_enabled: bool,
 ) -> Result<RegistrationResult, twilight_http::Error> {
-    let commands = all_command_definitions();
+    let commands = all_command_definitions(social_commands_enabled);
     http.interaction(application_id)
         .set_guild_commands(guild_id, &commands)
         .await?;
@@ -249,11 +442,18 @@ pub async fn register_commands(
     application_id: Id<ApplicationMarker>,
     development_guild_id: Option<Id<GuildMarker>>,
     connected_guild_ids: &[Id<GuildMarker>],
+    social_commands_enabled: bool,
 ) -> Result<RegistrationResult, twilight_http::Error> {
     if let Some(guild_id) = development_guild_id {
-        register_guild_commands(http, application_id, guild_id).await
+        register_guild_commands(http, application_id, guild_id, social_commands_enabled).await
     } else {
-        register_and_clear_guilds(http, application_id, connected_guild_ids).await
+        register_and_clear_guilds(
+            http,
+            application_id,
+            connected_guild_ids,
+            social_commands_enabled,
+        )
+        .await
     }
 }
 
@@ -261,8 +461,9 @@ async fn register_and_clear_guilds(
     http: &Client,
     application_id: Id<ApplicationMarker>,
     guild_ids: &[Id<GuildMarker>],
+    social_commands_enabled: bool,
 ) -> Result<RegistrationResult, twilight_http::Error> {
-    let commands = all_command_definitions();
+    let commands = all_command_definitions(social_commands_enabled);
     http.interaction(application_id)
         .set_global_commands(&commands)
         .await?;
@@ -291,7 +492,8 @@ mod tests {
 
     #[test]
     fn test_command_count() {
-        assert_eq!(all_command_definitions().len(), 12);
+        assert_eq!(all_command_definitions(false).len(), 21);
+        assert_eq!(all_command_definitions(true).len(), 23);
     }
 
     #[test]

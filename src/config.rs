@@ -13,6 +13,7 @@ pub struct Config {
     pub development_guild_id: Option<String>,
     pub web_url: String,
     pub chrome_path: String,
+    pub social_commands_enabled: bool,
 }
 
 impl Config {
@@ -30,6 +31,7 @@ impl Config {
             web_url: std::env::var("PALADINSCAT_WEB_URL")
                 .unwrap_or_else(|_| "https://paladinscat.com".into()),
             chrome_path: std::env::var("CHROME_PATH").ok().unwrap_or_default(),
+            social_commands_enabled: parse_env("ENABLE_SOCIAL_COMMANDS", false),
         })
     }
 }

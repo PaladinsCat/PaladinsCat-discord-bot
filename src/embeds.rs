@@ -300,6 +300,14 @@ pub fn build_history_payload(player_name: &str, history: &[Value], web_url: &str
 
 /// Build current payload — mirrors TS buildCurrentPayload
 pub fn build_current_payload(result: &Value, web_url: &str) -> Embed {
+    build_current_payload_with_details(result, web_url, false)
+}
+
+pub fn build_current_payload_detailed(result: &Value, web_url: &str) -> Embed {
+    build_current_payload_with_details(result, web_url, true)
+}
+
+fn build_current_payload_with_details(result: &Value, web_url: &str, details: bool) -> Embed {
     let match_data = result.get("match").unwrap_or(&Value::Null);
     let empty_players: Vec<Value> = Vec::new();
     let players = result
@@ -361,7 +369,7 @@ pub fn build_current_payload(result: &Value, web_url: &str) -> Embed {
                     .get("task_force")
                     .and_then(|v| numeric_metric(v))
                     .unwrap_or(0.0) as i32;
-                let line = current_player_line(player, &player_id, web_url);
+                let line = current_player_line(player, &player_id, web_url, details);
                 if tf == 1 {
                     team1_players.push(line);
                 } else {
@@ -421,7 +429,12 @@ pub fn build_current_payload(result: &Value, web_url: &str) -> Embed {
 }
 
 /// Build player line for current match — mirrors TS currentPlayerLine
-fn current_player_line(player: &Value, source_player_id: &str, web_url: &str) -> String {
+fn current_player_line(
+    player: &Value,
+    source_player_id: &str,
+    web_url: &str,
+    champion_details: bool,
+) -> String {
     let player_id = player
         .get("player_id")
         .and_then(|v| json_id(Some(v)))
@@ -471,6 +484,17 @@ fn current_player_line(player: &Value, source_player_id: &str, web_url: &str) ->
     }
     if let Some(elo) = queue_elo {
         details.push(format!("{} ELO", format_number(elo.round())));
+    }
+    if champion_details {
+        if let Some(elo) = player.get("champion_elo").and_then(numeric_metric) {
+            details.push(format!("Champion {} Elo", format_number(elo.round())));
+        }
+        if let Some(win_rate) = player.get("champion_win_rate").and_then(numeric_metric) {
+            details.push(format!("{win_rate:.1}% champion WR"));
+        }
+        if let Some(kda) = player.get("champion_kda").and_then(numeric_metric) {
+            details.push(format!("{kda:.2} champion KDA"));
+        }
     }
 
     let detail_str = if details.is_empty() {
@@ -1601,6 +1625,20 @@ mod tests {
     }
 
     #[test]
+    fn detailed_current_payload_adds_champion_metrics() {
+        let live = json!({
+            "match":{"match_id":9,"queue_id":486},"player_id":1,
+            "players":[{"player_id":1,"player_name":"A","champion_name":"Ying","task_force":1,
+                "champion_elo":1750,"champion_win_rate":55.5,"champion_kda":2.25}]
+        });
+        let value =
+            &build_current_payload_detailed(&live, "https://paladinscat.com").fields[0].value;
+        assert!(value.contains("Champion 1,750 Elo"));
+        assert!(value.contains("55.5% champion WR"));
+        assert!(value.contains("2.25 champion KDA"));
+    }
+
+    #[test]
     fn history_and_live_payloads_accept_numeric_ids() {
         let history = vec![json!({"match_id": 123, "win_status":"Winner", "champion_name":"Ying"})];
         assert!(
@@ -1615,6 +1653,24 @@ mod tests {
                 .value
                 .contains("▸ **Ying**")
         );
+    }
+
+    #[test]
+    fn history_payload_shows_at_most_ten_matches() {
+        let history = (1..=12)
+            .map(|match_id| {
+                json!({
+                    "match_id": match_id,
+                    "win_status": "Winner",
+                    "champion_name": "Ying"
+                })
+            })
+            .collect::<Vec<_>>();
+        let embed = build_history_payload("A", &history, "https://paladinscat.com");
+        let description = embed.description.expect("history description");
+        assert_eq!(description.lines().count(), 10);
+        assert!(description.contains("/matches/10"));
+        assert!(!description.contains("/matches/11"));
     }
 
     #[test]

@@ -17,7 +17,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 
-use crate::api::ApiClient;
+use crate::api::{ApiClient, HistoryFilters};
 use crate::cache::RenderCache;
 use crate::image::ImageService;
 
@@ -213,6 +213,11 @@ async fn preview_cmd_handler(
         "maps" => preview_maps(&state, &params).await,
         "composition" => preview_composition(&state, &params).await,
         "items" => preview_items(&state, &params).await,
+        "champions" => preview_player_champions(&state, &params).await,
+        "leaderboard" => preview_leaderboard(&state, &params).await,
+        "activity" => preview_activity(&state).await,
+        "status" => preview_status(&state).await,
+        "random" => preview_random(&state, &params).await,
         unknown => {
             let elapsed_ms = start.elapsed().as_millis() as u64;
             state.record(elapsed_ms);
@@ -220,7 +225,7 @@ async fn preview_cmd_handler(
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
                     "error": format!("Unknown preview command: {}", unknown),
-                    "supported": ["player", "match", "history", "current", "loadout", "champion", "maps", "composition", "items"],
+                    "supported": ["player", "match", "history", "current", "loadout", "champion", "champions", "leaderboard", "activity", "status", "random", "maps", "composition", "items"],
                     "latency_ms": elapsed_ms
                 })),
             );
@@ -301,7 +306,16 @@ async fn preview_history(state: &AppState, params: &HashMap<String, String>) -> 
                 let Some(id) = json_id(val.get("id")) else {
                     return serde_json::json!({ "type": "history", "error": format!("Player '{}' not found", n) });
                 };
-                match state.api.player_history(&id, 10).await {
+                let filters = HistoryFilters {
+                    queue_id: params.get("queue").cloned(),
+                    champion_id: match params.get("champion") {
+                        Some(champion) => state.api.champion_id(champion).await.ok().flatten(),
+                        None => None,
+                    },
+                    win_status: params.get("result").cloned(),
+                    offset: param_int(params, "page", 1).saturating_sub(1) * 10,
+                };
+                match state.api.player_history(&id, 10, &filters).await {
                     Ok(rows) => serde_json::json!({
                         "type": "history",
                         "player": n,
@@ -437,5 +451,76 @@ async fn preview_items(state: &AppState, params: &HashMap<String, String>) -> se
     match state.api.ranked_items(scope, limit).await {
         Ok(rows) => serde_json::json!({ "type": "items", "data": rows }),
         Err(_) => serde_json::json!({ "type": "items", "error": "Failed to fetch item stats" }),
+    }
+}
+
+async fn preview_player_champions(
+    state: &AppState,
+    params: &HashMap<String, String>,
+) -> serde_json::Value {
+    let Some(name) = param(params, "name") else {
+        return serde_json::json!({"type":"champions","error":"Missing required parameter: name"});
+    };
+    match state.api.resolve_player(name).await {
+        Ok(player) => match json_id(player.get("id")) {
+            Some(id) => match state.api.player_champions(&id).await {
+                Ok(rows) => serde_json::json!({"type":"champions","player":player,"data":rows}),
+                Err(error) => serde_json::json!({"type":"champions","error":error.message}),
+            },
+            None => serde_json::json!({"type":"champions","error":"Player not found"}),
+        },
+        Err(error) => serde_json::json!({"type":"champions","error":error.message}),
+    }
+}
+
+async fn preview_leaderboard(
+    state: &AppState,
+    params: &HashMap<String, String>,
+) -> serde_json::Value {
+    let category = params
+        .get("category")
+        .map(String::as_str)
+        .unwrap_or("performance");
+    let metric = params.get("metric").map(String::as_str).or(Some("dpm"));
+    let role = params.get("role").map(String::as_str);
+    let champion_id = match params.get("champion") {
+        Some(name) => state.api.champion_id(name).await.ok().flatten(),
+        None => None,
+    };
+    match state
+        .api
+        .leaderboard(category, metric, role, champion_id.as_deref())
+        .await
+    {
+        Ok(data) => serde_json::json!({"type":"leaderboard","data":data}),
+        Err(error) => serde_json::json!({"type":"leaderboard","error":error.message}),
+    }
+}
+
+async fn preview_activity(state: &AppState) -> serde_json::Value {
+    match state.api.activity().await {
+        Ok(data) => serde_json::json!({"type":"activity","data":data}),
+        Err(error) => serde_json::json!({"type":"activity","error":error.message}),
+    }
+}
+
+async fn preview_status(state: &AppState) -> serde_json::Value {
+    match state.api.status().await {
+        Ok(data) => serde_json::json!({"type":"status","data":data}),
+        Err(error) => serde_json::json!({"type":"status","error":error.message}),
+    }
+}
+
+async fn preview_random(state: &AppState, params: &HashMap<String, String>) -> serde_json::Value {
+    let kind = params.get("kind").map(String::as_str).unwrap_or("champion");
+    if kind == "map" {
+        return match state.api.ranked_maps(50).await {
+            Ok(rows) => serde_json::json!({"type":"random","kind":"map","candidates":rows}),
+            Err(error) => serde_json::json!({"type":"random","error":error.message}),
+        };
+    }
+    match state.api.champions().await {
+        Ok(data) => serde_json::json!({"type":"random","kind":kind,"candidates":data}),
+        Err(error) => serde_json::json!({"type":"random","error":error.message}),
     }
 }

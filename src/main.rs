@@ -14,6 +14,7 @@ mod image;
 mod register;
 
 use std::sync::Arc;
+use twilight_cache_inmemory::InMemoryCache;
 use twilight_gateway::{EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
 use twilight_http::Client as HttpClient;
 
@@ -101,7 +102,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // intent that must be enabled in the developer portal; we don't read raw
     // message content, so requesting it caused close code 4014 (Disallowed
     // intent(s)) and was removed.
-    let intents = Intents::GUILDS;
+    let intents = if cfg.social_commands_enabled {
+        Intents::GUILDS | Intents::GUILD_VOICE_STATES
+    } else {
+        Intents::GUILDS
+    };
+    let discord_cache = Arc::new(InMemoryCache::new());
 
     let http = Arc::new(HttpClient::new(cfg.discord_token.clone()));
 
@@ -160,6 +166,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         should_register.then_some(app_id),
                         dev_guild,
                         Arc::clone(&registration_started),
+                        Arc::clone(&discord_cache),
+                        cfg.social_commands_enabled,
                     ));
                 }
                 Some(Err(err)) => {

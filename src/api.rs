@@ -143,6 +143,14 @@ pub struct LoadoutsResponse {
     pub refresh_error: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct HistoryFilters {
+    pub queue_id: Option<String>,
+    pub champion_id: Option<String>,
+    pub win_status: Option<String>,
+    pub offset: usize,
+}
+
 /// Encode a path segment for use in URLs.
 fn encode(s: &str) -> String {
     percent_encode(s.as_bytes(), NON_ALPHANUMERIC).to_string()
@@ -311,11 +319,13 @@ impl ApiClient {
     pub async fn saved_discord_player(
         &self,
         discord_user_id: &str,
+        slot: &str,
     ) -> Result<serde_json::Value, ApiError> {
         let url = format!(
-            "{}/players/discord/saved-player?discordUserId={}",
+            "{}/players/discord/saved-player?discordUserId={}&slot={}",
             self.base,
-            encode(discord_user_id)
+            encode(discord_user_id),
+            encode(slot)
         );
         let value = self.get_json(&url).await?;
         Ok(value.get("player").cloned().unwrap_or(value))
@@ -326,11 +336,13 @@ impl ApiClient {
         &self,
         discord_user_id: &str,
         player_id: &str,
+        slot: &str,
     ) -> Result<serde_json::Value, ApiError> {
         let url = format!("{}/players/discord/saved-player", self.base);
         let mut req = self.inner.put(url).json(&serde_json::json!({
             "discordUserId": discord_user_id,
             "playerId": player_id,
+            "slot": slot,
         }));
         if let Some(token) = &self.service_token {
             req = req.header("X-PaladinsCat-Service-Token", token);
@@ -342,6 +354,34 @@ impl ApiClient {
         }
         let value = response.json::<serde_json::Value>().await?;
         Ok(value.get("player").cloned().unwrap_or(value))
+    }
+
+    pub async fn forget_discord_player(
+        &self,
+        discord_user_id: &str,
+        slot: &str,
+    ) -> Result<usize, ApiError> {
+        let url = format!(
+            "{}/players/discord/saved-player?discordUserId={}&slot={}",
+            self.base,
+            encode(discord_user_id),
+            encode(slot)
+        );
+        let mut request = self.inner.delete(url);
+        if let Some(token) = &self.service_token {
+            request = request.header("X-PaladinsCat-Service-Token", token);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            return Err(response_error(status, &response.text().await?));
+        }
+        Ok(response
+            .json::<serde_json::Value>()
+            .await?
+            .get("deleted")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default() as usize)
     }
 
     /// Resolve player name/ID to numeric ID and fetch profile.
@@ -571,6 +611,18 @@ impl ApiClient {
         self.get_json(&url).await
     }
 
+    pub async fn champion_id(&self, name: &str) -> Result<Option<String>, ApiError> {
+        let value = self.champions().await?;
+        Ok(value.as_array().and_then(|rows| {
+            rows.iter().find_map(|row| {
+                row.get("name")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| value.eq_ignore_ascii_case(name))
+                    .and_then(|_| json_id(row.get("id")))
+            })
+        }))
+    }
+
     /// Get player match history.
     ///
     /// Mirrors TS: playerHistoryById(playerId, limit).
@@ -580,18 +632,86 @@ impl ApiClient {
         &self,
         player_id: &str,
         limit: usize,
+        filters: &HistoryFilters,
     ) -> Result<Vec<serde_json::Value>, ApiError> {
-        let url = format!(
-            "{}/players/{}/matches?limit={}",
+        let mut url = format!(
+            "{}/players/{}/matches?limit={}&offset={}",
             self.base,
             encode(player_id),
-            limit
+            limit,
+            filters.offset
         );
+        for (key, value) in [
+            ("queueId", filters.queue_id.as_deref()),
+            ("championId", filters.champion_id.as_deref()),
+            ("winStatus", filters.win_status.as_deref()),
+        ] {
+            if let Some(value) = value.filter(|value| !value.is_empty()) {
+                url.push_str(&format!("&{key}={}", encode(value)));
+            }
+        }
         let val: serde_json::Value = self.get_json_slow(&url).await?;
         match &val {
             serde_json::Value::Array(arr) => Ok(arr.to_vec()),
             _ => Ok(vec![val]),
         }
+    }
+
+    pub async fn player_champions(
+        &self,
+        player_id: &str,
+    ) -> Result<Vec<serde_json::Value>, ApiError> {
+        let value = self
+            .get_json(&format!(
+                "{}/players/{}/champions",
+                self.base,
+                encode(player_id)
+            ))
+            .await?;
+        Ok(value.as_array().cloned().unwrap_or_default())
+    }
+
+    pub async fn leaderboard(
+        &self,
+        category: &str,
+        metric: Option<&str>,
+        role: Option<&str>,
+        champion_id: Option<&str>,
+    ) -> Result<serde_json::Value, ApiError> {
+        let path = match category {
+            "class" => "class",
+            "champion" => "champion-elo",
+            _ => "performance",
+        };
+        let mut url = format!(
+            "{}/players/leaderboard/{path}?limit=10&queueId=486",
+            self.base
+        );
+        for (key, value) in [
+            ("metric", metric),
+            ("role", role),
+            ("championId", champion_id),
+        ] {
+            if let Some(value) = value.filter(|value| !value.is_empty()) {
+                url.push_str(&format!("&{key}={}", encode(value)));
+            }
+        }
+        self.get_json_slow(&url).await
+    }
+
+    pub async fn activity(&self) -> Result<serde_json::Value, ApiError> {
+        let presence_url = format!("{}/stats/presence?view=activity-v4", self.base);
+        let overview_url = format!("{}/matches/overview?view=activity-v3", self.base);
+        let (presence, overview) = tokio::try_join!(
+            self.get_json_slow(&presence_url),
+            self.get_json_slow(&overview_url)
+        )?;
+        Ok(serde_json::json!({"presence":presence,"overview":overview}))
+    }
+
+    pub async fn status(&self) -> Result<serde_json::Value, ApiError> {
+        self.get_json(&format!("{}/system/hirez-status", self.base))
+            .await
     }
 
     /// Check player live match status.
