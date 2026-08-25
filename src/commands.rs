@@ -473,7 +473,13 @@ impl Handler {
                     .await;
                 return;
             };
-            self.defer_update(&interaction).await;
+            tracing::info!(match_id, "history match selected");
+            self.send_response(
+                interaction.id,
+                &interaction.token,
+                history_match_loading_response(match_id),
+            )
+            .await;
             match self.api.match_info(match_id).await {
                 Ok(value) => {
                     let record = value.get("match").unwrap_or(&value);
@@ -1710,11 +1716,14 @@ impl Handler {
         token: &str,
         resp: InteractionResponse,
     ) {
-        let _ = self
+        if let Err(error) = self
             .http
             .interaction(self.app_id)
             .create_response(interaction_id, token, &resp)
-            .await;
+            .await
+        {
+            tracing::error!(%error, interaction_id = %interaction_id, "interaction response failed");
+        }
     }
 
     async fn reply_text(&self, interaction: &Interaction, msg: impl Into<String>) {
@@ -2046,6 +2055,23 @@ fn history_back_component(token: &str) -> Vec<Component> {
     })]
 }
 
+fn history_match_loading_response(match_id: &str) -> InteractionResponse {
+    let embed = embeds::simple_embed(
+        &format!("Loading match {match_id}…"),
+        "Fetching the complete match details.",
+        None,
+    );
+    InteractionResponse {
+        kind: InteractionResponseType::UpdateMessage,
+        data: Some(InteractionResponseData {
+            content: Some(String::new()),
+            embeds: Some(vec![embed]),
+            components: Some(Vec::new()),
+            ..Default::default()
+        }),
+    }
+}
+
 fn value_id(value: Option<&Value>) -> Option<String> {
     value.and_then(|value| match value {
         Value::String(id) => Some(id.clone()),
@@ -2193,6 +2219,17 @@ mod tests {
             })],
         );
         assert_eq!(components.len(), 2);
+    }
+
+    #[test]
+    fn history_match_selection_immediately_updates_the_message() {
+        let payload = serde_json::to_value(history_match_loading_response("1281335238")).unwrap();
+        assert_eq!(payload["type"], 7);
+        assert_eq!(
+            payload["data"]["embeds"][0]["title"],
+            "Loading match 1281335238…"
+        );
+        assert_eq!(payload["data"]["components"], serde_json::json!([]));
     }
 
     #[test]
