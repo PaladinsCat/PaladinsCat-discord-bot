@@ -180,7 +180,11 @@ fn option_player() -> CommandOption {
 }
 
 fn option_match_id() -> CommandOption {
-    string_option("id", "Match ID", true)
+    string_option(
+        "id",
+        "Match ID (defaults to your saved player's latest match)",
+        false,
+    )
 }
 
 pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
@@ -506,5 +510,10 @@ mod tests {
     fn test_lobby_has_choices() {
         let lobby = option_lobby();
         assert_eq!(lobby.choices.as_ref().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn match_id_is_optional_for_saved_player_fallback() {
+        assert_eq!(option_match_id().required, Some(false));
     }
 }

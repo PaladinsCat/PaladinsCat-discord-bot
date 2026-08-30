@@ -94,6 +94,14 @@ mod tests {
             "http://backend:3005/api/v1"
         );
     }
+
+    #[test]
+    fn latest_player_match_forces_one_row_history_read_through() {
+        assert_eq!(
+            latest_player_match_url("http://backend:3005/api/v1", "716515038"),
+            "http://backend:3005/api/v1/players/716515038/matches?limit=1&offset=0&refresh=true"
+        );
+    }
 }
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -179,6 +187,14 @@ fn json_id(value: Option<&serde_json::Value>) -> Option<String> {
         serde_json::Value::Number(id) => Some(id.to_string()),
         _ => None,
     })
+}
+
+fn latest_player_match_url(base: &str, player_id: &str) -> String {
+    format!(
+        "{}/players/{}/matches?limit=1&offset=0&refresh=true",
+        base,
+        encode(player_id)
+    )
 }
 
 const PUBLIC_MODERATION_FIELDS: [&str; 20] = [
@@ -689,6 +705,24 @@ impl ApiClient {
             serde_json::Value::Array(arr) => Ok(arr.to_vec()),
             _ => Ok(vec![val]),
         }
+    }
+
+    /// Return the newest match observed for a player after applying the
+    /// backend-owned three-minute history TTL. `refresh=true` makes the
+    /// read-through contract explicit; the backend performs no Hi-Rez call
+    /// while fresh and synchronously persists an expired refresh.
+    pub async fn latest_player_match(
+        &self,
+        player_id: &str,
+    ) -> Result<Option<serde_json::Value>, ApiError> {
+        let value = self
+            .get_json_slow(&latest_player_match_url(&self.base, player_id))
+            .await?;
+        Ok(match value {
+            serde_json::Value::Array(rows) => rows.into_iter().next(),
+            serde_json::Value::Null => None,
+            row => Some(row),
+        })
     }
 
     pub async fn player_champions(

@@ -288,6 +288,10 @@ fn valid_match_id(id: &str) -> bool {
     (6..=20).contains(&id.len()) && id.chars().all(|c| c.is_ascii_digit())
 }
 
+fn match_id_from_history_row(row: &Value) -> Option<String> {
+    value_id(row.get("match_id")).filter(|id| valid_match_id(id))
+}
+
 impl Handler {
     async fn handle_command(&self, interaction: Interaction) {
         let Some(cmd_data) = extract_command_data(&interaction.data) else {
@@ -733,7 +737,7 @@ impl Handler {
             "`/forget` delete one or all saved player links",
             "`/privacy` stored-data and deletion details",
             "`/profile` profile, rank, record and performance",
-            "`/match` optimized match-result image",
+            "`/match [id]` match image by ID or your saved player's latest",
             "`/history` recent matches",
             "`/current` current live match",
             "`/champions` per-player champion statistics",
@@ -901,15 +905,85 @@ impl Handler {
     }
 
     async fn match_cmd(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
-        let Some(id) = opt_string(opts, "id") else {
-            return self.reply_text(interaction, "Provide a match ID").await;
+        let requested_id = opt_string(opts, "id");
+        let (id, cooldown_claimed) = match requested_id {
+            Some(id) => {
+                if !valid_match_id(&id) {
+                    return self
+                        .reply_text(interaction, "Enter a valid numeric match ID.")
+                        .await;
+                }
+                (id, false)
+            }
+            None => {
+                let Some(user_id) = extract_user_id(interaction) else {
+                    return self
+                        .reply_text(interaction, missing_saved_match_player_message())
+                        .await;
+                };
+                let player = match self.api.saved_discord_player(&user_id, "primary").await {
+                    Ok(player) => player,
+                    Err(error) if error.status == Some(404) => {
+                        return self
+                            .reply_text(interaction, missing_saved_match_player_message())
+                            .await;
+                    }
+                    Err(error) => {
+                        return self
+                            .reply_text(
+                                interaction,
+                                api_error_message(&error, "The saved player could not be loaded."),
+                            )
+                            .await;
+                    }
+                };
+                let Some(player_id) = value_id(player.get("id")) else {
+                    return self
+                        .reply_text(interaction, missing_saved_match_player_message())
+                        .await;
+                };
+                if let Err(message) = claim_image_cooldown(&user_id) {
+                    return self.reply_text(interaction, message).await;
+                }
+                let latest = match self.api.latest_player_match(&player_id).await {
+                    Ok(Some(row)) => row,
+                    Ok(None) => {
+                        return self
+                            .reply_text(
+                                interaction,
+                                "No recent matches were found for your saved player.",
+                            )
+                            .await;
+                    }
+                    Err(error) => {
+                        return self
+                            .reply_text(
+                                interaction,
+                                api_error_message(
+                                    &error,
+                                    "Failed to load your saved player's latest match.",
+                                ),
+                            )
+                            .await;
+                    }
+                };
+                let Some(id) = match_id_from_history_row(&latest) else {
+                    return self
+                        .reply_text(
+                            interaction,
+                            "No recent matches were found for your saved player.",
+                        )
+                        .await;
+                };
+                (id, true)
+            }
         };
-        if !valid_match_id(&id) {
-            return self
-                .reply_text(interaction, "Enter a valid numeric match ID.")
-                .await;
-        }
-        if let Some(user_id) = extract_user_id(interaction) {
+        if !cooldown_claimed {
+            let Some(user_id) = extract_user_id(interaction) else {
+                return self
+                    .reply_text(interaction, "A Discord user is required to render images.")
+                    .await;
+            };
             if let Err(message) = claim_image_cooldown(&user_id) {
                 return self.reply_text(interaction, message).await;
             }
@@ -2223,6 +2297,10 @@ fn missing_saved_player_message() -> String {
     "No player name was entered and you do not have a saved player. Enter a player or use `/save player:<name or ID>` first.".to_string()
 }
 
+fn missing_saved_match_player_message() -> String {
+    "No match ID was entered and you do not have a saved primary player. Use `/save player:<name or ID>` first.".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2233,6 +2311,22 @@ mod tests {
         assert!(valid_match_id("1281335238"));
         assert!(!valid_match_id("12345"));
         assert!(!valid_match_id("12813x5238"));
+    }
+
+    #[test]
+    fn latest_history_match_id_accepts_backend_strings_and_numbers() {
+        assert_eq!(
+            match_id_from_history_row(&serde_json::json!({"match_id":"1281335238"})),
+            Some("1281335238".into())
+        );
+        assert_eq!(
+            match_id_from_history_row(&serde_json::json!({"match_id":1281335238_u64})),
+            Some("1281335238".into())
+        );
+        assert_eq!(
+            match_id_from_history_row(&serde_json::json!({"match_id":"invalid"})),
+            None
+        );
     }
 
     #[test]
