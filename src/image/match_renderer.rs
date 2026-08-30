@@ -32,7 +32,7 @@ const LOADOUT_SCALE: f64 = 1.0;
 static RENDER_DOCUMENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Template version for cache invalidation keys.
-const TEMPLATE_VERSION: u32 = 17;
+const TEMPLATE_VERSION: u32 = 18;
 
 /// Loadout template version for cache invalidation keys.
 const LOADOUT_TEMPLATE_VERSION: u32 = 9;
@@ -771,27 +771,32 @@ mod tests {
     fn test_renderer() -> crate::image::match_renderer::MatchRenderer {
         use crate::image::match_renderer::MatchRendererConfig;
         use crate::image::template::{TemplateConfig, TemplateEngine};
-        // `dev_defaults()` uses repo-root-relative paths; the test harness runs
-        // from the crate dir, so resolve them to the repo root explicitly.
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let bot_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let frontend_root = bot_root
             .parent()
-            .and_then(|p| p.parent())
-            .expect("repo root");
+            .expect("workspace root")
+            .join("paladinscat-frontend");
         let cfg = TemplateConfig {
-            match_template_path: root
+            match_template_path: bot_root
                 .join("assets/templates/match-result-scoreboard.html")
                 .to_string_lossy()
                 .into_owned(),
-            loadout_template_path: root
+            canonical_match_css_path: Some(
+                frontend_root
+                    .join("app/globals.css")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            loadout_template_path: bot_root
                 .join("assets/templates/loadout-card-layout.html")
                 .to_string_lossy()
                 .into_owned(),
-            cheater_pattern_path: root
+            cheater_pattern_path: bot_root
                 .join("assets/templates/cheater-police-line.svg")
                 .to_string_lossy()
                 .into_owned(),
-            asset_root_path: root
-                .join("src/frontend/public/images")
+            asset_root_path: frontend_root
+                .join("public/images")
                 .to_string_lossy()
                 .into_owned(),
         };
@@ -977,14 +982,33 @@ document.querySelector('img').decode=()=>new Promise(resolve=>setTimeout(()=>{do
             .unwrap_or(&payload);
         let renderer = test_renderer();
         let document = renderer.template_engine.match_document(&record);
+        let expected_player_assets = record
+            .get("players")
+            .and_then(serde_json::Value::as_array)
+            .map_or(1, |players| players.len().max(1));
         assert!(
-            document.matches("data:image/avif;base64,").count() >= 10,
-            "match document must embed AVIF assets before PNG capture"
+            document.matches("data:image/avif;base64,").count() >= expected_player_assets,
+            "match document must embed player assets before PNG capture"
         );
+        let cold_started = Instant::now();
         let png = renderer
             .render(record)
             .await
             .expect("render real scoreboard");
+        let cold_elapsed = cold_started.elapsed();
+        let warm_started = Instant::now();
+        let warm_png = renderer
+            .render(record)
+            .await
+            .expect("render warm real scoreboard");
+        let warm_elapsed = warm_started.elapsed();
+        println!(
+            "local scoreboard cold={}ms warm={}ms",
+            cold_elapsed.as_millis(),
+            warm_elapsed.as_millis()
+        );
+        let warm_image = image::load_from_memory(&warm_png).expect("decode warm PNG");
+        assert_eq!((warm_image.width(), warm_image.height()), (2048, 1152));
         if let Ok(path) = std::env::var("MATCH_PNG_OUT") {
             std::fs::write(path, &png).expect("write MATCH_PNG_OUT");
         }

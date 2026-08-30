@@ -472,7 +472,9 @@ mod tests {
             let (stream, _) = listener.accept().await.unwrap();
             use tokio_tungstenite::accept_async;
             let _ws = accept_async(stream).await.unwrap();
-            // drop ws immediately — never respond
+            // Keep the accepted socket alive beyond the client timeout while
+            // intentionally sending no response.
+            tokio::time::sleep(Duration::from_millis(150)).await;
         });
 
         let ws_url = format!("ws://{}/", addr);

@@ -106,7 +106,7 @@ impl ImageService {
         );
 
         if let Some(cached) = self.cache.get(&cache_key).await {
-            return Ok(decode_b64(&cached));
+            return Ok(cached);
         }
 
         let result = self
@@ -118,7 +118,7 @@ impl ImageService {
             .await;
         let result = self.finish_queued_render(result).await?;
 
-        self.cache.set(cache_key, encode_b64(&result)).await;
+        self.cache.set(cache_key, result.clone()).await;
         Ok(result)
     }
 
@@ -133,7 +133,6 @@ impl ImageService {
         self.cache
             .get(&cache_key)
             .await
-            .map(|cached| decode_b64(&cached))
             .filter(|png| !png.is_empty())
     }
 
@@ -158,7 +157,7 @@ impl ImageService {
             })
             .await;
         let result = self.finish_queued_render(result).await?;
-        self.cache.set(cache_key, encode_b64(&result)).await;
+        self.cache.set(cache_key, result.clone()).await;
         Ok(result)
     }
 
@@ -182,7 +181,7 @@ impl ImageService {
         );
 
         if let Some(cached) = self.cache.get(&cache_key).await {
-            return Ok(decode_b64(&cached));
+            return Ok(cached);
         }
 
         let result = self
@@ -194,7 +193,7 @@ impl ImageService {
             .await;
         let result = self.finish_queued_render(result).await?;
 
-        self.cache.set(cache_key, encode_b64(&result)).await;
+        self.cache.set(cache_key, result.clone()).await;
         Ok(result)
     }
 
@@ -216,7 +215,7 @@ impl ImageService {
             self.renderer.template_version()
         );
         if let Some(cached) = self.cache.get(&cache_key).await {
-            return Ok(decode_b64(&cached));
+            return Ok(cached);
         }
 
         let holder = self.get_or_create_in_flight(&match_id);
@@ -241,7 +240,7 @@ impl ImageService {
             *guard = Some(result.clone());
         }
 
-        self.cache.set(cache_key, encode_b64(&result)).await;
+        self.cache.set(cache_key, result.clone()).await;
         Ok(result)
     }
 
@@ -360,18 +359,6 @@ impl ImageService {
     }
 }
 
-fn encode_b64(bytes: &[u8]) -> String {
-    use base64::Engine as _;
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
-fn decode_b64(s: &str) -> Vec<u8> {
-    use base64::Engine as _;
-    base64::engine::general_purpose::STANDARD
-        .decode(s.trim())
-        .unwrap_or_default()
-}
-
 fn value_id(value: Option<&serde_json::Value>) -> String {
     match value {
         Some(serde_json::Value::String(value)) => value.clone(),
@@ -392,19 +379,6 @@ mod tests {
         assert_eq!(config.timeout_ms, 20_000);
         assert_eq!(config.cache_bytes, 32 * 1024 * 1024);
         assert_eq!(config.cache_ttl_secs, 600);
-    }
-
-    #[test]
-    fn encode_b64_does_not_panic_on_high_bytes() {
-        // Regression: the old hand-rolled encoder indexed a 64-char table with
-        // unmasked 8-bit values (e.g. (a<<4)|(b>>4) up to 255), panicking with
-        // "index out of bounds" on real PNG bytes. Must round-trip cleanly.
-        for len in 0..300 {
-            let data: Vec<u8> = (0..len).map(|i| (i * 37 + 11) as u8).collect();
-            let encoded = encode_b64(&data);
-            let decoded = decode_b64(&encoded);
-            assert_eq!(decoded, data, "round-trip failed for len {len}");
-        }
     }
 
     #[test]

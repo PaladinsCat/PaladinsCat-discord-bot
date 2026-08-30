@@ -228,6 +228,17 @@ impl AssetCatalog {
                     .filter(|f| normalized(&f.to_string_lossy()).contains(&wanted)),
             )
         })
+        // Match the canonical web scoreboard: unknown, experimental, and
+        // custom maps use the neutral test-map artwork until their taxonomy
+        // and dedicated image are registered.
+        .or_else(|| {
+            let fallback = normalized("Match_Test_Maps");
+            preferred_image(files.iter().filter(|f| {
+                f.file_stem()
+                    .map(|stem| normalized(&stem.to_string_lossy()) == fallback)
+                    .unwrap_or(false)
+            }))
+        })
         .cloned();
         self.map_images
             .write()
@@ -612,6 +623,22 @@ mod tests {
 
         let asset = AssetCatalog::new(&images).loadout_card(42).unwrap();
         assert_eq!(asset.icon_path, Some(cards.join("Card_Test.png")));
+
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn unknown_map_uses_the_canonical_neutral_fallback() {
+        let fixture =
+            std::env::temp_dir().join(format!("paladinscat-map-catalog-{}", uuid::Uuid::new_v4()));
+        let maps = fixture.join("maps");
+        std::fs::create_dir_all(&maps).unwrap();
+        std::fs::write(maps.join("Match_Test_Maps.png"), b"png-fixture").unwrap();
+
+        let asset = AssetCatalog::new(&fixture)
+            .map_image("WIP Waterway (Siege)")
+            .unwrap();
+        assert_eq!(asset, maps.join("Match_Test_Maps.png"));
 
         std::fs::remove_dir_all(fixture).unwrap();
     }

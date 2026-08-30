@@ -1,5 +1,6 @@
 //! HTML template data binding — builds data-bound scoreboard/loadout documents.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -15,6 +16,7 @@ const PLAYER_TAG_MINIMUM_COUNT: i64 = 5;
 #[derive(Debug, Clone)]
 pub struct TemplateConfig {
     pub match_template_path: String,
+    pub canonical_match_css_path: Option<String>,
     pub loadout_template_path: String,
     pub cheater_pattern_path: String,
     pub asset_root_path: String,
@@ -22,8 +24,17 @@ pub struct TemplateConfig {
 
 impl TemplateConfig {
     pub fn dev_defaults() -> Self {
+        let workspace_css = "../paladinscat-frontend/app/globals.css";
         Self {
             match_template_path: "assets/templates/match-result-scoreboard.html".into(),
+            canonical_match_css_path: Some(
+                if std::path::Path::new(workspace_css).is_file() {
+                    workspace_css
+                } else {
+                    "src/frontend/app/globals.css"
+                }
+                .into(),
+            ),
             loadout_template_path: "assets/templates/loadout-card-layout.html".into(),
             cheater_pattern_path: "assets/templates/cheater-police-line.svg".into(),
             asset_root_path: "src/frontend/public/images".into(),
@@ -34,6 +45,7 @@ impl TemplateConfig {
 #[derive(Clone)]
 pub struct TemplateEngine {
     match_template: Arc<String>,
+    canonical_match_css: Option<Arc<String>>,
     loadout_template: Arc<String>,
     cheater_pattern_url: String,
     assets: AssetCatalog,
@@ -197,20 +209,28 @@ fn scale_card_description(description: &str, level: i64) -> String {
     output.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn queue_presentation(queue_id: i64) -> (&'static str, &'static str, bool) {
+fn fallback_queue_name(queue_id: i64) -> &'static str {
     match queue_id {
-        424 => ("Casual", "Siege", false),
-        428 => ("Ranked", "Siege", false),
-        437 => ("Casual", "Payload", false),
-        451 => ("PvE", "Survival", false),
-        452 => ("Casual", "Onslaught", false),
-        469 => ("Casual", "Team Deathmatch", false),
-        474 => ("Casual", "Battlegrounds Solo", false),
-        475 => ("Casual", "Battlegrounds Duo", false),
-        476 => ("Casual", "Battlegrounds Quad", false),
-        486 => ("Ranked", "Siege", true),
-        _ => ("Match", "Unknown mode", false),
+        424 | 428 | 486 => "Siege",
+        437 => "Payload",
+        451 => "Survival",
+        452 => "Onslaught",
+        469 => "Team Deathmatch",
+        474 => "Battlegrounds Solo",
+        475 => "Battlegrounds Duo",
+        476 => "Battlegrounds Quad",
+        _ => "Unknown mode",
     }
+}
+
+fn clean_queue_mode(label: &str) -> String {
+    let trimmed = label.trim();
+    for prefix in ["Ranked ", "Casual "] {
+        if let Some(mode) = trimmed.strip_prefix(prefix) {
+            return mode.trim().to_string();
+        }
+    }
+    trimmed.to_string()
 }
 
 fn match_party_numbers(players: &[serde_json::Value]) -> HashMap<String, i64> {
@@ -348,6 +368,19 @@ impl TemplateEngine {
                 config.loadout_template_path, e
             )
         })?;
+        let canonical_match_css = match config.canonical_match_css_path.as_deref() {
+            Some(path) => {
+                let stylesheet = fs::read_to_string(path).map_err(|error| {
+                    format!("Failed to load canonical match CSS {path}: {error}")
+                })?;
+                Some(Arc::new(
+                    Self::extract_browser_scoreboard_css(&stylesheet).ok_or_else(|| {
+                        format!("Canonical match CSS {path} has no #browser-scoreboard block")
+                    })?,
+                ))
+            }
+            None => None,
+        };
         let cheater_pattern_url: String =
             if fs::exists(&config.cheater_pattern_path).unwrap_or(false) {
                 let svg = fs::read_to_string(&config.cheater_pattern_path).unwrap_or_default();
@@ -357,6 +390,7 @@ impl TemplateEngine {
             };
         Ok(Self {
             match_template: Arc::new(match_template),
+            canonical_match_css,
             loadout_template: Arc::new(loadout_template),
             cheater_pattern_url,
             assets: AssetCatalog::new(&config.asset_root_path),
@@ -379,6 +413,12 @@ impl TemplateEngine {
             }
         }
         String::new()
+    }
+
+    fn extract_browser_scoreboard_css(stylesheet: &str) -> Option<String> {
+        stylesheet
+            .find("#browser-scoreboard {")
+            .map(|start| stylesheet[start..].trim().to_string())
     }
 
     fn asset_url(&self, path: Option<PathBuf>) -> String {
@@ -412,12 +452,15 @@ impl TemplateEngine {
     /// wholesale — we reuse its CSS and build the hero / columns / team rows /
     /// summary from the record JSON.
     pub fn match_document(&self, data: &serde_json::Value) -> String {
-        let css = Self::extract_css(self.match_template.as_ref());
+        let css = match self.canonical_match_css.as_deref() {
+            Some(css) => Cow::Borrowed(css.as_str()),
+            None => Cow::Owned(Self::extract_css(self.match_template.as_ref())),
+        };
         let cheater_css = if self.cheater_pattern_url.is_empty() {
             String::new()
         } else {
             format!(
-                "body{{--cheater-pattern:url(\"{}\")}}",
+                "#browser-scoreboard{{--cheater-pattern:url(\"{}\")}}",
                 self.cheater_pattern_url
             )
         };
@@ -430,12 +473,12 @@ impl TemplateEngine {
         let board = self.scoreboard_markup(data);
         format!(
             "<!doctype html><html><head><meta charset=\"utf-8\"/><style>{css}{map_css}{cheater}\
-             body{{min-height:720px;padding:0;background:transparent}}.scoreboard{{transform:none}}\
-             .scoreboard-canvas{{width:1280px;height:720px}}.viewport{{width:1280px;max-width:none}}\
+             html,body{{width:1280px;height:720px;margin:0;overflow:hidden}}body{{padding:0;background:transparent}}#browser-scoreboard{{width:1280px;height:720px}}#browser-scoreboard .scoreboard{{transform:none}}\
+             #browser-scoreboard .scoreboard-canvas{{width:1280px;height:720px}}#browser-scoreboard .viewport{{width:1280px;max-width:none}}\
              .prototype-note,.color-lab{{display:none}}.talent-empty{{display:grid;place-items:center;color:#8f9bad;font-size:18px;font-weight:700}}</style>\
-             </head><body data-theme=\"dark\"><main class=\"viewport\"><div class=\"scoreboard-canvas\">\
+             </head><body><section id=\"browser-scoreboard\" data-theme=\"dark\"><main class=\"viewport\"><div class=\"scoreboard-canvas\">\
              <section class=\"scoreboard\" id=\"scoreboard\" aria-label=\"Paladins match scoreboard\">{board}</section>\
-             </div></main></body></html>",
+             </div></main></section></body></html>",
             cheater = cheater_css,
             map_css = map_css,
         )
@@ -497,7 +540,23 @@ impl TemplateEngine {
             })
             .unwrap_or_default();
         let region = str_of(match_obj.and_then(|m| m.get("region")));
-        let (category, mode, ranked) = queue_presentation(queue_id);
+        let ranked = bool_of(match_obj.and_then(|m| m.get("is_ranked"))) || queue_id == 486;
+        let custom = bool_of(match_obj.and_then(|m| m.get("is_custom")))
+            || str_of(match_obj.and_then(|m| m.get("stats_scope"))) == "custom"
+            || str_of(match_obj.and_then(|m| m.get("participant_model"))) == "custom";
+        let category = if ranked {
+            "Ranked"
+        } else if custom {
+            "Custom"
+        } else {
+            "Casual"
+        };
+        let queue_name = str_of(match_obj.and_then(|m| m.get("queue_name")));
+        let mode = if queue_name.trim().is_empty() {
+            fallback_queue_name(queue_id).to_string()
+        } else {
+            clean_queue_mode(&queue_name)
+        };
         let map_class = if map_name.len() > 19 {
             "map-name long"
         } else {
@@ -507,12 +566,22 @@ impl TemplateEngine {
         let broken = bool_of(match_obj.and_then(|m| m.get("broken")));
         let recovered = bool_of(match_obj.and_then(|m| m.get("recovered")));
         let private = bool_of(match_obj.and_then(|m| m.get("private")));
+        let limited = bool_of(match_obj.and_then(|m| m.get("limited")));
         let mut status = format!(
             "<span class=\"status-tag {}\">{}</span>",
-            if ranked { "ranked" } else { "casual" },
+            if ranked {
+                "ranked"
+            } else if custom {
+                "custom"
+            } else {
+                "casual"
+            },
             category
         );
-        if broken && !recovered {
+        if limited {
+            status.push_str("<span class=\"status-tag limited\">Limited</span>");
+        }
+        if broken && !recovered && !limited {
             status.push_str("<span class=\"status-tag broken\">Broken</span>");
         }
         if recovered {
@@ -602,7 +671,7 @@ impl TemplateEngine {
             m_esc = escape_html(&map_name),
             map_name = escape_html(&map_name),
             region = escape_html(&region),
-            mode = mode,
+            mode = escape_html(&mode),
             ban_markup = ban_markup,
             score1 = score1,
             score2 = score2,
@@ -1145,6 +1214,7 @@ mod tests {
         let record = fake_record();
         let engine = TemplateEngine {
             match_template: Arc::new(String::new()),
+            canonical_match_css: None,
             loadout_template: Arc::new(String::new()),
             cheater_pattern_url: String::new(),
             assets: AssetCatalog::new("missing-test-assets"),
@@ -1196,6 +1266,7 @@ mod tests {
             serde_json::Value::String("<script>alert(1)</script>".into());
         let engine = TemplateEngine {
             match_template: Arc::new(String::new()),
+            canonical_match_css: None,
             loadout_template: Arc::new(String::new()),
             cheater_pattern_url: String::new(),
             assets: AssetCatalog::new("missing-test-assets"),
@@ -1221,6 +1292,7 @@ mod tests {
         record["players"][1]["boosted_match_count"] = serde_json::json!(5);
         let engine = TemplateEngine {
             match_template: Arc::new(String::new()),
+            canonical_match_css: None,
             loadout_template: Arc::new(String::new()),
             cheater_pattern_url: String::new(),
             assets: AssetCatalog::new("missing-test-assets"),
@@ -1244,9 +1316,47 @@ mod tests {
     }
 
     #[test]
+    fn extracts_the_frontend_owned_scoreboard_styles() {
+        let css = TemplateEngine::extract_browser_scoreboard_css(
+            "body { color: red; }\n#browser-scoreboard { --bg: #161618; }\n#browser-scoreboard .scoreboard { display: grid; }",
+        )
+        .unwrap();
+        assert!(css.starts_with("#browser-scoreboard {"));
+        assert!(!css.contains("body { color: red; }"));
+    }
+
+    #[test]
+    fn limited_unknown_queue_matches_web_presentation() {
+        let mut record = fake_record();
+        record["match"]["map"] = serde_json::json!("WIP Waterway (Siege)");
+        record["match"]["queue_id"] = serde_json::json!(10225);
+        record["match"]["queue_name"] = serde_json::json!("Unclassified Queue 10225");
+        record["match"]["is_ranked"] = serde_json::json!(false);
+        record["match"]["is_custom"] = serde_json::json!(false);
+        record["match"]["stats_scope"] = serde_json::json!("other");
+        record["match"]["participant_model"] = serde_json::json!("unknown");
+        record["match"]["limited"] = serde_json::json!(true);
+        record["match"]["broken"] = serde_json::json!(true);
+        let engine = TemplateEngine {
+            match_template: Arc::new(String::new()),
+            canonical_match_css: None,
+            loadout_template: Arc::new(String::new()),
+            cheater_pattern_url: String::new(),
+            assets: AssetCatalog::new("missing-test-assets"),
+        };
+        let doc = engine.match_document(&record);
+
+        assert!(doc.contains("status-tag casual\">Casual"));
+        assert!(doc.contains("status-tag limited\">Limited"));
+        assert!(!doc.contains("status-tag broken\">Broken"));
+        assert!(doc.contains("<span>Unclassified Queue 10225</span>"));
+    }
+
+    #[test]
     fn loadout_document_builds_data_bound_capture_target() {
         let engine = TemplateEngine {
             match_template: Arc::new("<style>:root{--bg:#080d13;--text:#fff}</style>".into()),
+            canonical_match_css: None,
             loadout_template: Arc::new(String::new()),
             cheater_pattern_url: String::new(),
             assets: AssetCatalog::new("missing-test-assets"),
@@ -1311,6 +1421,7 @@ mod tests {
         record["players"][2]["party_id"] = serde_json::json!(7777);
         let engine = TemplateEngine {
             match_template: Arc::new(String::new()),
+            canonical_match_css: None,
             loadout_template: Arc::new(String::new()),
             cheater_pattern_url: String::new(),
             assets: AssetCatalog::new("missing-test-assets"),

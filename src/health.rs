@@ -124,7 +124,14 @@ async fn health_handler(State(state): State<AppState>) -> Json<serde_json::Value
             "cache_entries": snapshot.cache_entries,
             "cache_bytes": snapshot.cache_bytes,
             "render_retries": snapshot.render_retries,
-            "browser_recoveries": snapshot.browser_recoveries
+            "browser_recoveries": snapshot.browser_recoveries,
+            "render_attempt_timeout_ms": snapshot.render_attempt_timeout_ms,
+            "duration_ms": {
+                "last": snapshot.queue.duration_ms.last,
+                "average": snapshot.queue.duration_ms.average,
+                "p95": snapshot.queue.duration_ms.p95,
+                "max": snapshot.queue.duration_ms.max
+            }
         })
     });
     Json(serde_json::json!({
