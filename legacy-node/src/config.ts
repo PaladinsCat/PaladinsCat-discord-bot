@@ -14,10 +14,10 @@ const schema = z.object({
   PALADINSCAT_MATCH_LOOKUP_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
   PALADINSCAT_MATCH_LOOKUP_QUEUE_LIMIT: z.coerce.number().int().min(1).max(50).default(10),
   PALADINSCAT_MATCH_LOOKUP_TIMEOUT_MS: z.coerce.number().int().min(10000).max(180000).default(125000),
-  PALADINSCAT_SERVICE_TOKEN: z.preprocess(
-    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
-    z.string().min(32).optional(),
-  ),
+  PALADINSCAT_SERVICE_OIDC_ISSUER: z.string().url().optional(),
+  PALADINSCAT_SERVICE_OIDC_TOKEN_URL: z.string().url().optional(),
+  PALADINSCAT_SERVICE_OIDC_CLIENT_ID: z.string().min(1).optional(),
+  PALADINSCAT_SERVICE_OIDC_PRIVATE_KEY_FILE: z.string().min(1).optional(),
   PALADINSCAT_RENDER_CACHE_BYTES: z.coerce.number().int().min(0).max(64 * 1024 * 1024).default(32 * 1024 * 1024),
   PALADINSCAT_RENDER_CACHE_TTL_MS: z.coerce.number().int().min(1000).max(3600000).default(600000),
   DISCORD_TOKEN: z.string().optional(),
@@ -32,6 +32,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   if (parsed.PALADINSCAT_BOT_MODE === 'real' && (!parsed.DISCORD_TOKEN || !parsed.DISCORD_APPLICATION_ID)) {
     throw new Error('DISCORD_TOKEN and DISCORD_APPLICATION_ID are required in real mode');
   }
+  const serviceValues = [parsed.PALADINSCAT_SERVICE_OIDC_ISSUER, parsed.PALADINSCAT_SERVICE_OIDC_TOKEN_URL, parsed.PALADINSCAT_SERVICE_OIDC_CLIENT_ID, parsed.PALADINSCAT_SERVICE_OIDC_PRIVATE_KEY_FILE];
+  if (parsed.PALADINSCAT_BOT_MODE === 'real' && serviceValues.some((value) => !value)) {
+    throw new Error('PALADINSCAT_SERVICE_OIDC_ISSUER, PALADINSCAT_SERVICE_OIDC_TOKEN_URL, PALADINSCAT_SERVICE_OIDC_CLIENT_ID, and PALADINSCAT_SERVICE_OIDC_PRIVATE_KEY_FILE are required in real mode');
+  }
   return {
     mode: parsed.PALADINSCAT_BOT_MODE,
     apiUrl: parsed.PALADINSCAT_API_URL.replace(/\/$/, ''),
@@ -45,7 +49,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     matchLookupConcurrency: parsed.PALADINSCAT_MATCH_LOOKUP_CONCURRENCY,
     matchLookupQueueLimit: parsed.PALADINSCAT_MATCH_LOOKUP_QUEUE_LIMIT,
     matchLookupTimeoutMs: parsed.PALADINSCAT_MATCH_LOOKUP_TIMEOUT_MS,
-    serviceToken: parsed.PALADINSCAT_SERVICE_TOKEN,
+    serviceAuth: serviceValues.every((value): value is string => Boolean(value)) ? {
+      issuer: parsed.PALADINSCAT_SERVICE_OIDC_ISSUER!,
+      tokenUrl: parsed.PALADINSCAT_SERVICE_OIDC_TOKEN_URL!,
+      clientId: parsed.PALADINSCAT_SERVICE_OIDC_CLIENT_ID!,
+      privateKeyFile: parsed.PALADINSCAT_SERVICE_OIDC_PRIVATE_KEY_FILE!,
+    } : undefined,
     renderCacheBytes: parsed.PALADINSCAT_RENDER_CACHE_BYTES,
     renderCacheTtlMs: parsed.PALADINSCAT_RENDER_CACHE_TTL_MS,
     discordToken: parsed.DISCORD_TOKEN,

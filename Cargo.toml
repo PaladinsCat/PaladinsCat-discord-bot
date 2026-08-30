@@ -53,6 +53,10 @@ chrono = { version = "0.4", features = ["serde"] }
 # Hashing
 sha2 = "0.10"
 
+# RS256 client assertions for the internal OIDC service identity
+jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
+rsa = { version = "0.9", features = ["pem"] }
+
 # URL encoding (mirrors percent-encoding from Node)
 percent-encoding = "2"
 

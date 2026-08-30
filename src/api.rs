@@ -3,10 +3,11 @@
 //! reqwest wrapper for PaladinsCat API endpoints.
 //! Mirrors api.ts: player, match, champion, history lookups.
 
+use crate::service_auth::ServiceTokenProvider;
 use moka::future::Cache;
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use reqwest::Client as HttpClient;
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 #[derive(Debug)]
 pub struct ApiError {
@@ -77,6 +78,22 @@ mod tests {
         assert_eq!(player["wall_shooter_count"], 5);
         assert_eq!(player["hypercarry_count"], 6);
     }
+
+    #[test]
+    fn api_base_is_consolidated_on_v1() {
+        assert_eq!(
+            ApiClient::new("http://backend:3005", None).base,
+            "http://backend:3005/v1"
+        );
+        assert_eq!(
+            ApiClient::new("http://backend:3005/api", None).base,
+            "http://backend:3005/api/v1"
+        );
+        assert_eq!(
+            ApiClient::new("http://backend:3005/api/v1/", None).base,
+            "http://backend:3005/api/v1"
+        );
+    }
 }
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -130,8 +147,8 @@ pub struct ApiClient {
     inner: HttpClient,
     inner_slow: HttpClient,
     base: String,
-    /// Service token for /players/discord endpoint (mirrors TS: serviceToken)
-    service_token: Option<String>,
+    /// Short-lived Keycloak service identity; private key remains external to the repo.
+    service_auth: Option<Arc<ServiceTokenProvider>>,
     /// Short-lived cache only for the static champion roster used by autocomplete.
     response_cache: Cache<String, serde_json::Value>,
 }
@@ -217,8 +234,8 @@ impl ApiClient {
     /// Create new client pointing to PaladinsCat API.
     ///
     /// Mirrors TS: PaladinsCatApi constructor.
-    /// `service_token` is used for authenticated endpoints (mirrors TS: X-PaladinsCat-Service-Token).
-    pub fn new(base: &str, service_token: Option<&str>) -> Self {
+    /// `service_auth` supplies short-lived client-credentials bearer tokens.
+    pub fn new(base: &str, service_auth: Option<ServiceTokenProvider>) -> Self {
         Self {
             inner: HttpClient::builder()
                 .timeout(Duration::from_secs(15))
@@ -228,13 +245,31 @@ impl ApiClient {
                 .timeout(Duration::from_secs(125))
                 .build()
                 .expect("build slow reqwest client"),
-            base: base.to_string(),
-            service_token: service_token.map(str::to_string),
+            base: {
+                let base = base.trim_end_matches('/');
+                if base.ends_with("/v1") {
+                    base.to_owned()
+                } else {
+                    format!("{base}/v1")
+                }
+            },
+            service_auth: service_auth.map(Arc::new),
             response_cache: Cache::builder()
                 .time_to_live(Duration::from_secs(600))
                 .max_capacity(10_000)
                 .build(),
         }
+    }
+
+    async fn bearer(&self) -> Result<Option<String>, ApiError> {
+        if let Some(provider) = self.service_auth.as_ref() {
+            return provider.token().await.map(Some).map_err(|_error| ApiError {
+                status: None,
+                message: "The PaladinsCat service authentication failed.".into(),
+                code: None,
+            });
+        }
+        Ok(None)
     }
 
     /// Send a GET request with exponential backoff on 429 (rate limited).
@@ -250,8 +285,8 @@ impl ApiClient {
 
     async fn post_empty(&self, url: &str) -> Result<serde_json::Value, ApiError> {
         let mut request = self.inner.post(url);
-        if let Some(token) = &self.service_token {
-            request = request.header("X-PaladinsCat-Service-Token", token);
+        if let Some(token) = self.bearer().await? {
+            request = request.bearer_auth(token);
         }
         let response = request.send().await?;
         if !response.status().is_success() {
@@ -270,10 +305,9 @@ impl ApiClient {
 
         for (attempt, &delay_ms) in delays.iter().enumerate() {
             let mut req = client.get(url);
-            if let Some(token) = &self.service_token {
-                req = req
-                    .header(reqwest::header::USER_AGENT, "PaladinsCatDiscordBot/0.1")
-                    .header("X-PaladinsCat-Service-Token", token.as_str());
+            req = req.header(reqwest::header::USER_AGENT, "PaladinsCatDiscordBot/0.1");
+            if let Some(token) = self.bearer().await? {
+                req = req.bearer_auth(token);
             }
             match req.send().await {
                 Ok(resp) => {
@@ -308,7 +342,7 @@ impl ApiClient {
     /// Mirrors TS: discordPlayer(input) → GET /players/discord?player=<input>.
     /// This endpoint resolves the player AND returns enriched data including
     /// Hi-Rez profile info (gamertag, peak rank, headroom).
-    /// Requires PALADINSCAT_SERVICE_TOKEN header.
+    /// Requires the configured Keycloak service identity.
     pub async fn discord_player(&self, name: &str) -> Result<serde_json::Value, ApiError> {
         let url = format!("{}/players/discord?player={}", self.base, encode(name));
         let val = self.get_json(&url).await?;
@@ -344,8 +378,8 @@ impl ApiClient {
             "playerId": player_id,
             "slot": slot,
         }));
-        if let Some(token) = &self.service_token {
-            req = req.header("X-PaladinsCat-Service-Token", token);
+        if let Some(token) = self.bearer().await? {
+            req = req.bearer_auth(token);
         }
         let response = req.send().await?;
         if !response.status().is_success() {
@@ -368,8 +402,8 @@ impl ApiClient {
             encode(slot)
         );
         let mut request = self.inner.delete(url);
-        if let Some(token) = &self.service_token {
-            request = request.header("X-PaladinsCat-Service-Token", token);
+        if let Some(token) = self.bearer().await? {
+            request = request.bearer_auth(token);
         }
         let response = request.send().await?;
         if !response.status().is_success() {

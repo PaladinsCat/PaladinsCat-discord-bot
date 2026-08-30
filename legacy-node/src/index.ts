@@ -7,12 +7,13 @@ import { RenderService } from './render-service.js';
 import { commandData, CommandHandler } from './commands.js';
 import { startHealthServer } from './health.js';
 import { syncDiscordCommands } from './command-registration.js';
+import { ServiceTokenProvider } from './service-auth.js';
 
 const config = loadConfig();
 const api = new PaladinsCatApi(config.apiUrl, 12000, {
   localOnly: config.localOnly,
   matchTimeoutMs: config.matchLookupTimeoutMs,
-  serviceToken: config.serviceToken,
+  serviceAuth: config.serviceAuth ? new ServiceTokenProvider(config.serviceAuth) : undefined,
 });
 const renderer = new MatchRenderer(new AssetCatalog(config.assetRoot));
 const renders = new RenderService(renderer, {

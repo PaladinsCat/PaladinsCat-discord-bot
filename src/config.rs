@@ -23,7 +23,7 @@ impl Config {
             bot_mode: std::env::var("DISCORD_BOT_MODE").unwrap_or_else(|_| "render".into()),
             discord_token: required_secret("DISCORD_TOKEN")?,
             api_base_url: std::env::var("API_BASE_URL")
-                .unwrap_or_else(|_| "http://localhost:3001/api".into()),
+                .unwrap_or_else(|_| "http://localhost:3001/v1".into()),
             cache_bytes: parse_env("CACHE_BYTES", 32 * 1024 * 1024),
             cache_ttl_secs: parse_env("CACHE_TTL_SECS", 600),
             health_port: parse_env("HEALTH_PORT", 3020),

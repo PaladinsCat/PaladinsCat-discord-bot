@@ -213,10 +213,12 @@ test('Discord saved-player reads and writes use the service mapping contract', a
   ]);
 });
 
-test('service credentials are attached to backend requests without changing route contracts', async () => {
+test('legacy client never sends the retired static service credential', async () => {
   let observedToken = '';
+  let observedAuthorization = '';
   const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
     observedToken = new Headers(init?.headers).get('x-paladinscat-service-token') || '';
+    observedAuthorization = new Headers(init?.headers).get('authorization') || '';
     return new Response(JSON.stringify({ player: { id: '123' } }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -224,13 +226,13 @@ test('service credentials are attached to backend requests without changing rout
   }) as typeof fetch;
   const api = new PaladinsCatApi('http://backend:3005', 1000, {
     localOnly: true,
-    serviceToken: 'a'.repeat(64),
     fetchImpl,
   });
 
   await api.playerById('123');
 
-  assert.equal(observedToken, 'a'.repeat(64));
+  assert.equal(observedToken, '');
+  assert.equal(observedAuthorization, '');
 });
 
 test('current match uses the enriched live-lobby projection', async () => {

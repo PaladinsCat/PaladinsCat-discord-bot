@@ -12,6 +12,7 @@ mod embeds;
 mod health;
 mod image;
 mod register;
+mod service_auth;
 
 use std::sync::Arc;
 use twilight_cache_inmemory::InMemoryCache;
@@ -34,11 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cfg = config::Config::load()?;
     tracing::info!(bot_mode = %cfg.bot_mode, "Starting PaladinsCat Discord Bot");
 
-    let service_token = config::optional_secret("PALADINSCAT_SERVICE_TOKEN")?;
-    let api = Arc::new(api::ApiClient::new(
-        &cfg.api_base_url,
-        service_token.as_deref(),
-    ));
+    let service_auth =
+        service_auth::ServiceTokenProvider::new(service_auth::ServiceAuthConfig::from_env()?)?;
+    let api = Arc::new(api::ApiClient::new(&cfg.api_base_url, Some(service_auth)));
     let render_cache = Arc::new(cache::RenderCache::new(cfg.cache_bytes, cfg.cache_ttl_secs));
 
     // Initialize image service (optional — requires Chrome/Chromium on the host).

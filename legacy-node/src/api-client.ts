@@ -1,5 +1,6 @@
 import type { Champion, DiscordSavedPlayer, MatchFactPlayer, MatchPlayer, MatchRecord, PlayerLoadout, PlayerLoadoutsResponse, PlayerProfileResponse, PlayerSearchResult } from './types.js';
 import type { RankedLobbyScope } from './ranked-lobby.js';
+import type { ServiceTokenProvider } from './service-auth.js';
 
 export class PaladinsCatApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string, public readonly details?: unknown) {
@@ -11,7 +12,7 @@ export class PaladinsCatApi {
   private readonly localOnly: boolean;
   private readonly fetchImpl: typeof fetch;
   private readonly matchTimeoutMs: number;
-  private readonly serviceToken?: string;
+  private readonly serviceAuth?: ServiceTokenProvider;
 
   constructor(
     private readonly baseUrl: string,
@@ -20,13 +21,13 @@ export class PaladinsCatApi {
       localOnly?: boolean;
       fetchImpl?: typeof fetch;
       matchTimeoutMs?: number;
-      serviceToken?: string;
+      serviceAuth?: ServiceTokenProvider;
     } = {},
   ) {
     this.localOnly = options.localOnly ?? false;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.matchTimeoutMs = options.matchTimeoutMs ?? Math.max(timeoutMs, 125000);
-    this.serviceToken = options.serviceToken?.trim() || undefined;
+    this.serviceAuth = options.serviceAuth;
   }
 
   private readPath(path: string): string {
@@ -39,7 +40,7 @@ export class PaladinsCatApi {
     const headers = new Headers(init.headers);
     headers.set('Accept', 'application/json');
     headers.set('User-Agent', 'PaladinsCatDiscordBot/0.1');
-    if (this.serviceToken) headers.set('X-PaladinsCat-Service-Token', this.serviceToken);
+    if (this.serviceAuth) headers.set('Authorization', `Bearer ${await this.serviceAuth.token()}`);
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       ...init,
       headers,
