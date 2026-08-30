@@ -35,7 +35,7 @@ static RENDER_DOCUMENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const TEMPLATE_VERSION: u32 = 18;
 
 /// Loadout template version for cache invalidation keys.
-const LOADOUT_TEMPLATE_VERSION: u32 = 9;
+const LOADOUT_TEMPLATE_VERSION: u32 = 10;
 
 /// Maximum time to wait for the browser debug port to appear.
 const BROWSER_START_TIMEOUT: Duration = Duration::from_secs(8);
@@ -920,10 +920,10 @@ document.querySelector('img').decode=()=>new Promise(resolve=>setTimeout(()=>{do
         let record = serde_json::json!({
             "player": {"id": "16706730", "name": "NabiCookTV"},
             "loadout": {
-                "id": "ying-regression",
-                "champion_id": 2267,
-                "champion_name": "Ying",
-                "loadout_name": "NABI-TRI",
+                "id": "grover-banner-regression",
+                "champion_id": 2254,
+                "champion_name": "Grover",
+                "loadout_name": "Banner Regression",
                 "card_ids": [13388, 13391, 13414, 15068, 13411],
                 "card_levels": [5, 5, 1, 3, 1]
             }

@@ -1069,7 +1069,7 @@ impl TemplateEngine {
 const LOADOUT_DOCUMENT_CSS: &str = r#"
 *{box-sizing:border-box}html,body{margin:0;width:1280px;height:720px;min-height:720px;overflow:hidden;padding:0;background:transparent;color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 #loadout{position:relative;width:1280px;height:720px;overflow:hidden;border:1px solid rgba(111,130,153,.35);border-radius:20px;background:var(--bg)}
-#loadout::before{content:"";position:absolute;inset:0;background-image:var(--loadout-background);background-size:cover;background-position:center 24%;filter:saturate(1.15);opacity:.7;pointer-events:none}
+#loadout::before{content:"";position:absolute;inset:0;background-image:var(--loadout-background);background-size:cover;background-position:center;filter:saturate(1.15);opacity:.7;pointer-events:none}
 #loadout>*{z-index:1}.loadout-header{position:relative;height:238px;padding:28px 38px;display:flex;align-items:flex-start;background:rgba(5,9,15,.58);border-bottom:1px solid rgba(72,211,190,.22)}
 .loadout-header::before{content:"";position:absolute;inset:0;pointer-events:none;-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);-webkit-mask-image:linear-gradient(90deg,#000,transparent 20%,transparent 80%,#000);mask-image:linear-gradient(90deg,#000,transparent 20%,transparent 80%,#000)}
 .loadout-header>*{position:relative;z-index:1}.loadout-identity{min-width:0}.brand-line{display:flex;align-items:center;gap:12px;justify-content:flex-start}.brand-name{display:inline-flex;align-items:center;gap:11px;font-size:25px;line-height:1;font-weight:800;letter-spacing:-.02em}.brand-name img{width:32px;height:32px;border-radius:0;object-fit:contain}.loadout-status{height:23px;padding:0 9px;color:#bff7ee;border-color:rgba(55,214,192,.34);background:rgba(15,118,110,.25);font-size:10px;font-weight:760}
@@ -1377,6 +1377,8 @@ mod tests {
         assert!(doc.contains("Androxus"));
         assert!(doc.contains("New Loadout"));
         assert_eq!(doc.matches("class=\"loadout-card level-").count(), 5);
+        assert!(doc.contains("background-position:center"));
+        assert!(!doc.contains("background-position:center 24%"));
         assert!(!doc.contains("__renderData"));
         assert!(!doc.contains("http://localhost"));
     }
