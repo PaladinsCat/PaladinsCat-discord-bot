@@ -35,7 +35,7 @@ static RENDER_DOCUMENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const TEMPLATE_VERSION: u32 = 18;
 
 /// Loadout template version for cache invalidation keys.
-const LOADOUT_TEMPLATE_VERSION: u32 = 10;
+const LOADOUT_TEMPLATE_VERSION: u32 = 11;
 
 /// Maximum time to wait for the browser debug port to appear.
 const BROWSER_START_TIMEOUT: Duration = Duration::from_secs(8);
@@ -924,7 +924,7 @@ document.querySelector('img').decode=()=>new Promise(resolve=>setTimeout(()=>{do
                 "champion_id": 2254,
                 "champion_name": "Grover",
                 "loadout_name": "Banner Regression",
-                "card_ids": [13388, 13391, 13414, 15068, 13411],
+                "card_ids": [25385, 13391, 13414, 15068, 13411],
                 "card_levels": [5, 5, 1, 3, 1]
             }
         });
@@ -946,6 +946,31 @@ document.querySelector('img').decode=()=>new Promise(resolve=>setTimeout(()=>{do
             white_ratio < 0.25,
             "loadout is unexpectedly white: {white_ratio:.1}"
         );
+        let client = renderer
+            .cdp_client
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("renderer CDP client");
+        let longest_title = client
+            .evaluate(
+                r#"(() => {
+                    const title = [...document.querySelectorAll('.loadout-card h2')]
+                        .find(node => node.textContent === 'Unexpected Complications');
+                    if (!title) return null;
+                    const style = getComputedStyle(title);
+                    return {
+                        fits: title.scrollWidth <= title.clientWidth,
+                        fontSize: style.fontSize,
+                        fontWeight: style.fontWeight
+                    };
+                })()"#,
+            )
+            .await
+            .expect("measure longest card title");
+        assert_eq!(longest_title["fits"], true);
+        assert_eq!(longest_title["fontSize"], "13px");
+        assert_eq!(longest_title["fontWeight"], "800");
         for card_index in 0..5 {
             let left = 16 + card_index * 250;
             let mut colored = 0;

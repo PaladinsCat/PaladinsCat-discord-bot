@@ -1041,10 +1041,10 @@ impl TemplateEngine {
                 .map(|frame| frame.rarity.clone())
                 .unwrap_or_default();
             let frame_url = self.asset_url(frame.map(|frame| frame.icon_path));
-            let title_class = if name.chars().count() >= 21 {
-                "long-card-name"
-            } else {
-                ""
+            let title_class = match name.chars().count() {
+                22.. => "extra-long-card-name",
+                20.. => "long-card-name",
+                _ => "",
             };
             cards.push_str(&format!(
                 "<article class=\"loadout-card level-{level}\" aria-label=\"{name}, level {level} {rarity}\"><img class=\"card-art\" src=\"{artwork}\" alt=\"\"/><img class=\"card-frame\" src=\"{frame_url}\" alt=\"\"/><h2 class=\"{title_class}\">{name}</h2><p class=\"card-description\">{description}</p><span class=\"level-badge\">{level}</span></article>",
@@ -1078,7 +1078,7 @@ h1{margin:10px 0 0;padding-bottom:4px;max-width:760px;overflow:hidden;color:var(
 .cards{position:relative;z-index:2;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;padding:0 16px 18px;align-items:start;background:color-mix(in srgb,var(--bg) 80%,transparent);border-bottom:1px solid var(--line)}
 .cards::before{content:"";position:absolute;inset:0;pointer-events:none;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}.cards>*{position:relative;z-index:1}.loadout-card{position:relative;width:100%;aspect-ratio:316/480;filter:drop-shadow(0 3px 5px rgba(0,0,0,.45))}
 .card-art{position:absolute;z-index:1;left:6.5%;top:8.7%;width:87%;height:44%;object-fit:cover;background:#071014}.card-frame{position:absolute;z-index:2;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none}
-.loadout-card h2{position:absolute;z-index:3;left:9%;top:51.2%;width:82%;height:6.8%;margin:0;padding:0 5px;transform:translateY(-1px);display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;line-height:1;font-weight:500;text-align:center;text-shadow:0 2px 2px #111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.loadout-card h2.long-card-name{padding-inline:2px;font-size:14px;letter-spacing:-.015em}
+.loadout-card h2{position:absolute;z-index:3;left:9%;top:51.2%;width:82%;height:6.8%;margin:0;padding:0 5px;transform:translateY(-1px);display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;line-height:1;font-weight:800;letter-spacing:-.02em;text-align:center;text-shadow:0 2px 2px #111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.loadout-card h2.long-card-name{padding-inline:2px;font-size:14px;letter-spacing:-.025em}.loadout-card h2.extra-long-card-name{padding-inline:1px;font-size:13px;letter-spacing:-.035em}
 .card-description{position:absolute;z-index:3;left:9.5%;top:59.5%;width:81%;height:29%;margin:0;padding:4px 9px 0;display:flex;align-items:flex-start;justify-content:center;color:#303943;font-size:14px;line-height:1.25;font-weight:700;text-align:center;overflow:hidden}.level-badge{position:absolute;z-index:3;left:13.2%;top:92.7%;width:20%;aspect-ratio:1;transform:translate(-47%,-44%);display:flex;align-items:center;justify-content:center;padding:0;color:#f7fbff;font-size:27px;line-height:1;font-weight:680;font-variant-numeric:tabular-nums;text-align:center;text-shadow:0 2px 3px #10151d}
 "#;
 
