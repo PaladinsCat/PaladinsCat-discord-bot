@@ -451,8 +451,8 @@ impl Handler {
             }
             return;
         }
-        if let Some(token) = custom_id.strip_prefix("history-match:") {
-            let Some(session) = HISTORY_SESSIONS.read().unwrap().get(token).cloned() else {
+        if let Some(history_token) = custom_id.strip_prefix("history-match:") {
+            let Some(session) = HISTORY_SESSIONS.read().unwrap().get(history_token).cloned() else {
                 self.reply_ephemeral_text(
                     &interaction,
                     "This history menu expired. Run `/history` again.",
@@ -473,6 +473,10 @@ impl Handler {
                     .await;
                 return;
             };
+            if let Err(message) = claim_image_cooldown(&session.user_id) {
+                self.reply_ephemeral_text(&interaction, message).await;
+                return;
+            }
             tracing::info!(match_id, "history match selected");
             self.send_response(
                 interaction.id,
@@ -480,6 +484,24 @@ impl Handler {
                 history_match_loading_response(match_id),
             )
             .await;
+            let url = format!("{}/matches/{match_id}", self.web_url);
+            let components = history_back_component(history_token);
+            if let Some(images) = &self.image_service {
+                if let Some(png) = images.cached_match(match_id).await {
+                    let filename = format!("paladinscat-match-{match_id}.png");
+                    let description = format!("Paladins match {match_id}");
+                    self.send_webhook_image_with_components(
+                        &url,
+                        png,
+                        &filename,
+                        Some(&description),
+                        &components,
+                        &interaction.token,
+                    )
+                    .await;
+                    return;
+                }
+            }
             match self.api.match_info(match_id).await {
                 Ok(value) => {
                     let record = value.get("match").unwrap_or(&value);
@@ -488,13 +510,26 @@ impl Handler {
                         record.get("queue_name").or_else(|| record.get("queue_id")),
                         "Unknown queue",
                     );
-                    let url = format!("{}/matches/{match_id}", self.web_url);
                     let embed = embeds::simple_embed(
                         &format!("Match {match_id} · {map}"),
                         &format!("**{queue}**\n[Open full match]({url})"),
                         Some(&url),
                     );
-                    self.send_webhook(&embed, &history_back_component(token), &interaction.token)
+                    if let Some(png) = self.render_match_scoreboard(&value).await {
+                        let filename = format!("paladinscat-match-{match_id}.png");
+                        let description = format!("Paladins match {match_id}");
+                        self.send_webhook_image_with_components(
+                            &url,
+                            png,
+                            &filename,
+                            Some(&description),
+                            &components,
+                            &interaction.token,
+                        )
+                        .await;
+                        return;
+                    }
+                    self.send_webhook(&embed, &components, &interaction.token)
                         .await;
                 }
                 Err(error) => {
@@ -917,37 +952,18 @@ impl Handler {
                 let embed =
                     embeds::simple_embed(&format!("Match {}", id), &description, Some(&url));
 
-                if let Some(img) = &self.image_service {
-                    let img = Arc::clone(img);
-                    let match_url = url.clone();
-                    let token = interaction.token.clone();
-                    let renderer = Arc::clone(&img);
-                    let render = async move { renderer.render_match(&val).await };
-                    match tokio::time::timeout(RENDER_TIMEOUT, render).await {
-                        Ok(Ok(png)) => {
-                            let filename = format!("paladinscat-match-{}.png", id);
-                            let description = format!("Paladins match {}", id);
-                            self.send_webhook_image(
-                                &match_url,
-                                png,
-                                &filename,
-                                Some(&description),
-                                &token,
-                            )
-                            .await;
-                            return;
-                        }
-                        Ok(Err(e)) => {
-                            tracing::warn!(err = %e, "match image render failed — falling back to embed");
-                        }
-                        Err(_) => {
-                            tracing::warn!("match image render timed out — falling back to embed");
-                            // `timeout` drops the render future before its recovery wrapper
-                            // sees an error. Reset the shared browser so the next /match is
-                            // never queued behind a poisoned CDP page.
-                            img.recycle().await;
-                        }
-                    }
+                if let Some(png) = self.render_match_scoreboard(&val).await {
+                    let filename = format!("paladinscat-match-{}.png", id);
+                    let description = format!("Paladins match {}", id);
+                    self.send_webhook_image(
+                        &url,
+                        png,
+                        &filename,
+                        Some(&description),
+                        &interaction.token,
+                    )
+                    .await;
+                    return;
                 }
 
                 // Fallback: edit the deferred response with the embed via webhook.
@@ -1829,14 +1845,21 @@ impl Handler {
         description: Option<&str>,
         token: &str,
     ) {
+        self.send_webhook_image_with_components(content, png, filename, description, &[], token)
+            .await;
+    }
+
+    async fn send_webhook_image_with_components(
+        &self,
+        content: &str,
+        png: Vec<u8>,
+        filename: &str,
+        description: Option<&str>,
+        components: &[Component],
+        token: &str,
+    ) {
         let url = self.original_response_url(token);
-        let payload = serde_json::json!({
-            "content": content,
-            "embeds": [],
-            "components": [],
-            "attachments": [{ "id": 0, "filename": filename, "description": description }],
-            "allowed_mentions": { "parse": [] },
-        });
+        let payload = webhook_image_payload(content, filename, description, components);
         let body = reqwest::multipart::Form::new()
             .text(
                 "payload_json",
@@ -1854,6 +1877,43 @@ impl Handler {
             Err(error) => tracing::error!(url = %url, %error, "webhook image PATCH failed"),
         }
     }
+
+    async fn render_match_scoreboard(&self, value: &Value) -> Option<Vec<u8>> {
+        let images = Arc::clone(self.image_service.as_ref()?);
+        let renderer = Arc::clone(&images);
+        let value = value.clone();
+        let render = async move { renderer.render_match(&value).await };
+        match tokio::time::timeout(RENDER_TIMEOUT, render).await {
+            Ok(Ok(png)) => Some(png),
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "match image render failed — falling back to embed");
+                None
+            }
+            Err(_) => {
+                tracing::warn!("match image render timed out — falling back to embed");
+                // `timeout` drops the render future before its recovery wrapper
+                // sees an error. Reset the shared browser so the next render is
+                // never queued behind a poisoned CDP page.
+                images.recycle().await;
+                None
+            }
+        }
+    }
+}
+
+fn webhook_image_payload(
+    content: &str,
+    filename: &str,
+    description: Option<&str>,
+    components: &[Component],
+) -> Value {
+    serde_json::json!({
+        "content": content,
+        "embeds": [],
+        "components": components,
+        "attachments": [{ "id": 0, "filename": filename, "description": description }],
+        "allowed_mentions": { "parse": [] },
+    })
 }
 
 fn extract_command_data(data: &Option<InteractionData>) -> Option<&CommandData> {
@@ -2230,6 +2290,30 @@ mod tests {
             "Loading match 1281335238…"
         );
         assert_eq!(payload["data"]["components"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn history_match_scoreboard_keeps_back_control() {
+        let components = history_back_component("session-token");
+        let payload = webhook_image_payload(
+            "https://paladinscat.com/matches/1281335238",
+            "paladinscat-match-1281335238.png",
+            Some("Paladins match 1281335238"),
+            &components,
+        );
+
+        assert_eq!(
+            payload["attachments"][0]["filename"],
+            "paladinscat-match-1281335238.png"
+        );
+        assert_eq!(
+            payload["components"][0]["components"][0]["custom_id"],
+            "history:session-token:stay"
+        );
+        assert_eq!(
+            payload["components"][0]["components"][0]["label"],
+            "Back to history"
+        );
     }
 
     #[test]
