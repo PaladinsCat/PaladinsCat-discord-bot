@@ -1,3 +1,5 @@
+//! Discord integration module: commands, transport, rendering, or support helpers.
+//!
 use futures_util::StreamExt;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use reqwest::Client;
@@ -13,6 +15,10 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
+/// Define ServiceAuthConfig.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct ServiceAuthConfig {
     pub issuer: String,
     pub token_url: String,
@@ -21,6 +27,10 @@ pub struct ServiceAuthConfig {
 }
 
 impl ServiceAuthConfig {
+    /// Implement from_env.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config = Self {
             issuer: required_env("PALADINSCAT_SERVICE_OIDC_ISSUER")?,
@@ -101,6 +111,10 @@ struct CachedToken {
 }
 
 #[derive(Clone)]
+/// Define ServiceTokenProvider.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct ServiceTokenProvider {
     client: Client,
     config: Arc<ServiceAuthConfig>,
@@ -109,6 +123,10 @@ pub struct ServiceTokenProvider {
 }
 
 impl ServiceTokenProvider {
+    /// Implement new.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn new(
         config: ServiceAuthConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -194,6 +212,10 @@ impl ServiceTokenProvider {
         })
     }
 
+    /// Implement token.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let mut cache = self.cache.lock().await;
         if let Some(cached) = cache

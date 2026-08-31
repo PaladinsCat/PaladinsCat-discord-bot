@@ -37,6 +37,10 @@ fn preferred_image<'a>(files: impl Iterator<Item = &'a PathBuf>) -> Option<&'a P
 }
 
 #[derive(Clone)]
+/// Define AssetCatalog.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct AssetCatalog {
     root: PathBuf,
     champion_files: Arc<RwLock<Option<Vec<PathBuf>>>>,
@@ -54,6 +58,10 @@ pub struct AssetCatalog {
 }
 
 #[derive(Clone)]
+/// Define LoadoutCardAsset.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct LoadoutCardAsset {
     pub name: String,
     pub description: String,
@@ -62,12 +70,20 @@ pub struct LoadoutCardAsset {
 }
 
 #[derive(Clone)]
+/// Define LoadoutFrameAsset.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct LoadoutFrameAsset {
     pub rarity: String,
     pub icon_path: PathBuf,
 }
 
 impl AssetCatalog {
+    /// Implement new.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -86,6 +102,10 @@ impl AssetCatalog {
         }
     }
 
+    /// Implement loadout_card.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn loadout_card(&self, card_id: u32) -> Option<LoadoutCardAsset> {
         if self.card_reference.read().unwrap().is_none() {
             let loaded = self.load_card_reference();
@@ -99,6 +119,10 @@ impl AssetCatalog {
             .cloned()
     }
 
+    /// Implement loadout_frame.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn loadout_frame(&self, level: u32) -> Option<LoadoutFrameAsset> {
         if self.frame_reference.read().unwrap().is_none() {
             let loaded = self.load_frame_reference();
@@ -112,6 +136,10 @@ impl AssetCatalog {
             .cloned()
     }
 
+    /// Implement champion_icon.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn champion_icon(&self, champion_name: &str) -> Option<PathBuf> {
         let key = normalized(champion_name);
         if let Some(v) = self.champion_icons.read().unwrap().get(&key) {
@@ -138,6 +166,10 @@ impl AssetCatalog {
         result
     }
 
+    /// Implement champion_banner.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn champion_banner(&self, champion_name: &str) -> Option<PathBuf> {
         let key = normalized(champion_name);
         if let Some(v) = self.champion_banners.read().unwrap().get(&key) {
@@ -159,6 +191,10 @@ impl AssetCatalog {
         result
     }
 
+    /// Implement talent_icon.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn talent_icon(
         &self,
         talent_id: Option<u32>,
@@ -194,6 +230,10 @@ impl AssetCatalog {
         result
     }
 
+    /// Implement map_image.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn map_image(&self, map_name: &str) -> Option<PathBuf> {
         let cleaned: String = map_name
             .split_whitespace()
@@ -247,6 +287,10 @@ impl AssetCatalog {
         result
     }
 
+    /// Implement rank_icon.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn rank_icon(&self, tier: u32) -> Option<PathBuf> {
         if let Some(v) = self.rank_icons.read().unwrap().get(&tier) {
             return v.clone();
@@ -292,6 +336,10 @@ impl AssetCatalog {
         result
     }
 
+    /// Implement icon.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn icon(&self, name: &str, preferred_ext: Option<&str>) -> Option<PathBuf> {
         let key = format!("{}:{}", normalized(name), preferred_ext.unwrap_or(""));
         if let Some(v) = self.icons.read().unwrap().get(&key) {

@@ -14,6 +14,10 @@ static ASSET_DATA_URL_CACHE: OnceLock<RwLock<HashMap<PathBuf, String>>> = OnceLo
 const PLAYER_TAG_MINIMUM_COUNT: i64 = 5;
 
 #[derive(Debug, Clone)]
+/// Define TemplateConfig.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct TemplateConfig {
     pub match_template_path: String,
     pub canonical_match_css_path: Option<String>,
@@ -23,6 +27,10 @@ pub struct TemplateConfig {
 }
 
 impl TemplateConfig {
+    /// Implement dev_defaults.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn dev_defaults() -> Self {
         let workspace_css = "../paladinscat-frontend/app/globals.css";
         Self {
@@ -43,6 +51,10 @@ impl TemplateConfig {
 }
 
 #[derive(Clone)]
+/// Define TemplateEngine.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct TemplateEngine {
     match_template: Arc<String>,
     canonical_match_css: Option<Arc<String>>,
@@ -355,6 +367,10 @@ fn metrics(player: &serde_json::Value) -> [i64; 6] {
 }
 
 impl TemplateEngine {
+    /// Implement load.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn load(config: &TemplateConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let match_template = fs::read_to_string(&config.match_template_path).map_err(|e| {
             format!(
@@ -397,6 +413,10 @@ impl TemplateEngine {
         })
     }
 
+    /// Implement extract_css.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn extract_css(template: &str) -> String {
         if let Some(idx) = template.find("<style") {
             let rest = &template[idx..];
@@ -977,6 +997,10 @@ impl TemplateEngine {
         )
     }
 
+    /// Implement loadout_document.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn loadout_document(&self, data: &serde_json::Value) -> String {
         let player = data.get("player");
         let loadout = data.get("loadout");
@@ -1061,6 +1085,10 @@ impl TemplateEngine {
         )
     }
 
+    /// Implement cheater_pattern_url.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn cheater_pattern_url(&self) -> &str {
         &self.cheater_pattern_url
     }
@@ -1111,6 +1139,10 @@ fn utc_timestamp_str(s: &str) -> String {
         .unwrap_or_else(|_| "—".to_string())
 }
 
+/// Implement escape_html.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")

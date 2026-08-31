@@ -9,6 +9,10 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Debug, Clone)]
+/// Define CdpResponse.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct CdpResponse {
     pub method: String,
     pub params: Value,
@@ -21,6 +25,10 @@ struct PendingRequest {
     tx: oneshot::Sender<CdpResponse>,
 }
 
+/// Define CdpClient.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct CdpClient {
     next_id: Mutex<u64>,
     // Shared with the reader task so `send()` inserts into the exact map
@@ -30,6 +38,10 @@ pub struct CdpClient {
 }
 
 impl CdpClient {
+    /// Implement connect.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn connect(ws_url: String) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url)
             .await
@@ -102,6 +114,10 @@ impl CdpClient {
         })
     }
 
+    /// Implement send.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn send(
         &self,
         method: &str,
@@ -111,6 +127,10 @@ impl CdpClient {
             .await
     }
 
+    /// Implement send_timeout.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn send_timeout(
         &self,
         method: &str,
@@ -150,6 +170,10 @@ impl CdpClient {
         }
     }
 
+    /// Implement navigate.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn navigate(
         &self,
         url: &str,
@@ -157,6 +181,10 @@ impl CdpClient {
         self.send("Page.navigate", json!({ "url": url })).await
     }
 
+    /// Implement evaluate.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn evaluate(
         &self,
         expression: &str,
@@ -182,6 +210,10 @@ impl CdpClient {
         }
     }
 
+    /// Implement execute.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn execute(
         &self,
         expression: &str,
@@ -195,6 +227,10 @@ impl CdpClient {
         .await
     }
 
+    /// Implement execute_await.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn execute_await(
         &self,
         expression: &str,
@@ -208,6 +244,10 @@ impl CdpClient {
         .await
     }
 
+    /// Implement set_device_scale_factor.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn set_device_scale_factor(
         &self,
         factor: f64,
@@ -223,6 +263,10 @@ impl CdpClient {
         .await
     }
 
+    /// Implement screenshot.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn screenshot(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         let resp = self
             .send(
@@ -241,6 +285,10 @@ impl CdpClient {
         }
     }
 
+    /// Implement screenshot_element.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn screenshot_element(
         &self,
         selector: &str,
@@ -279,6 +327,10 @@ impl CdpClient {
         }
     }
 
+    /// Implement create_isolated_world.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn create_isolated_world(
         &self,
         world_name: &str,
@@ -292,6 +344,10 @@ impl CdpClient {
         .await
     }
 
+    /// Implement close.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn close(&self) {
         let _ = self.sender.send(String::new()).await;
     }

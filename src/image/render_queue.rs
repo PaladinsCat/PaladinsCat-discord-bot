@@ -17,6 +17,10 @@ use tokio::sync::Semaphore;
 
 /// Error returned when the render queue is full.
 #[derive(Debug, Clone)]
+/// Define QueueFullError.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct QueueFullError {
     pub message: String,
 }
@@ -39,6 +43,10 @@ impl QueueFullError {
 
 /// Duration metrics for queue monitoring.
 #[derive(Debug, Clone, Default)]
+/// Define DurationMetrics.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct DurationMetrics {
     pub last: f64,
     pub average: f64,
@@ -48,6 +56,10 @@ pub struct DurationMetrics {
 
 /// Snapshot of queue state for health reporting.
 #[derive(Debug, Clone)]
+/// Define QueueSnapshot.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct QueueSnapshot {
     pub active: usize,
     pub queued: usize,
