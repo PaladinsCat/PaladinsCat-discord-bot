@@ -11,6 +11,10 @@ use twilight_model::id::Id;
 
 /// Result of a registration run.
 #[derive(Debug, Clone)]
+/// Define RegistrationResult.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct RegistrationResult {
     pub scope: String,
     pub registered: usize,
@@ -187,6 +191,10 @@ fn option_match_id() -> CommandOption {
     )
 }
 
+/// Implement all_command_definitions.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
     let mut commands = vec![
         command("help", "List PaladinsCat bot commands", vec![]),
@@ -396,6 +404,10 @@ pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
 }
 
 #[allow(dead_code)] // Kept for manual registration scenarios
+/// Implement register_global_commands.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub async fn register_global_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -412,6 +424,10 @@ pub async fn register_global_commands(
     })
 }
 
+/// Implement register_guild_commands.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub async fn register_guild_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -430,6 +446,10 @@ pub async fn register_guild_commands(
     })
 }
 
+/// Implement clear_guild_commands.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub async fn clear_guild_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -441,6 +461,10 @@ pub async fn clear_guild_commands(
     Ok(())
 }
 
+/// Implement register_commands.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub async fn register_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,

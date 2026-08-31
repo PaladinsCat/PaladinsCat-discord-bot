@@ -10,6 +10,10 @@ use reqwest::Client as HttpClient;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 #[derive(Debug)]
+/// Define ApiError.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct ApiError {
     pub status: Option<u16>,
     pub message: String,
@@ -151,6 +155,10 @@ fn player_not_found(input: &str) -> ApiError {
 /// All path parameters are percent-encoded. Responses to 429 get exponential backoff.
 /// Mirrors TS: PaladinsCatApi with service token auth.
 #[derive(Clone)]
+/// Define ApiClient.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct ApiClient {
     inner: HttpClient,
     inner_slow: HttpClient,
@@ -162,6 +170,10 @@ pub struct ApiClient {
 }
 
 #[derive(Debug, Clone)]
+/// Define LoadoutsResponse.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct LoadoutsResponse {
     pub loadouts: Vec<serde_json::Value>,
     pub refreshed: bool,
@@ -169,6 +181,10 @@ pub struct LoadoutsResponse {
 }
 
 #[derive(Debug, Clone, Default)]
+/// Define HistoryFilters.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct HistoryFilters {
     pub queue_id: Option<String>,
     pub champion_id: Option<String>,
@@ -406,6 +422,10 @@ impl ApiClient {
         Ok(value.get("player").cloned().unwrap_or(value))
     }
 
+    /// Implement forget_discord_player.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn forget_discord_player(
         &self,
         discord_user_id: &str,
@@ -656,11 +676,19 @@ impl ApiClient {
 
     /// Get all champions list.
     #[allow(dead_code)] // Kept for potential future use
+    /// Implement champions.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn champions(&self) -> Result<serde_json::Value, ApiError> {
         let url = format!("{}/champions", self.base);
         self.get_json(&url).await
     }
 
+    /// Implement champion_id.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn champion_id(&self, name: &str) -> Result<Option<String>, ApiError> {
         let value = self.champions().await?;
         Ok(value.as_array().and_then(|rows| {
@@ -725,6 +753,10 @@ impl ApiClient {
         })
     }
 
+    /// Implement player_champions.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn player_champions(
         &self,
         player_id: &str,
@@ -739,6 +771,10 @@ impl ApiClient {
         Ok(value.as_array().cloned().unwrap_or_default())
     }
 
+    /// Implement leaderboard.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn leaderboard(
         &self,
         category: &str,
@@ -767,6 +803,10 @@ impl ApiClient {
         self.get_json_slow(&url).await
     }
 
+    /// Implement activity.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn activity(&self) -> Result<serde_json::Value, ApiError> {
         let presence_url = format!("{}/stats/presence?view=activity-v4", self.base);
         let overview_url = format!("{}/matches/overview?view=activity-v3", self.base);
@@ -777,6 +817,10 @@ impl ApiClient {
         Ok(serde_json::json!({"presence":presence,"overview":overview}))
     }
 
+    /// Implement status.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn status(&self) -> Result<serde_json::Value, ApiError> {
         self.get_json(&format!("{}/system/hirez-status", self.base))
             .await
@@ -808,6 +852,10 @@ impl ApiClient {
         Ok(self.loadouts_response(player_id).await?.loadouts)
     }
 
+    /// Implement loadouts_response.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn loadouts_response(&self, player_id: &str) -> Result<LoadoutsResponse, ApiError> {
         let url = format!(
             "{}/players/{}/loadouts?refresh=false",

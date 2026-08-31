@@ -3,6 +3,10 @@
 //! Environment-based configuration loading with sensible defaults.
 
 #[derive(Debug, Clone)]
+/// Define Config.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct Config {
     pub bot_mode: String,
     pub discord_token: String,
@@ -36,6 +40,10 @@ impl Config {
     }
 }
 
+/// Implement optional_secret.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub fn optional_secret(
     name: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {

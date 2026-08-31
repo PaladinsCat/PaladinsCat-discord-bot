@@ -14,16 +14,28 @@ const CHOICE_LEN: usize = 100;
 /// Simple in-memory champion list holder.
 /// (External caching via `cache::RenderCache` handles HTTP deduplication.)
 #[allow(dead_code)] // Kept for potential future autocomplete optimization
+/// Define ChampionList.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct ChampionList {
     names: Option<Vec<String>>,
 }
 
 #[allow(dead_code)] // Kept for potential future autocomplete optimization
 impl ChampionList {
+    /// Implement new.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn new() -> Self {
         Self { names: None }
     }
 
+    /// Implement get.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn get(&mut self, api: &ApiClient) -> &[String] {
         if self.names.is_none() {
             self.names = api.champion_names().await.ok();
@@ -70,6 +82,10 @@ fn score(name: &str, query: &str) -> u8 {
     u8::MAX
 }
 
+/// Implement champion_autocomplete_choices.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub fn champion_autocomplete_choices(names: &[String], query: &str) -> Vec<(String, String)> {
     let query = normalize(query);
     let mut seen = std::collections::HashMap::new();

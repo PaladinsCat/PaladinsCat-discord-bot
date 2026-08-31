@@ -27,6 +27,10 @@ use crate::image::ImageService;
 /// ApiClient + RenderCache + metrics.  Atomic counters are wrapped in Arc so
 /// AppState can implement Clone (required by axum's Router state machinery).
 #[derive(Clone)]
+/// Define AppState.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct AppState {
     pub api: Arc<ApiClient>,
     pub render_cache: Arc<RenderCache>,
@@ -40,6 +44,10 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Implement new.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn new(
         api: Arc<ApiClient>,
         render_cache: Arc<RenderCache>,

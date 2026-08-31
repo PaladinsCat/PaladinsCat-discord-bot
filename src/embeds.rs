@@ -303,6 +303,10 @@ pub fn build_current_payload(result: &Value, web_url: &str) -> Embed {
     build_current_payload_with_details(result, web_url, false)
 }
 
+/// Implement build_current_payload_detailed.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub fn build_current_payload_detailed(result: &Value, web_url: &str) -> Embed {
     build_current_payload_with_details(result, web_url, true)
 }

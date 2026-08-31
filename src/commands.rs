@@ -98,6 +98,10 @@ struct RateWindow {
 
 /// Main event dispatcher — routes gateway events to command handlers.
 #[allow(clippy::too_many_arguments)]
+/// Implement handle_event.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub async fn handle_event(
     event: Event,
     api: Arc<ApiClient>,

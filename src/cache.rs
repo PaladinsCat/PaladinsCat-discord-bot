@@ -6,11 +6,19 @@ use moka::future::Cache;
 use std::time::Duration;
 
 #[derive(Clone)]
+/// Define RenderCache.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct RenderCache {
     inner: Cache<String, Vec<u8>>,
 }
 
 impl RenderCache {
+    /// Implement new.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn new(max_bytes: usize, ttl_secs: u64) -> Self {
         Self {
             inner: Cache::builder()
@@ -24,11 +32,19 @@ impl RenderCache {
     }
 
     #[allow(dead_code)] // Used by health server for cache stats reporting
+    /// Implement get.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn get(&self, key: &str) -> Option<Vec<u8>> {
         self.inner.get(key).await
     }
 
     #[allow(dead_code)] // Used by health server for cache stats reporting
+    /// Implement set.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn set(&self, key: String, value: Vec<u8>) {
         self.inner.insert(key, value).await;
     }

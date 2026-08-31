@@ -11,6 +11,10 @@ use crate::image::match_renderer::MatchRenderer;
 use crate::image::render_queue::{BoundedWorkQueue, QueueSnapshot};
 
 #[derive(Debug, Clone)]
+/// Define ImageServiceConfig.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct ImageServiceConfig {
     pub concurrency: usize,
     pub queue_limit: usize,
@@ -34,6 +38,10 @@ impl Default for ImageServiceConfig {
 }
 
 #[derive(Debug, Clone)]
+/// Define ServiceSnapshot.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct ServiceSnapshot {
     pub queue: QueueSnapshot,
     pub cache_entries: u64,
@@ -61,6 +69,10 @@ impl Default for ServiceStats {
     }
 }
 
+/// Define ImageService.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct ImageService {
     renderer: Arc<MatchRenderer>,
     cache: RenderCache,
@@ -71,6 +83,10 @@ pub struct ImageService {
 }
 
 impl ImageService {
+    /// Implement new.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn new(renderer: Arc<MatchRenderer>, config: ImageServiceConfig) -> Self {
         let render_attempt_timeout_ms = std::cmp::max(
             1,
@@ -94,6 +110,10 @@ impl ImageService {
         }
     }
 
+    /// Implement render_match.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn render_match(
         &self,
         record: &Value,
@@ -136,6 +156,10 @@ impl ImageService {
             .filter(|png| !png.is_empty())
     }
 
+    /// Implement render_web_match.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn render_web_match(
         &self,
         match_id: &str,
@@ -161,6 +185,10 @@ impl ImageService {
         Ok(result)
     }
 
+    /// Implement render_loadout.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn render_loadout(
         &self,
         record: &Value,
@@ -197,6 +225,10 @@ impl ImageService {
         Ok(result)
     }
 
+    /// Implement match_by_id.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn match_by_id<F>(
         &self,
         match_id: String,
@@ -244,10 +276,18 @@ impl ImageService {
         Ok(result)
     }
 
+    /// Implement warm.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn warm(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.renderer.warm().await
     }
 
+    /// Implement close.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub async fn close(&self) {
         self.renderer.close().await;
     }
@@ -259,6 +299,10 @@ impl ImageService {
         self.renderer.recycle().await;
     }
 
+    /// Implement snapshot.
+    ///
+    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+    ///
     pub fn snapshot(&self) -> ServiceSnapshot {
         let stats = self.stats.lock().unwrap();
         ServiceSnapshot {

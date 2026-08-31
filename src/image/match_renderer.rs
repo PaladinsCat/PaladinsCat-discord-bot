@@ -91,6 +91,10 @@ const WEB_SCOREBOARD_BOOTSTRAP: &str = r#"(() => {
 
 /// Configuration for the match renderer.
 #[derive(Debug, Clone)]
+/// Define MatchRendererConfig.
+///
+/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
+///
 pub struct MatchRendererConfig {
     /// Path to the Chromium/chrome executable.
     pub chromium_path: String,
