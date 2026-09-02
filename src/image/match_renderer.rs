@@ -134,16 +134,22 @@ pub struct MatchRenderer {
 
 impl MatchRenderer {
     /// Template version for cache key generation.
+    ///
+    /// I/O: () -> `u32`
     pub fn template_version(&self) -> u32 {
         TEMPLATE_VERSION
     }
 
     /// Loadout template version for cache key generation.
+    ///
+    /// I/O: () -> `u32`
     pub fn loadout_template_version(&self) -> u32 {
         LOADOUT_TEMPLATE_VERSION
     }
 
     /// Create a new renderer with the given template engine and config.
+    ///
+    /// I/O: `TemplateEngine`, `MatchRendererConfig` -> `MatchRenderer`
     pub fn new(template_engine: TemplateEngine, config: MatchRendererConfig) -> Self {
         let initial_port = config.debug_port;
         Self {
@@ -162,12 +168,16 @@ impl MatchRenderer {
     // -----------------------------------------------------------------------
 
     /// Warm up the browser by spawning it and performing a dummy navigation.
+    ///
+    /// I/O: () -> `Result<(), Box<dyn Error + Send + Sync>>`
     pub async fn warm(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.ensure_browser().await?;
         Ok(())
     }
 
     /// Render a match scoreboard JSON record to PNG bytes.
+    ///
+    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
     pub async fn render(
         &self,
         record: &Value,
@@ -180,6 +190,8 @@ impl MatchRenderer {
     /// Render the canonical web scoreboard itself. This is the `/match`
     /// command path, so the Discord PNG shares the web component's data
     /// fallbacks, team markers, markup, and CSS instead of duplicating them.
+    ///
+    /// I/O: `&str` (url) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
     pub async fn render_web_match(
         &self,
         url: &str,
@@ -235,6 +247,8 @@ impl MatchRenderer {
     }
 
     /// Render a loadout card JSON record to PNG bytes.
+    ///
+    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
     pub async fn render_loadout(
         &self,
         record: &Value,
@@ -245,6 +259,8 @@ impl MatchRenderer {
     }
 
     /// Close the browser and release all resources.
+    ///
+    /// I/O: `MatchRenderer` (self) -> `()`
     pub async fn close(&self) {
         {
             let mut proc = self.browser_process.lock().unwrap();
@@ -269,6 +285,8 @@ impl MatchRenderer {
     /// Browser.close() can wait on the same poisoned renderer that caused
     /// the timeout, so recovery deliberately kills the child process and
     /// drops the client. The next render lazily starts a clean browser.
+    ///
+    /// I/O: `MatchRenderer` (self) -> `()`
     pub async fn recycle(&self) {
         tracing::info!("Recycling browser…");
         {

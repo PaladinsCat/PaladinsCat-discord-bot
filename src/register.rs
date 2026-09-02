@@ -191,10 +191,9 @@ fn option_match_id() -> CommandOption {
     )
 }
 
-/// Implement all_command_definitions.
+/// Build the full command set (social commands included when enabled).
 ///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
+/// I/O: `bool` (social enabled) -> `Vec<Command>`
 pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
     let mut commands = vec![
         command("help", "List PaladinsCat bot commands", vec![]),
@@ -404,10 +403,9 @@ pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
 }
 
 #[allow(dead_code)] // Kept for manual registration scenarios
-/// Implement register_global_commands.
+/// Register the global command set with Discord.
 ///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
+/// I/O: `&Client`, `Id<ApplicationMarker>` -> `Result<RegistrationResult, twilight_http::Error>`
 pub async fn register_global_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -424,10 +422,9 @@ pub async fn register_global_commands(
     })
 }
 
-/// Implement register_guild_commands.
+/// Register the command set for a specific guild.
 ///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
+/// I/O: `&Client`, `Id<ApplicationMarker>`, `Id<GuildMarker>`, `bool` (social enabled) -> `Result<RegistrationResult, twilight_http::Error>`
 pub async fn register_guild_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -446,10 +443,9 @@ pub async fn register_guild_commands(
     })
 }
 
-/// Implement clear_guild_commands.
+/// Remove all registered commands from a guild.
 ///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
+/// I/O: `&Client`, `Id<ApplicationMarker>`, `Id<GuildMarker>` -> `Result<(), twilight_http::Error>`
 pub async fn clear_guild_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -461,10 +457,9 @@ pub async fn clear_guild_commands(
     Ok(())
 }
 
-/// Implement register_commands.
+/// Register commands globally, or for a development guild when one is set.
 ///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
+/// I/O: `&Client`, `Id<ApplicationMarker>`, `Option<Id<GuildMarker>>` (dev guild), `&[Id<GuildMarker]]` (connected), `bool` (social enabled) -> `Result<RegistrationResult, twilight_http::Error>`
 pub async fn register_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,

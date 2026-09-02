@@ -22,6 +22,8 @@ pub struct Config {
 
 impl Config {
     /// Load config from environment variables with defaults.
+    ///
+    /// I/O: () -> `Result<Config, Box<dyn Error + Send + Sync>>`
     pub fn load() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Config {
             bot_mode: std::env::var("DISCORD_BOT_MODE").unwrap_or_else(|_| "render".into()),
@@ -40,10 +42,9 @@ impl Config {
     }
 }
 
-/// Implement optional_secret.
+/// Read an optional secret env var (None when unset).
 ///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
+/// I/O: `&str` (name) -> `Result<Option<String>, Box<dyn Error + Send + Sync>>`
 pub fn optional_secret(
     name: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {

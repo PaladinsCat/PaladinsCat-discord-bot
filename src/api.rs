@@ -267,6 +267,8 @@ impl ApiClient {
     ///
     /// Mirrors TS: PaladinsCatApi constructor.
     /// `service_auth` supplies short-lived client-credentials bearer tokens.
+    ///
+    /// I/O: `&str` (base), `Option<ServiceTokenProvider>` -> `ApiClient`
     pub fn new(base: &str, service_auth: Option<ServiceTokenProvider>) -> Self {
         Self {
             inner: HttpClient::builder()
@@ -375,6 +377,8 @@ impl ApiClient {
     /// This endpoint resolves the player AND returns enriched data including
     /// Hi-Rez profile info (gamertag, peak rank, headroom).
     /// Requires the configured Keycloak service identity.
+    ///
+    /// I/O: `&str` (player input) -> `Result<Value, ApiError>`
     pub async fn discord_player(&self, name: &str) -> Result<serde_json::Value, ApiError> {
         let url = format!("{}/players/discord?player={}", self.base, encode(name));
         let val = self.get_json(&url).await?;
@@ -382,6 +386,8 @@ impl ApiClient {
     }
 
     /// Return the default player saved for a Discord user.
+    ///
+    /// I/O: `&str` (discord user id), `&str` (slot) -> `Result<Value, ApiError>`
     pub async fn saved_discord_player(
         &self,
         discord_user_id: &str,
@@ -398,6 +404,8 @@ impl ApiClient {
     }
 
     /// Persist the authoritative player ID resolved by `/players/discord`.
+    ///
+    /// I/O: `&str` (discord user id), `&str` (player id), `&str` (slot) -> `Result<Value, ApiError>`
     pub async fn save_discord_player(
         &self,
         discord_user_id: &str,
@@ -422,10 +430,9 @@ impl ApiClient {
         Ok(value.get("player").cloned().unwrap_or(value))
     }
 
-    /// Implement forget_discord_player.
+    /// Delete the saved default player for a Discord user/slot.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (discord user id), `&str` (slot) -> `Result<usize, ApiError>` (rows removed)
     pub async fn forget_discord_player(
         &self,
         discord_user_id: &str,
@@ -456,6 +463,8 @@ impl ApiClient {
 
     /// Resolve player name/ID to numeric ID and fetch profile.
     /// Used by history, loadout, current commands to get player ID.
+    ///
+    /// I/O: `&str` (name or id) -> `Result<Value, ApiError>`
     pub async fn player(&self, name: &str) -> Result<serde_json::Value, ApiError> {
         let resolved = self.resolve_player(name).await?;
         let player_id = json_id(resolved.get("id")).unwrap_or_default();
@@ -478,6 +487,8 @@ impl ApiClient {
     /// - Names resolved via /players/search?name=...&limit=5.
     /// - Exact match (case-insensitive) preferred; fallback to first result.
     /// - Returns empty string when no player matches.
+    ///
+    /// I/O: `&str` (input) -> `Result<Value, ApiError>`
     pub async fn resolve_player(&self, input: &str) -> Result<serde_json::Value, ApiError> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
@@ -533,6 +544,8 @@ impl ApiClient {
     /// - Parallel: GET /matches/fact/{id} (best-effort, 15s timeout).
     /// - Returns hydrated match object with facts merged into players.
     /// - Envelope: {"count": N, "matches": [{"match": {...}}]} → inner match object.
+    ///
+    /// I/O: `&str` (match id) -> `Result<Value, ApiError>`
     pub async fn match_info(&self, match_id: &str) -> Result<serde_json::Value, ApiError> {
         let encoded = encode(match_id);
 
@@ -649,6 +662,8 @@ impl ApiClient {
     }
 
     /// Get all champion names.
+    ///
+    /// I/O: () -> `Result<Vec<String>, ApiError>`
     pub async fn champion_names(&self) -> Result<Vec<String>, ApiError> {
         let url = format!("{}/champions", self.base);
         let val: serde_json::Value = match self.response_cache.get(&url).await {
@@ -676,19 +691,17 @@ impl ApiClient {
 
     /// Get all champions list.
     #[allow(dead_code)] // Kept for potential future use
-    /// Implement champions.
+    /// Get the full champion list as raw JSON.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: () -> `Result<Value, ApiError>`
     pub async fn champions(&self) -> Result<serde_json::Value, ApiError> {
         let url = format!("{}/champions", self.base);
         self.get_json(&url).await
     }
 
-    /// Implement champion_id.
+    /// Resolve a champion name (case-insensitive) to its ID from the champion list.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (name) -> `Result<Option<String>, ApiError>`
     pub async fn champion_id(&self, name: &str) -> Result<Option<String>, ApiError> {
         let value = self.champions().await?;
         Ok(value.as_array().and_then(|rows| {
@@ -706,6 +719,8 @@ impl ApiClient {
     /// Mirrors TS: playerHistoryById(playerId, limit).
     /// Route: GET /players/{id}/matches?limit={}
     /// Uses slow client (30s timeout) — large history sets can be slow.
+    ///
+    /// I/O: `&str` (player id), `usize` (limit), `&HistoryFilters` -> `Result<Vec<Value>, ApiError>`
     pub async fn player_history(
         &self,
         player_id: &str,
@@ -739,6 +754,8 @@ impl ApiClient {
     /// backend-owned three-minute history TTL. `refresh=true` makes the
     /// read-through contract explicit; the backend performs no Hi-Rez call
     /// while fresh and synchronously persists an expired refresh.
+    ///
+    /// I/O: `&str` (player id) -> `Result<Option<Value>, ApiError>`
     pub async fn latest_player_match(
         &self,
         player_id: &str,
@@ -753,10 +770,9 @@ impl ApiClient {
         })
     }
 
-    /// Implement player_champions.
+    /// Get a player's champion roster.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (player id) -> `Result<Vec<Value>, ApiError>`
     pub async fn player_champions(
         &self,
         player_id: &str,
@@ -771,10 +787,9 @@ impl ApiClient {
         Ok(value.as_array().cloned().unwrap_or_default())
     }
 
-    /// Implement leaderboard.
+    /// Get ranked leaderboard rows for a category (class / champion-elo / performance).
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (category), `Option<&str>` (metric), `Option<&str>` (role), `Option<&str>` (champion id) -> `Result<Value, ApiError>`
     pub async fn leaderboard(
         &self,
         category: &str,
@@ -803,10 +818,9 @@ impl ApiClient {
         self.get_json_slow(&url).await
     }
 
-    /// Implement activity.
+    /// Get live activity: presence and match-overview fetched in parallel.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: () -> `Result<Value, ApiError>`
     pub async fn activity(&self) -> Result<serde_json::Value, ApiError> {
         let presence_url = format!("{}/stats/presence?view=activity-v4", self.base);
         let overview_url = format!("{}/matches/overview?view=activity-v3", self.base);
@@ -817,10 +831,9 @@ impl ApiClient {
         Ok(serde_json::json!({"presence":presence,"overview":overview}))
     }
 
-    /// Implement status.
+    /// Get the Hi-Rez API status (`/system/hirez-status`).
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: () -> `Result<Value, ApiError>`
     pub async fn status(&self) -> Result<serde_json::Value, ApiError> {
         self.get_json(&format!("{}/system/hirez-status", self.base))
             .await
@@ -830,6 +843,8 @@ impl ApiClient {
     ///
     /// Mirrors TS: liveMatch(input) → resolvePlayer → GET /live/players/{id}.
     /// Returns object with `in_game` boolean.
+    ///
+    /// I/O: `&str` (player) -> `Result<Value, ApiError>`
     pub async fn live_match(&self, player: &str) -> Result<serde_json::Value, ApiError> {
         let player_id = self.resolve_player_id(player).await?;
         // TS: GET /live/players/{id}
@@ -848,14 +863,15 @@ impl ApiClient {
     /// Mirrors TS: playerLoadoutsById(playerId).
     /// Route: GET /players/{id}/loadouts
     /// Backend returns {"loadouts": [...], "freshness": {...}}; unwraps loadouts array.
+    ///
+    /// I/O: `&str` (player id) -> `Result<Vec<Value>, ApiError>`
     pub async fn loadouts(&self, player_id: &str) -> Result<Vec<serde_json::Value>, ApiError> {
         Ok(self.loadouts_response(player_id).await?.loadouts)
     }
 
-    /// Implement loadouts_response.
+    /// Get a player's loadouts with `refresh=false` as a structured response.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (player id) -> `Result<LoadoutsResponse, ApiError>`
     pub async fn loadouts_response(&self, player_id: &str) -> Result<LoadoutsResponse, ApiError> {
         let url = format!(
             "{}/players/{}/loadouts?refresh=false",
@@ -884,6 +900,8 @@ impl ApiClient {
     }
 
     /// Mirrors the TS explicit refresh endpoint; the backend owns its guard.
+    ///
+    /// I/O: `&str` (player id) -> `Result<LoadoutsResponse, ApiError>`
     pub async fn refresh_loadouts(&self, player_id: &str) -> Result<LoadoutsResponse, ApiError> {
         let url = format!(
             "{}/players/{}/loadouts/refresh",
@@ -915,6 +933,8 @@ impl ApiClient {
     /// - scope maps to tierMin/tierMax via lobby_scope_to_tiers().
     /// - "global" or unknown scope → no tier filter (no query params).
     /// Route: GET /champions/{slug}/page-data?tierMin={}&tierMax={}
+    ///
+    /// I/O: `&str` (slug), `&str` (scope) -> `Result<Value, ApiError>`
     pub async fn champion_page_data(
         &self,
         slug: &str,
@@ -933,6 +953,8 @@ impl ApiClient {
     ///
     /// Mirrors TS: rankedMaps(limit=100).
     /// Route: GET /stats/maps?queueId=486&limit={} (clamped 1-100)
+    ///
+    /// I/O: `usize` (limit) -> `Result<Vec<Value>, ApiError>`
     pub async fn ranked_maps(&self, limit: usize) -> Result<Vec<serde_json::Value>, ApiError> {
         let clamped = clamp(limit, 1, 100);
         // TS: queueId=486 is the ranked queue
@@ -949,6 +971,8 @@ impl ApiClient {
     /// Mirrors TS: rankedCompositions(limit=5).
     /// Route: GET /matches/compositions?sortBy=count&order=desc&limit={} (clamped 1-25)
     /// Backend returns {"total": N, "data": [...]} — unwraps data array.
+    ///
+    /// I/O: `usize` (limit) -> `Result<Vec<Value>, ApiError>`
     pub async fn ranked_compositions(
         &self,
         limit: usize,
@@ -973,6 +997,8 @@ impl ApiClient {
     /// Mirrors TS: rankedItems(scope, limit=20).
     /// Route: GET /stats/items?mode=ranked&limit={} (clamped 1-50).
     /// "global" scope → no tier filter appended.
+    ///
+    /// I/O: `&str` (scope), `usize` (limit) -> `Result<Vec<Value>, ApiError>`
     pub async fn ranked_items(
         &self,
         scope: &str,

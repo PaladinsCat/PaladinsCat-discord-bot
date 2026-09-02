@@ -38,10 +38,9 @@ pub struct CdpClient {
 }
 
 impl CdpClient {
-    /// Implement connect.
+    /// Open a WebSocket to the CDP endpoint and return a ready client.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `String` (ws url) -> `Result<CdpClient, Box<dyn Error + Send + Sync>>`
     pub async fn connect(ws_url: String) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url)
             .await
@@ -114,10 +113,9 @@ impl CdpClient {
         })
     }
 
-    /// Implement send.
+    /// Send a CDP method with params and await the response.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (method), `Value` (params) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
     pub async fn send(
         &self,
         method: &str,
@@ -127,10 +125,9 @@ impl CdpClient {
             .await
     }
 
-    /// Implement send_timeout.
+    /// Send a CDP method with params, enforcing a deadline.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (method), `Value` (params), `Duration` (timeout) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
     pub async fn send_timeout(
         &self,
         method: &str,
@@ -170,10 +167,9 @@ impl CdpClient {
         }
     }
 
-    /// Implement navigate.
+    /// Navigate the page to a URL.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (url) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
     pub async fn navigate(
         &self,
         url: &str,
@@ -181,10 +177,9 @@ impl CdpClient {
         self.send("Page.navigate", json!({ "url": url })).await
     }
 
-    /// Implement evaluate.
+    /// Evaluate a JavaScript expression and return the value.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (expression) -> `Result<Value, Box<dyn Error + Send + Sync>>`
     pub async fn evaluate(
         &self,
         expression: &str,
@@ -210,10 +205,9 @@ impl CdpClient {
         }
     }
 
-    /// Implement execute.
+    /// Execute a CDP command and return the raw response.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (expression) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
     pub async fn execute(
         &self,
         expression: &str,
@@ -227,10 +221,9 @@ impl CdpClient {
         .await
     }
 
-    /// Implement execute_await.
+    /// Execute a CDP command and await its result.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (expression) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
     pub async fn execute_await(
         &self,
         expression: &str,
@@ -244,10 +237,9 @@ impl CdpClient {
         .await
     }
 
-    /// Implement set_device_scale_factor.
+    /// Set the device scale factor and viewport dimensions.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `f64` (factor), `u32` (width), `u32` (height) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
     pub async fn set_device_scale_factor(
         &self,
         factor: f64,
@@ -263,10 +255,9 @@ impl CdpClient {
         .await
     }
 
-    /// Implement screenshot.
+    /// Capture the page as PNG bytes.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: () -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
     pub async fn screenshot(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         let resp = self
             .send(
@@ -285,10 +276,9 @@ impl CdpClient {
         }
     }
 
-    /// Implement screenshot_element.
+    /// Capture a single element (CSS selector) as PNG bytes.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (selector) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
     pub async fn screenshot_element(
         &self,
         selector: &str,
@@ -327,10 +317,9 @@ impl CdpClient {
         }
     }
 
-    /// Implement create_isolated_world.
+    /// Create an isolated JavaScript world for the page.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (world name) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
     pub async fn create_isolated_world(
         &self,
         world_name: &str,
@@ -344,10 +333,9 @@ impl CdpClient {
         .await
     }
 
-    /// Implement close.
+    /// Close the CDP connection and release the client.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `CdpClient` (self) -> `()`
     pub async fn close(&self) {
         let _ = self.sender.send(String::new()).await;
     }
@@ -380,6 +368,8 @@ fn parse_cdp_message(text: &str) -> Result<ParsedCdp, String> {
 
 /// Decode a base64-encoded PNG screenshot and validate it starts with the PNG
 /// signature. Uses the `base64` crate to correctly handle `=` padding.
+///
+/// I/O: `&str` (base64) -> `Result<Vec<u8>, String>`
 pub(crate) fn decode_base64_png(s: &str) -> Result<Vec<u8>, String> {
     use base64::Engine as _;
     let bytes = base64::engine::general_purpose::STANDARD

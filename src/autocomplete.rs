@@ -24,18 +24,16 @@ pub struct ChampionList {
 
 #[allow(dead_code)] // Kept for potential future autocomplete optimization
 impl ChampionList {
-    /// Implement new.
+    /// Create an empty champion-name cache.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: () -> `ChampionList`
     pub fn new() -> Self {
         Self { names: None }
     }
 
-    /// Implement get.
+    /// Return the cached champion names, fetching from the API on first use.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&ApiClient` -> `&[String]`
     pub async fn get(&mut self, api: &ApiClient) -> &[String] {
         if self.names.is_none() {
             self.names = api.champion_names().await.ok();
@@ -82,10 +80,9 @@ fn score(name: &str, query: &str) -> u8 {
     u8::MAX
 }
 
-/// Implement champion_autocomplete_choices.
+/// Filter champion names into Discord autocomplete choices for a query.
 ///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
+/// I/O: `&[String]` (names), `&str` (query) -> `Vec<(String, String)>`
 pub fn champion_autocomplete_choices(names: &[String], query: &str) -> Vec<(String, String)> {
     let query = normalize(query);
     let mut seen = std::collections::HashMap::new();

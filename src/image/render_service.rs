@@ -83,10 +83,9 @@ pub struct ImageService {
 }
 
 impl ImageService {
-    /// Implement new.
+    /// Create an image service from a renderer and config.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `Arc<MatchRenderer>`, `ImageServiceConfig` -> `ImageService`
     pub fn new(renderer: Arc<MatchRenderer>, config: ImageServiceConfig) -> Self {
         let render_attempt_timeout_ms = std::cmp::max(
             1,
@@ -110,10 +109,9 @@ impl ImageService {
         }
     }
 
-    /// Implement render_match.
+    /// Render a match scoreboard record to PNG bytes (queued + cached).
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
     pub async fn render_match(
         &self,
         record: &Value,
@@ -144,6 +142,8 @@ impl ImageService {
 
     /// Return a completed match render without invoking the backend or browser.
     /// This preserves the cache-first path for repeated match commands.
+    ///
+    /// I/O: `&str` (match id) -> `Option<Vec<u8>>`
     pub async fn cached_match(&self, match_id: &str) -> Option<Vec<u8>> {
         let cache_key = format!(
             "match:{}:summary:v{}",
@@ -156,10 +156,9 @@ impl ImageService {
             .filter(|png| !png.is_empty())
     }
 
-    /// Implement render_web_match.
+    /// Render the canonical web scoreboard for a match.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (match id), `&str` (url) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
     pub async fn render_web_match(
         &self,
         match_id: &str,
@@ -185,10 +184,9 @@ impl ImageService {
         Ok(result)
     }
 
-    /// Implement render_loadout.
+    /// Render a loadout card record to PNG bytes (queued + cached).
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
     pub async fn render_loadout(
         &self,
         record: &Value,
@@ -225,10 +223,9 @@ impl ImageService {
         Ok(result)
     }
 
-    /// Implement match_by_id.
+    /// Render a match by id, loading the record via the provided closure.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `String` (match id), `F: FnOnce() -> Box<dyn Future>` (load) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
     pub async fn match_by_id<F>(
         &self,
         match_id: String,
@@ -276,18 +273,16 @@ impl ImageService {
         Ok(result)
     }
 
-    /// Implement warm.
+    /// Warm up the underlying renderer.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: () -> `Result<(), Box<dyn Error + Send + Sync>>`
     pub async fn warm(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.renderer.warm().await
     }
 
-    /// Implement close.
+    /// Close the service and release the renderer.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `ImageService` (self) -> `()`
     pub async fn close(&self) {
         self.renderer.close().await;
     }
@@ -295,14 +290,15 @@ impl ImageService {
     /// Discard a renderer left mid-request by a caller-level timeout.
     /// The command timeout cancels its future before `render_with_recovery`
     /// can observe an error, so it must explicitly reset Chromium.
+    ///
+    /// I/O: `ImageService` (self) -> `()`
     pub async fn recycle(&self) {
         self.renderer.recycle().await;
     }
 
-    /// Implement snapshot.
+    /// Get a snapshot of the service state.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: () -> `ServiceSnapshot`
     pub fn snapshot(&self) -> ServiceSnapshot {
         let stats = self.stats.lock().unwrap();
         ServiceSnapshot {

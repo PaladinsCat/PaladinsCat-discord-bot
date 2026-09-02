@@ -15,10 +15,9 @@ pub struct RenderCache {
 }
 
 impl RenderCache {
-    /// Implement new.
+    /// Create an in-memory cache with a byte budget and TTL.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `usize` (max bytes), `u64` (ttl secs) -> `InMemoryCache`
     pub fn new(max_bytes: usize, ttl_secs: u64) -> Self {
         Self {
             inner: Cache::builder()
@@ -32,29 +31,31 @@ impl RenderCache {
     }
 
     #[allow(dead_code)] // Used by health server for cache stats reporting
-    /// Implement get.
+    /// Return the cached value for a key, or None if absent/expired.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (key) -> `Option<Vec<u8>>`
     pub async fn get(&self, key: &str) -> Option<Vec<u8>> {
         self.inner.get(key).await
     }
 
     #[allow(dead_code)] // Used by health server for cache stats reporting
-    /// Implement set.
+    /// Store a value under a key (evicts to stay within the byte budget).
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `String` (key), `Vec<u8>` (value) -> ()
     pub async fn set(&self, key: String, value: Vec<u8>) {
         self.inner.insert(key, value).await;
     }
 
     /// Approximate number of cached entries.
+    ///
+    /// I/O: () -> `u64`
     pub fn entry_count(&self) -> u64 {
         self.inner.entry_count()
     }
 
     /// Current weighted cache size in bytes, including key bytes.
+    ///
+    /// I/O: () -> `u64`
     pub fn approximate_bytes(&self) -> u64 {
         self.inner.weighted_size()
     }

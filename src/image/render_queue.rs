@@ -36,6 +36,8 @@ impl std::error::Error for QueueFullError {}
 impl QueueFullError {
     /// True only when the producer's work timed out, not when the queue
     /// rejected admission.
+    ///
+    /// I/O: () -> `bool`
     pub fn is_work_timeout(&self) -> bool {
         self.message.contains(" exceeded ")
     }
@@ -101,6 +103,8 @@ struct SharedResult<T> {
 
 impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
     /// Create a new bounded work queue.
+    ///
+    /// I/O: `usize` (concurrency), `usize` (max queued), `u64` (timeout ms), `&str` (work label) -> `BoundedWorkQueue`
     pub fn new(concurrency: usize, max_queued: usize, timeout_ms: u64, work_label: &str) -> Self {
         let concurrency = concurrency.max(1);
         Self {
@@ -121,11 +125,15 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
     }
 
     /// Timeout in milliseconds.
+    ///
+    /// I/O: () -> `u64`
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms
     }
 
     /// Add work to the queue with deduplication.
+    ///
+    /// I/O: `String` (key), `F: FnOnce() -> Fut` (work) -> `Result<T, QueueFullError>`
     pub async fn add<F, Fut>(&self, key: String, work: F) -> Result<T, QueueFullError>
     where
         F: FnOnce() -> Fut + Send,
@@ -208,6 +216,8 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
     }
 
     /// Get a snapshot of queue state.
+    ///
+    /// I/O: () -> `QueueSnapshot`
     pub fn snapshot(&self) -> QueueSnapshot {
         let state = self.state.lock().unwrap();
         let map_len = self.in_flight_map.lock().unwrap().len();

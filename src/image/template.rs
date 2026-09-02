@@ -27,10 +27,9 @@ pub struct TemplateConfig {
 }
 
 impl TemplateConfig {
-    /// Implement dev_defaults.
+    /// Default template config for development.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: () -> `TemplateConfig`
     pub fn dev_defaults() -> Self {
         let workspace_css = "../paladinscat-frontend/app/globals.css";
         Self {
@@ -367,10 +366,9 @@ fn metrics(player: &serde_json::Value) -> [i64; 6] {
 }
 
 impl TemplateEngine {
-    /// Implement load.
+    /// Load a template engine from a config.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&TemplateConfig` -> `Result<TemplateEngine, Box<dyn Error + Send + Sync>>`
     pub fn load(config: &TemplateConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let match_template = fs::read_to_string(&config.match_template_path).map_err(|e| {
             format!(
@@ -413,10 +411,9 @@ impl TemplateEngine {
         })
     }
 
-    /// Implement extract_css.
+    /// Extract the CSS block from a template document.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&str` (template) -> `String`
     pub fn extract_css(template: &str) -> String {
         if let Some(idx) = template.find("<style") {
             let rest = &template[idx..];
@@ -471,6 +468,8 @@ impl TemplateEngine {
     /// `#scoreboard` element. The static design prototype is not injected
     /// wholesale — we reuse its CSS and build the hero / columns / team rows /
     /// summary from the record JSON.
+    ///
+    /// I/O: `&Value` (data) -> `String`
     pub fn match_document(&self, data: &serde_json::Value) -> String {
         let css = match self.canonical_match_css.as_deref() {
             Some(css) => Cow::Borrowed(css.as_str()),
@@ -997,10 +996,9 @@ impl TemplateEngine {
         )
     }
 
-    /// Implement loadout_document.
+    /// Build the complete, data-bound loadout-card document.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `&Value` (data) -> `String`
     pub fn loadout_document(&self, data: &serde_json::Value) -> String {
         let player = data.get("player");
         let loadout = data.get("loadout");
@@ -1085,10 +1083,9 @@ impl TemplateEngine {
         )
     }
 
-    /// Implement cheater_pattern_url.
+    /// URL of the cheater-pattern asset.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: () -> `&str`
     pub fn cheater_pattern_url(&self) -> &str {
         &self.cheater_pattern_url
     }
@@ -1139,10 +1136,9 @@ fn utc_timestamp_str(s: &str) -> String {
         .unwrap_or_else(|_| "—".to_string())
 }
 
-/// Implement escape_html.
+/// Escape HTML special characters.
 ///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
+/// I/O: `&str` -> `String`
 pub fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")

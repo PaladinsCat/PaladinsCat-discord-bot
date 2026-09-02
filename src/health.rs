@@ -44,10 +44,9 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Implement new.
+    /// Create the health + preview server state.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `Arc<ApiClient>`, `Arc<RenderCache>`, `Option<Arc<ImageService>>`, `String` (web url) -> `AppState`
     pub fn new(
         api: Arc<ApiClient>,
         render_cache: Arc<RenderCache>,
@@ -95,6 +94,8 @@ impl AppState {
 // ── Spawn helper ─────────────────────────────────────────────────────────────
 
 /// Start the health + preview server and return a JoinHandle.
+///
+/// I/O: `u16` (port), `Arc<ApiClient>`, `Arc<RenderCache>`, `Option<Arc<ImageService>>`, `String` (web url) -> `JoinHandle<Result<(), std::io::Error>>`
 pub fn spawn_server(
     port: u16,
     api: Arc<ApiClient>,

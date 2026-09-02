@@ -98,10 +98,9 @@ struct RateWindow {
 
 /// Main event dispatcher — routes gateway events to command handlers.
 #[allow(clippy::too_many_arguments)]
-/// Implement handle_event.
+/// Dispatch a Discord gateway event to the matching command handler.
 ///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
+/// I/O: `Event`, `Arc<ApiClient>`, `Arc<RenderCache>`, `Arc<HttpClient>`, `String` (web url), `Option<Arc<ImageService>>`, `Option<Id<ApplicationMarker>>`, `Option<Id<GuildMarker>>`, `Arc<AtomicBool>`, `Arc<InMemoryCache>`, `bool` (social enabled) -> ()
 pub async fn handle_event(
     event: Event,
     api: Arc<ApiClient>,

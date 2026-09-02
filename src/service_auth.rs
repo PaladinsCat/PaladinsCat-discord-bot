@@ -27,10 +27,9 @@ pub struct ServiceAuthConfig {
 }
 
 impl ServiceAuthConfig {
-    /// Implement from_env.
+    /// Build a service-token provider from environment variables.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: () -> `Result<ServiceTokenProvider, Box<dyn Error + Send + Sync>>`
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config = Self {
             issuer: required_env("PALADINSCAT_SERVICE_OIDC_ISSUER")?,
@@ -123,10 +122,9 @@ pub struct ServiceTokenProvider {
 }
 
 impl ServiceTokenProvider {
-    /// Implement new.
+    /// Build a service-token provider from a config.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: `ServiceAuthConfig` -> `Result<ServiceTokenProvider, Box<dyn Error + Send + Sync>>`
     pub fn new(
         config: ServiceAuthConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -212,10 +210,9 @@ impl ServiceTokenProvider {
         })
     }
 
-    /// Implement token.
+    /// Return a current bearer token, refreshing it when close to expiry.
     ///
-    /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-    ///
+    /// I/O: () -> `Result<String, Box<dyn Error + Send + Sync>>`
     pub async fn token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let mut cache = self.cache.lock().await;
         if let Some(cached) = cache
