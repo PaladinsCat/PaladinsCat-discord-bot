@@ -1,4 +1,5 @@
 //! Image generation module — mirrors TS Puppeteer pipeline via CDP WebSocket.
+//! refs: none
 
 mod asset_catalog;
 mod cdp_client;

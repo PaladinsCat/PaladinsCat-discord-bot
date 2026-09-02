@@ -1,4 +1,5 @@
 //! Game asset lookup — mirrors TS `asset-catalog.ts`.
+//! refs: none
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -41,6 +42,7 @@ fn preferred_image<'a>(files: impl Iterator<Item = &'a PathBuf>) -> Option<&'a P
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct AssetCatalog {
     root: PathBuf,
     champion_files: Arc<RwLock<Option<Vec<PathBuf>>>>,
@@ -62,6 +64,7 @@ pub struct AssetCatalog {
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct LoadoutCardAsset {
     pub name: String,
     pub description: String,
@@ -74,6 +77,7 @@ pub struct LoadoutCardAsset {
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct LoadoutFrameAsset {
     pub rarity: String,
     pub icon_path: PathBuf,
@@ -83,6 +87,7 @@ impl AssetCatalog {
     /// Create an asset catalog rooted at a directory.
     ///
     /// I/O: `impl Into<PathBuf>` (root) -> `AssetCatalog`
+/// refs: none
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -104,6 +109,7 @@ impl AssetCatalog {
     /// Resolve a loadout card asset by id.
     ///
     /// I/O: `u32` (card id) -> `Option<LoadoutCardAsset>`
+/// refs: none
     pub fn loadout_card(&self, card_id: u32) -> Option<LoadoutCardAsset> {
         if self.card_reference.read().unwrap().is_none() {
             let loaded = self.load_card_reference();
@@ -120,6 +126,7 @@ impl AssetCatalog {
     /// Resolve a loadout frame asset by level.
     ///
     /// I/O: `u32` (level) -> `Option<LoadoutFrameAsset>`
+/// refs: none
     pub fn loadout_frame(&self, level: u32) -> Option<LoadoutFrameAsset> {
         if self.frame_reference.read().unwrap().is_none() {
             let loaded = self.load_frame_reference();
@@ -136,6 +143,7 @@ impl AssetCatalog {
     /// Resolve a champion icon path by name.
     ///
     /// I/O: `&str` (champion name) -> `Option<PathBuf>`
+/// refs: none
     pub fn champion_icon(&self, champion_name: &str) -> Option<PathBuf> {
         let key = normalized(champion_name);
         if let Some(v) = self.champion_icons.read().unwrap().get(&key) {
@@ -165,6 +173,7 @@ impl AssetCatalog {
     /// Resolve a champion banner path by name.
     ///
     /// I/O: `&str` (champion name) -> `Option<PathBuf>`
+/// refs: none
     pub fn champion_banner(&self, champion_name: &str) -> Option<PathBuf> {
         let key = normalized(champion_name);
         if let Some(v) = self.champion_banners.read().unwrap().get(&key) {
@@ -189,6 +198,7 @@ impl AssetCatalog {
     /// Resolve a talent icon path by id or name.
     ///
     /// I/O: `Option<u32>` (talent id), `&str` (champion name), `&str` (talent name) -> `Option<PathBuf>`
+/// refs: none
     pub fn talent_icon(
         &self,
         talent_id: Option<u32>,
@@ -227,6 +237,7 @@ impl AssetCatalog {
     /// Resolve a map image path by name.
     ///
     /// I/O: `&str` (map name) -> `Option<PathBuf>`
+/// refs: none
     pub fn map_image(&self, map_name: &str) -> Option<PathBuf> {
         let cleaned: String = map_name
             .split_whitespace()
@@ -283,6 +294,7 @@ impl AssetCatalog {
     /// Resolve a rank icon path by tier.
     ///
     /// I/O: `u32` (tier) -> `Option<PathBuf>`
+/// refs: none
     pub fn rank_icon(&self, tier: u32) -> Option<PathBuf> {
         if let Some(v) = self.rank_icons.read().unwrap().get(&tier) {
             return v.clone();
@@ -331,6 +343,7 @@ impl AssetCatalog {
     /// Resolve a generic icon path by name with a preferred extension.
     ///
     /// I/O: `&str` (name), `Option<&str>` (preferred ext) -> `Option<PathBuf>`
+/// refs: none
     pub fn icon(&self, name: &str, preferred_ext: Option<&str>) -> Option<PathBuf> {
         let key = format!("{}:{}", normalized(name), preferred_ext.unwrap_or(""));
         if let Some(v) = self.icons.read().unwrap().get(&key) {

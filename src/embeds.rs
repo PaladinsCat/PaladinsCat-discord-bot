@@ -1,4 +1,5 @@
 //! Discord embed message builders — mirrors TS message-builders.ts 1-to-1.
+//! refs: none
 
 use chrono::Datelike;
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
@@ -11,10 +12,13 @@ use twilight_util::builder::embed::{
 use serde_json::Value;
 
 /// PaladinsCat accent green
+/// refs: none
 const ACCENT: u32 = 0x2dd4a3;
 /// Pending lobby amber
+/// refs: none
 const PENDING: u32 = 0xf0b232;
 /// Not in match gray
+/// refs: none
 const NOT_IN_MATCH: u32 = 0x77808d;
 
 fn url_encode(value: &str) -> String {
@@ -22,6 +26,7 @@ fn url_encode(value: &str) -> String {
 }
 
 /// Queue labels — matches TS QUEUE_LABELS
+/// refs: none
 pub const QUEUE_LABELS: &[(i32, &str)] = &[
     (1, "Casual Queue"),
     (2, "KBM"),
@@ -42,6 +47,7 @@ pub const QUEUE_LABELS: &[(i32, &str)] = &[
 ];
 
 /// Tier names — matches TS TIER_NAMES
+/// refs: none
 pub const TIER_NAMES: &[&str] = &[
     "Unranked",
     "Bronze V",
@@ -76,6 +82,7 @@ pub const TIER_NAMES: &[&str] = &[
 /// Escape Discord markdown special characters — mirrors TS cleanDiscordText
 ///
 /// I/O: `&Value`, `&str` (fallback) -> `String`
+/// refs: none
 pub fn clean_discord_text(value: &Value, fallback: &str) -> String {
     let text = value.as_str().unwrap_or(fallback).trim().to_string();
     if text.is_empty() {
@@ -95,6 +102,7 @@ pub fn clean_discord_text(value: &Value, fallback: &str) -> String {
 /// Numeric metric extraction — mirrors TS numericMetric
 ///
 /// I/O: `&Value` -> `Option<f64>`
+/// refs: none
 pub fn numeric_metric(value: &Value) -> Option<f64> {
     if value.is_null() || value.is_boolean() {
         return None;
@@ -117,6 +125,7 @@ pub fn numeric_metric(value: &Value) -> Option<f64> {
 /// Format number with locale grouping — mirrors TS toLocaleString
 ///
 /// I/O: `f64` -> `String`
+/// refs: none
 pub fn format_number(value: f64) -> String {
     let i = value as i64;
     if (i as f64) == value {
@@ -131,6 +140,7 @@ fn format_number_opt(value: Option<f64>) -> String {
 }
 
 /// Insert thousands separators (commas) — mirrors en-US toLocaleString grouping.
+/// refs: none
 fn format_grouped(n: i64) -> String {
     let neg = n < 0;
     let digits = n.abs().to_string();
@@ -152,6 +162,7 @@ fn format_grouped(n: i64) -> String {
 /// Format number with decimals — mirrors TS formattedNumber
 ///
 /// I/O: `Option<f64>`, `usize` (decimals) -> `String`
+/// refs: none
 pub fn format_number_dec(value: Option<f64>, decimals: usize) -> String {
     let Some(value) = value else {
         return "—".to_string();
@@ -172,6 +183,7 @@ pub fn format_number_dec(value: Option<f64>, decimals: usize) -> String {
 }
 
 /// Duration label — mirrors TS durationLabel
+/// refs: none
 pub fn duration_label(value: &Value) -> String {
     let seconds = numeric_metric(value).unwrap_or(0.0).max(0.0).round() as i64;
     let mins = seconds / 60;
@@ -182,6 +194,7 @@ pub fn duration_label(value: &Value) -> String {
 /// Get queue label — mirrors TS QUEUE_LABELS lookup
 ///
 /// I/O: `i32` (queue id) -> `String`
+/// refs: none
 pub fn queue_label(queue_id: i32) -> String {
     for &(id, label) in QUEUE_LABELS {
         if id == queue_id {
@@ -205,6 +218,7 @@ fn json_id(value: Option<&Value>) -> Option<String> {
 
 /// Strip leading "Live ", "Ranked ", "WIP " prefixes (repeated) — mirrors TS
 /// `String(map).replace(/^(?:(?:live|ranked|wip)\s+)+/i, '')`.
+/// refs: none
 fn strip_map_prefix(name: &str) -> String {
     let mut s = name;
     loop {
@@ -224,6 +238,7 @@ fn strip_map_prefix(name: &str) -> String {
 /// Get tier name — mirrors TS TIER_NAMES lookup
 ///
 /// I/O: `i32` (tier) -> `String`
+/// refs: none
 pub fn tier_name(tier: i32) -> String {
     if tier >= 0 && (tier as usize) < TIER_NAMES.len() {
         TIER_NAMES[tier as usize].to_string()
@@ -235,6 +250,7 @@ pub fn tier_name(tier: i32) -> String {
 /// Build a simple embed with title, description, and optional URL — mirrors TS simpleEmbed
 ///
 /// I/O: `&str` (title), `&str` (description), `Option<&str>` (url) -> `Embed`
+/// refs: none
 pub fn simple_embed(title: &str, description: &str, url: Option<&str>) -> Embed {
     let mut builder = EmbedBuilder::new()
         .color(ACCENT)
@@ -249,6 +265,7 @@ pub fn simple_embed(title: &str, description: &str, url: Option<&str>) -> Embed 
 /// Build embed with footer — mirrors TS embedPayload
 ///
 /// I/O: `&str` (title), `&str` (description), `&str` (footer), `u32` (color) -> `Embed`
+/// refs: none
 pub fn embed_with_footer(title: &str, description: &str, footer: &str, color: u32) -> Embed {
     EmbedBuilder::new()
         .color(color)
@@ -261,6 +278,7 @@ pub fn embed_with_footer(title: &str, description: &str, footer: &str, color: u3
 /// Build history payload — mirrors TS buildHistoryPayload
 ///
 /// I/O: `&str` (player name), `&[Value]` (history), `&str` (web url) -> `Embed`
+/// refs: none
 pub fn build_history_payload(player_name: &str, history: &[Value], web_url: &str) -> Embed {
     let mut lines = Vec::new();
     for row in history.iter().take(10) {
@@ -319,6 +337,7 @@ pub fn build_history_payload(player_name: &str, history: &[Value], web_url: &str
 /// Build current payload — mirrors TS buildCurrentPayload
 ///
 /// I/O: `&Value` (result), `&str` (web url) -> `Embed`
+/// refs: none
 pub fn build_current_payload(result: &Value, web_url: &str) -> Embed {
     build_current_payload_with_details(result, web_url, false)
 }
@@ -326,6 +345,7 @@ pub fn build_current_payload(result: &Value, web_url: &str) -> Embed {
 /// Build the detailed current-match embed.
 ///
 /// I/O: `&Value` (result), `&str` (web url) -> `Embed`
+/// refs: none
 pub fn build_current_payload_detailed(result: &Value, web_url: &str) -> Embed {
     build_current_payload_with_details(result, web_url, true)
 }
@@ -452,6 +472,7 @@ fn build_current_payload_with_details(result: &Value, web_url: &str, details: bo
 }
 
 /// Build player line for current match — mirrors TS currentPlayerLine
+/// refs: none
 fn current_player_line(
     player: &Value,
     source_player_id: &str,
@@ -530,18 +551,21 @@ fn current_player_line(
 }
 
 /// Estimated win chance for each live-match team — mirrors TS estimateLiveTeamWinChance.
+/// refs: none
 struct TeamWinEstimate {
     team_one: i32,
     team_two: i32,
 }
 
 /// Per-team average ELO and win rate used to blend a win-chance estimate.
+/// refs: none
 struct TeamMetrics {
     average_elo: Option<f64>,
     average_wr: Option<f64>,
 }
 
 /// Estimate live team win chance — mirrors TS estimateLiveTeamWinChance
+/// refs: none
 fn estimate_live_team_win_chance(players: &[Value]) -> Option<TeamWinEstimate> {
     let team_metrics = |task_force: i32| -> Option<TeamMetrics> {
         let team: Vec<_> = players
@@ -611,6 +635,7 @@ fn estimate_live_team_win_chance(players: &[Value]) -> Option<TeamWinEstimate> {
 /// Build loadouts payload — mirrors TS buildLoadoutsPayload
 ///
 /// I/O: `&str` (player name), `&[Value]` (loadouts), `&str` (web url), `Option<&str>` (player id) -> `Embed`
+/// refs: none
 pub fn build_loadouts_payload(
     player_name: &str,
     loadouts: &[Value],
@@ -647,6 +672,7 @@ pub fn build_loadouts_payload(
 /// Build champion payload — mirrors TS buildChampionPayload
 ///
 /// I/O: `&Value` (result), `&str` (web url), `&str` (lobby label) -> `Embed`
+/// refs: none
 pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) -> Embed {
     let champion = result.get("champion").unwrap_or(&Value::Null);
     let stats = result.get("stats").unwrap_or(&Value::Null);
@@ -835,6 +861,7 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
 /// Build maps payload — mirrors TS buildMapsPayload
 ///
 /// I/O: `&[Value]` (rows), `&str` (web url) -> `Embed`
+/// refs: none
 pub fn build_maps_payload(rows: &[Value], web_url: &str) -> Embed {
     let mut lines = Vec::new();
     for row in rows {
@@ -902,6 +929,7 @@ pub fn build_maps_payload(rows: &[Value], web_url: &str) -> Embed {
 /// Build composition payload — mirrors TS buildCompositionPayload
 ///
 /// I/O: `&[Value]` (rows), `&str` (web url) -> `Embed`
+/// refs: none
 pub fn build_composition_payload(rows: &[Value], web_url: &str) -> Embed {
     let fields: Vec<EmbedField> = rows
         .iter()
@@ -978,6 +1006,7 @@ pub fn build_composition_payload(rows: &[Value], web_url: &str) -> Embed {
 /// Build items payload — mirrors TS buildItemsPayload
 ///
 /// I/O: `&[Value]` (rows), `&str` (web url), `&str` (lobby label) -> `Embed`
+/// refs: none
 pub fn build_items_payload(rows: &[Value], web_url: &str, lobby_label: &str) -> Embed {
     let mut lines = Vec::new();
     for (i, row) in rows.iter().enumerate().take(20) {
@@ -1048,6 +1077,7 @@ pub fn build_items_payload(rows: &[Value], web_url: &str, lobby_label: &str) -> 
 // ——— Player profile (mirrors TS player-profile-message.ts) ———
 
 /// Strip HTML tags, collapse whitespace, escape markdown, truncate — mirrors TS compact.
+/// refs: none
 fn compact(value: &Value, max_length: usize) -> Option<String> {
     let raw = value.as_str().unwrap_or("");
     let mut in_tag = false;
@@ -1072,16 +1102,19 @@ fn compact(value: &Value, max_length: usize) -> Option<String> {
 }
 
 /// Left-pad a label to 14 columns — mirrors TS statLine.
+/// refs: none
 fn stat_line(label: &str, value: String) -> String {
     format!("{:<14}: {}", label, value)
 }
 
 /// Wrap lines in a code block — mirrors TS codeBlock.
+/// refs: none
 fn code_block(lines: &[String]) -> String {
     format!("```\n{}\n```", lines.join("\n"))
 }
 
 /// Win rate percentage from wins/losses — mirrors TS formatPercent.
+/// refs: none
 fn format_percent(wins: f64, losses: f64) -> Option<String> {
     let games = wins + losses;
     if games > 0.0 {
@@ -1092,6 +1125,7 @@ fn format_percent(wins: f64, losses: f64) -> Option<String> {
 }
 
 /// Global KDA from globalStats — mirrors TS globalKda.
+/// refs: none
 fn global_kda(stats: &Value) -> Option<String> {
     if !stats.is_object() {
         return None;
@@ -1108,6 +1142,7 @@ fn global_kda(stats: &Value) -> Option<String> {
 }
 
 /// Tier name with Master/Grandmaster leaderboard handling — mirrors TS tierName.
+/// refs: none
 fn tier_name_profile(tier: &Value, rank: &Value) -> String {
     let value = numeric_metric(tier).unwrap_or(0.0) as i64;
     let leaderboard_rank = numeric_metric(rank).unwrap_or(0.0) as i64;
@@ -1157,6 +1192,7 @@ fn tier_name_profile(tier: &Value, rank: &Value) -> String {
 }
 
 /// Build a ranked code-block field, or None when there is no data — mirrors TS rankedField.
+/// refs: none
 fn ranked_field(
     label: &str,
     tier: &Value,
@@ -1202,6 +1238,7 @@ fn ranked_field(
 }
 
 /// Ranked performance code-block field — mirrors TS performanceField.
+/// refs: none
 fn performance_field(player: &Value) -> Option<EmbedField> {
     let metrics: Vec<(String, f64)> = [
         ("DPM", "avg_dpm"),
@@ -1234,6 +1271,7 @@ fn performance_field(player: &Value) -> Option<EmbedField> {
 }
 
 /// Playtime label — mirrors TS formatPlaytime.
+/// refs: none
 fn format_playtime(hours: &Value, minutes: &Value) -> Option<String> {
     let total_hours = match numeric_metric(hours) {
         Some(h) => h,
@@ -1257,6 +1295,7 @@ fn format_playtime(hours: &Value, minutes: &Value) -> Option<String> {
 }
 
 /// Date label in UTC — mirrors TS formatDate (en-US locale, non-zero-padded day).
+/// refs: none
 fn format_date(value: &Value) -> Option<String> {
     let s = value.as_str()?;
     let dt = chrono::DateTime::parse_from_rfc3339(s).ok()?;
@@ -1305,6 +1344,7 @@ fn canonical_avatar_asset_url(avatar_id: &Value) -> Option<String> {
 }
 
 /// Resolve the player avatar URL — mirrors TS playerAvatarUrl.
+/// refs: none
 fn player_avatar_url(value: &Value, avatar_id: &Value, web_url: &str) -> String {
     if let Some(url) = canonical_avatar_asset_url(avatar_id) {
         return url;
@@ -1330,6 +1370,7 @@ fn player_avatar_url(value: &Value, avatar_id: &Value, web_url: &str) -> String 
 /// Build player profile payload — mirrors TS buildPlayerProfileMessage.
 ///
 /// I/O: `&Value` (result), `&str` (web url) -> `Embed`
+/// refs: none
 pub fn build_player_profile(result: &Value, web_url: &str) -> Embed {
     let player = result.get("player").unwrap_or(result);
     let player_id = json_id(player.get("id")).unwrap_or_default();
@@ -1503,6 +1544,7 @@ pub fn build_player_profile(result: &Value, web_url: &str) -> Embed {
 /// Returns embed for displaying loadout choices to user.
 ///
 /// I/O: `&str` (player name), `&str` (champion name), `usize` (count), `&str` (web url), `&str` (player id), `bool` (refreshed) -> `Embed`
+/// refs: none
 pub fn build_loadout_selection_payload(
     player_name: &str,
     champion_name: &str,
@@ -1535,6 +1577,7 @@ pub fn build_loadout_selection_payload(
 /// Build no-loadouts payload — mirrors TS buildNoLoadoutsPayload
 ///
 /// I/O: `&str` (player name), `&str` (champion name), `Option<&str>` (refresh error) -> `Embed`
+/// refs: none
 pub fn build_no_loadouts_payload(
     player_name: &str,
     champion_name: &str,

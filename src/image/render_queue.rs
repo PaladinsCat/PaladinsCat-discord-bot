@@ -6,6 +6,7 @@
 //! - Per-item timeout
 //! - Active/queued/completed/failed counters
 //! - Duration tracking (last, average, p95, max)
+//! refs: none
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -16,11 +17,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
 /// Error returned when the render queue is full.
+/// refs: none
 #[derive(Debug, Clone)]
 /// Define QueueFullError.
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct QueueFullError {
     pub message: String,
 }
@@ -38,17 +41,20 @@ impl QueueFullError {
     /// rejected admission.
     ///
     /// I/O: () -> `bool`
+/// refs: none
     pub fn is_work_timeout(&self) -> bool {
         self.message.contains(" exceeded ")
     }
 }
 
 /// Duration metrics for queue monitoring.
+/// refs: none
 #[derive(Debug, Clone, Default)]
 /// Define DurationMetrics.
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct DurationMetrics {
     pub last: f64,
     pub average: f64,
@@ -57,11 +63,13 @@ pub struct DurationMetrics {
 }
 
 /// Snapshot of queue state for health reporting.
+/// refs: none
 #[derive(Debug, Clone)]
 /// Define QueueSnapshot.
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct QueueSnapshot {
     pub active: usize,
     pub queued: usize,
@@ -72,6 +80,7 @@ pub struct QueueSnapshot {
 }
 
 /// Internal mutable state for the queue.
+/// refs: none
 struct QueueInner {
     completed: usize,
     failed: usize,
@@ -82,6 +91,7 @@ struct QueueInner {
 /// Bounded work queue with concurrency control, deduplication, and timeout.
 ///
 /// Mirrors TS `BoundedWorkQueue<T>` from `render-queue.ts`.
+/// refs: none
 pub struct BoundedWorkQueue<T: Send + Clone + 'static> {
     concurrency: usize,
     max_queued: usize,
@@ -91,11 +101,13 @@ pub struct BoundedWorkQueue<T: Send + Clone + 'static> {
     permits: Arc<Semaphore>,
     active: AtomicUsize,
     /// In-flight deduplication: key → shared result holder.
+/// refs: none
     in_flight_map: StdMutex<HashMap<String, Arc<SharedResult<T>>>>,
 }
 
 /// One producer result shared by all duplicate callers. `Notify` prevents the
 /// polling and runtime-blocking lock used by the first Rust implementation.
+/// refs: none
 struct SharedResult<T> {
     result: tokio::sync::Mutex<Option<Result<T, String>>>,
     ready: tokio::sync::Notify,
@@ -105,6 +117,7 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
     /// Create a new bounded work queue.
     ///
     /// I/O: `usize` (concurrency), `usize` (max queued), `u64` (timeout ms), `&str` (work label) -> `BoundedWorkQueue`
+/// refs: none
     pub fn new(concurrency: usize, max_queued: usize, timeout_ms: u64, work_label: &str) -> Self {
         let concurrency = concurrency.max(1);
         Self {
@@ -127,6 +140,7 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
     /// Timeout in milliseconds.
     ///
     /// I/O: () -> `u64`
+/// refs: none
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms
     }
@@ -134,6 +148,7 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
     /// Add work to the queue with deduplication.
     ///
     /// I/O: `String` (key), `F: FnOnce() -> Fut` (work) -> `Result<T, QueueFullError>`
+/// refs: none
     pub async fn add<F, Fut>(&self, key: String, work: F) -> Result<T, QueueFullError>
     where
         F: FnOnce() -> Fut + Send,
@@ -218,6 +233,7 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
     /// Get a snapshot of queue state.
     ///
     /// I/O: () -> `QueueSnapshot`
+/// refs: none
     pub fn snapshot(&self) -> QueueSnapshot {
         let state = self.state.lock().unwrap();
         let map_len = self.in_flight_map.lock().unwrap().len();
@@ -258,6 +274,7 @@ impl<T: Send + Clone + 'static> BoundedWorkQueue<T> {
     }
 
     /// Record a duration measurement (rolling window of 100).
+/// refs: none
     fn record_duration(&self, ms: f64) {
         let mut state = self.state.lock().unwrap();
         state.durations.push(ms);

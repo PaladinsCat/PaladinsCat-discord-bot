@@ -1,6 +1,7 @@
 //! In-memory render cache — replaces render-cache.ts
 //!
 //! Uses moka for async-safe LRU caching with TTL eviction.
+//! refs: none
 
 use moka::future::Cache;
 use std::time::Duration;
@@ -10,6 +11,7 @@ use std::time::Duration;
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct RenderCache {
     inner: Cache<String, Vec<u8>>,
 }
@@ -18,6 +20,7 @@ impl RenderCache {
     /// Create an in-memory cache with a byte budget and TTL.
     ///
     /// I/O: `usize` (max bytes), `u64` (ttl secs) -> `InMemoryCache`
+/// refs: none
     pub fn new(max_bytes: usize, ttl_secs: u64) -> Self {
         Self {
             inner: Cache::builder()
@@ -34,6 +37,7 @@ impl RenderCache {
     /// Return the cached value for a key, or None if absent/expired.
     ///
     /// I/O: `&str` (key) -> `Option<Vec<u8>>`
+/// refs: none
     pub async fn get(&self, key: &str) -> Option<Vec<u8>> {
         self.inner.get(key).await
     }
@@ -42,6 +46,7 @@ impl RenderCache {
     /// Store a value under a key (evicts to stay within the byte budget).
     ///
     /// I/O: `String` (key), `Vec<u8>` (value) -> ()
+/// refs: none
     pub async fn set(&self, key: String, value: Vec<u8>) {
         self.inner.insert(key, value).await;
     }
@@ -49,6 +54,7 @@ impl RenderCache {
     /// Approximate number of cached entries.
     ///
     /// I/O: () -> `u64`
+/// refs: none
     pub fn entry_count(&self) -> u64 {
         self.inner.entry_count()
     }
@@ -56,6 +62,7 @@ impl RenderCache {
     /// Current weighted cache size in bytes, including key bytes.
     ///
     /// I/O: () -> `u64`
+/// refs: none
     pub fn approximate_bytes(&self) -> u64 {
         self.inner.weighted_size()
     }

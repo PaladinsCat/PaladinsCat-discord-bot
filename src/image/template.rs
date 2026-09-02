@@ -1,4 +1,5 @@
 //! HTML template data binding — builds data-bound scoreboard/loadout documents.
+//! refs: none
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -18,6 +19,7 @@ const PLAYER_TAG_MINIMUM_COUNT: i64 = 5;
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct TemplateConfig {
     pub match_template_path: String,
     pub canonical_match_css_path: Option<String>,
@@ -30,6 +32,7 @@ impl TemplateConfig {
     /// Default template config for development.
     ///
     /// I/O: () -> `TemplateConfig`
+/// refs: none
     pub fn dev_defaults() -> Self {
         let workspace_css = "../paladinscat-frontend/app/globals.css";
         Self {
@@ -54,6 +57,7 @@ impl TemplateConfig {
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct TemplateEngine {
     match_template: Arc<String>,
     canonical_match_css: Option<Arc<String>>,
@@ -322,6 +326,7 @@ fn tier_name(tier: i64) -> String {
 }
 
 /// Match the web scoreboard's display rule for the synthetic Grandmaster tier.
+/// refs: none
 fn player_display_tier(player: &serde_json::Value) -> i64 {
     let value = num_f64(Some(
         player.get("kbm_tier").unwrap_or(
@@ -369,6 +374,7 @@ impl TemplateEngine {
     /// Load a template engine from a config.
     ///
     /// I/O: `&TemplateConfig` -> `Result<TemplateEngine, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub fn load(config: &TemplateConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let match_template = fs::read_to_string(&config.match_template_path).map_err(|e| {
             format!(
@@ -414,6 +420,7 @@ impl TemplateEngine {
     /// Extract the CSS block from a template document.
     ///
     /// I/O: `&str` (template) -> `String`
+/// refs: none
     pub fn extract_css(template: &str) -> String {
         if let Some(idx) = template.find("<style") {
             let rest = &template[idx..];
@@ -470,6 +477,7 @@ impl TemplateEngine {
     /// summary from the record JSON.
     ///
     /// I/O: `&Value` (data) -> `String`
+/// refs: none
     pub fn match_document(&self, data: &serde_json::Value) -> String {
         let css = match self.canonical_match_css.as_deref() {
             Some(css) => Cow::Borrowed(css.as_str()),
@@ -505,6 +513,7 @@ impl TemplateEngine {
 
     /// Build scoreboard section markup (hero + columns + both teams), mirroring
     /// the TS `document()` inner structure.
+/// refs: none
     fn scoreboard_markup(&self, data: &serde_json::Value) -> String {
         let match_obj = data.get("match");
         let players = data
@@ -999,6 +1008,7 @@ impl TemplateEngine {
     /// Build the complete, data-bound loadout-card document.
     ///
     /// I/O: `&Value` (data) -> `String`
+/// refs: none
     pub fn loadout_document(&self, data: &serde_json::Value) -> String {
         let player = data.get("player");
         let loadout = data.get("loadout");
@@ -1086,6 +1096,7 @@ impl TemplateEngine {
     /// URL of the cheater-pattern asset.
     ///
     /// I/O: () -> `&str`
+/// refs: none
     pub fn cheater_pattern_url(&self) -> &str {
         &self.cheater_pattern_url
     }
@@ -1109,6 +1120,7 @@ h1{margin:10px 0 0;padding-bottom:4px;max-width:760px;overflow:hidden;color:var(
 
 /// Strip leading queue tokens (Ranked/Live/WIP + numbers) from a map name,
 /// mirroring the TS normalization.
+/// refs: none
 fn regex_strip_prefix(s: &str) -> String {
     let mut result = s.trim().to_string();
     loop {
@@ -1139,6 +1151,7 @@ fn utc_timestamp_str(s: &str) -> String {
 /// Escape HTML special characters.
 ///
 /// I/O: `&str` -> `String`
+/// refs: none
 pub fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")

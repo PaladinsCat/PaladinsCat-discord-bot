@@ -2,6 +2,7 @@
 //!
 //! Replaces Node.js + Puppeteer pipeline with native Twilight embed builders.
 //! Target: 50-200ms latency, 10-50MB memory, zero GC pressure.
+//! refs: none
 
 mod api;
 mod autocomplete;

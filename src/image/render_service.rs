@@ -1,4 +1,5 @@
 //! Queue + cache + recovery wrapper — mirrors TS `render-service.ts`.
+//! refs: none
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use crate::image::render_queue::{BoundedWorkQueue, QueueSnapshot};
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct ImageServiceConfig {
     pub concurrency: usize,
     pub queue_limit: usize,
@@ -42,6 +44,7 @@ impl Default for ImageServiceConfig {
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct ServiceSnapshot {
     pub queue: QueueSnapshot,
     pub cache_entries: u64,
@@ -73,6 +76,7 @@ impl Default for ServiceStats {
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct ImageService {
     renderer: Arc<MatchRenderer>,
     cache: RenderCache,
@@ -86,6 +90,7 @@ impl ImageService {
     /// Create an image service from a renderer and config.
     ///
     /// I/O: `Arc<MatchRenderer>`, `ImageServiceConfig` -> `ImageService`
+/// refs: none
     pub fn new(renderer: Arc<MatchRenderer>, config: ImageServiceConfig) -> Self {
         let render_attempt_timeout_ms = std::cmp::max(
             1,
@@ -112,6 +117,7 @@ impl ImageService {
     /// Render a match scoreboard record to PNG bytes (queued + cached).
     ///
     /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn render_match(
         &self,
         record: &Value,
@@ -144,6 +150,7 @@ impl ImageService {
     /// This preserves the cache-first path for repeated match commands.
     ///
     /// I/O: `&str` (match id) -> `Option<Vec<u8>>`
+/// refs: none
     pub async fn cached_match(&self, match_id: &str) -> Option<Vec<u8>> {
         let cache_key = format!(
             "match:{}:summary:v{}",
@@ -159,6 +166,7 @@ impl ImageService {
     /// Render the canonical web scoreboard for a match.
     ///
     /// I/O: `&str` (match id), `&str` (url) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn render_web_match(
         &self,
         match_id: &str,
@@ -187,6 +195,7 @@ impl ImageService {
     /// Render a loadout card record to PNG bytes (queued + cached).
     ///
     /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn render_loadout(
         &self,
         record: &Value,
@@ -226,6 +235,7 @@ impl ImageService {
     /// Render a match by id, loading the record via the provided closure.
     ///
     /// I/O: `String` (match id), `F: FnOnce() -> Box<dyn Future>` (load) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn match_by_id<F>(
         &self,
         match_id: String,
@@ -276,6 +286,7 @@ impl ImageService {
     /// Warm up the underlying renderer.
     ///
     /// I/O: () -> `Result<(), Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn warm(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.renderer.warm().await
     }
@@ -283,6 +294,7 @@ impl ImageService {
     /// Close the service and release the renderer.
     ///
     /// I/O: `ImageService` (self) -> `()`
+/// refs: none
     pub async fn close(&self) {
         self.renderer.close().await;
     }
@@ -292,6 +304,7 @@ impl ImageService {
     /// can observe an error, so it must explicitly reset Chromium.
     ///
     /// I/O: `ImageService` (self) -> `()`
+/// refs: none
     pub async fn recycle(&self) {
         self.renderer.recycle().await;
     }
@@ -299,6 +312,7 @@ impl ImageService {
     /// Get a snapshot of the service state.
     ///
     /// I/O: () -> `ServiceSnapshot`
+/// refs: none
     pub fn snapshot(&self) -> ServiceSnapshot {
         let stats = self.stats.lock().unwrap();
         ServiceSnapshot {

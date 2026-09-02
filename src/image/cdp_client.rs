@@ -1,4 +1,5 @@
 //! Chrome DevTools Protocol WebSocket client — communicates with headless Chromium.
+//! refs: none
 
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -13,6 +14,7 @@ use tokio_tungstenite::tungstenite::Message;
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct CdpResponse {
     pub method: String,
     pub params: Value,
@@ -29,6 +31,7 @@ struct PendingRequest {
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct CdpClient {
     next_id: Mutex<u64>,
     // Shared with the reader task so `send()` inserts into the exact map
@@ -41,6 +44,7 @@ impl CdpClient {
     /// Open a WebSocket to the CDP endpoint and return a ready client.
     ///
     /// I/O: `String` (ws url) -> `Result<CdpClient, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn connect(ws_url: String) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url)
             .await
@@ -116,6 +120,7 @@ impl CdpClient {
     /// Send a CDP method with params and await the response.
     ///
     /// I/O: `&str` (method), `Value` (params) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn send(
         &self,
         method: &str,
@@ -128,6 +133,7 @@ impl CdpClient {
     /// Send a CDP method with params, enforcing a deadline.
     ///
     /// I/O: `&str` (method), `Value` (params), `Duration` (timeout) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn send_timeout(
         &self,
         method: &str,
@@ -170,6 +176,7 @@ impl CdpClient {
     /// Navigate the page to a URL.
     ///
     /// I/O: `&str` (url) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn navigate(
         &self,
         url: &str,
@@ -180,6 +187,7 @@ impl CdpClient {
     /// Evaluate a JavaScript expression and return the value.
     ///
     /// I/O: `&str` (expression) -> `Result<Value, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn evaluate(
         &self,
         expression: &str,
@@ -208,6 +216,7 @@ impl CdpClient {
     /// Execute a CDP command and return the raw response.
     ///
     /// I/O: `&str` (expression) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn execute(
         &self,
         expression: &str,
@@ -224,6 +233,7 @@ impl CdpClient {
     /// Execute a CDP command and await its result.
     ///
     /// I/O: `&str` (expression) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn execute_await(
         &self,
         expression: &str,
@@ -240,6 +250,7 @@ impl CdpClient {
     /// Set the device scale factor and viewport dimensions.
     ///
     /// I/O: `f64` (factor), `u32` (width), `u32` (height) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn set_device_scale_factor(
         &self,
         factor: f64,
@@ -258,6 +269,7 @@ impl CdpClient {
     /// Capture the page as PNG bytes.
     ///
     /// I/O: () -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn screenshot(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         let resp = self
             .send(
@@ -279,6 +291,7 @@ impl CdpClient {
     /// Capture a single element (CSS selector) as PNG bytes.
     ///
     /// I/O: `&str` (selector) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn screenshot_element(
         &self,
         selector: &str,
@@ -320,6 +333,7 @@ impl CdpClient {
     /// Create an isolated JavaScript world for the page.
     ///
     /// I/O: `&str` (world name) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn create_isolated_world(
         &self,
         world_name: &str,
@@ -336,6 +350,7 @@ impl CdpClient {
     /// Close the CDP connection and release the client.
     ///
     /// I/O: `CdpClient` (self) -> `()`
+/// refs: none
     pub async fn close(&self) {
         let _ = self.sender.send(String::new()).await;
     }
@@ -370,6 +385,7 @@ fn parse_cdp_message(text: &str) -> Result<ParsedCdp, String> {
 /// signature. Uses the `base64` crate to correctly handle `=` padding.
 ///
 /// I/O: `&str` (base64) -> `Result<Vec<u8>, String>`
+/// refs: none
 pub(crate) fn decode_base64_png(s: &str) -> Result<Vec<u8>, String> {
     use base64::Engine as _;
     let bytes = base64::engine::general_purpose::STANDARD

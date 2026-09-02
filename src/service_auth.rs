@@ -1,5 +1,6 @@
 //! Discord integration module: commands, transport, rendering, or support helpers.
 //!
+//! refs: none
 use futures_util::StreamExt;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use reqwest::Client;
@@ -19,6 +20,7 @@ use uuid::Uuid;
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct ServiceAuthConfig {
     pub issuer: String,
     pub token_url: String,
@@ -30,6 +32,7 @@ impl ServiceAuthConfig {
     /// Build a service-token provider from environment variables.
     ///
     /// I/O: () -> `Result<ServiceTokenProvider, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config = Self {
             issuer: required_env("PALADINSCAT_SERVICE_OIDC_ISSUER")?,
@@ -114,6 +117,7 @@ struct CachedToken {
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct ServiceTokenProvider {
     client: Client,
     config: Arc<ServiceAuthConfig>,
@@ -125,6 +129,7 @@ impl ServiceTokenProvider {
     /// Build a service-token provider from a config.
     ///
     /// I/O: `ServiceAuthConfig` -> `Result<ServiceTokenProvider, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub fn new(
         config: ServiceAuthConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -213,6 +218,7 @@ impl ServiceTokenProvider {
     /// Return a current bearer token, refreshing it when close to expiry.
     ///
     /// I/O: () -> `Result<String, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let mut cache = self.cache.lock().await;
         if let Some(cached) = cache

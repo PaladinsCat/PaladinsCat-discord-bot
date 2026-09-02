@@ -1,4 +1,5 @@
 //! Slash command handlers — dispatches InteractionCreate events.
+//! refs: none
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,6 +30,7 @@ use crate::embeds;
 use crate::image::ImageService;
 
 /// Loadout session — maps a token to player/loadout data with an expiration.
+/// refs: none
 #[derive(Clone)]
 struct LoadoutSession {
     user_id: String,
@@ -43,15 +45,18 @@ struct PlayerInput {
 }
 
 /// 5-minute TTL for loadout sessions.
+/// refs: none
 const LOADOUT_SESSION_TTL_SECS: u64 = 5 * 60;
 const IMAGE_COOLDOWN_MS: i64 = 10 * 1000;
 
 /// Maximum time to wait for an image render before falling back to an embed.
 /// The interaction is deferred first, so this bounds only how long the user
 /// waits for the image (or the embed fallback), not Discord's 3s ACK window.
+/// refs: none
 const RENDER_TIMEOUT: Duration = Duration::from_secs(22);
 
 /// Module-level session store.  Shared between command and component handlers.
+/// refs: none
 static LOADOUT_SESSIONS: LazyLock<RwLock<HashMap<String, LoadoutSession>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 static HISTORY_SESSIONS: LazyLock<RwLock<HashMap<String, HistorySession>>> =
@@ -97,10 +102,12 @@ struct RateWindow {
 }
 
 /// Main event dispatcher — routes gateway events to command handlers.
+/// refs: none
 #[allow(clippy::too_many_arguments)]
 /// Dispatch a Discord gateway event to the matching command handler.
 ///
 /// I/O: `Event`, `Arc<ApiClient>`, `Arc<RenderCache>`, `Arc<HttpClient>`, `String` (web url), `Option<Arc<ImageService>>`, `Option<Id<ApplicationMarker>>`, `Option<Id<GuildMarker>>`, `Arc<AtomicBool>`, `Arc<InMemoryCache>`, `bool` (social enabled) -> ()
+/// refs: none
 pub async fn handle_event(
     event: Event,
     api: Arc<ApiClient>,
@@ -204,6 +211,7 @@ fn extract_user_id(interaction: &Interaction) -> Option<String> {
 // ——— Session helpers ———
 
 /// Prune expired sessions.  Call before inserting a new session.
+/// refs: none
 fn prune_sessions() {
     let now = chrono::Utc::now().timestamp() as u64;
     let mut sessions = LOADOUT_SESSIONS.write().unwrap();
@@ -215,18 +223,21 @@ fn prune_sessions() {
 }
 
 /// Clone a session out of the store, dropping the lock immediately.
+/// refs: none
 fn get_session(token: &str) -> Option<LoadoutSession> {
     let sessions = LOADOUT_SESSIONS.read().unwrap();
     sessions.get(token).cloned()
 }
 
 /// Remove a session by token.
+/// refs: none
 fn remove_session(token: &str) -> bool {
     let mut sessions = LOADOUT_SESSIONS.write().unwrap();
     sessions.remove(token).is_some()
 }
 
 /// Insert a session into the store.
+/// refs: none
 fn insert_session(token: &str, session: LoadoutSession) {
     let mut sessions = LOADOUT_SESSIONS.write().unwrap();
     sessions.insert(token.to_string(), session);
@@ -1158,6 +1169,7 @@ impl Handler {
     }
 
     /// Handle `/loadout` — session-based select menu matching the TS bot 1:1.
+/// refs: none
     async fn loadout(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
         let input = match self.player_input(interaction, opts).await {
             Ok(input) => input,
@@ -1840,6 +1852,7 @@ impl Handler {
     }
 
     /// Defer the initial interaction response inside Discord's 3-second ACK window.
+/// refs: none
     async fn defer_response(&self, interaction: &Interaction, ephemeral: bool) {
         let data = ephemeral.then(|| InteractionResponseData {
             flags: Some(MessageFlags::EPHEMERAL),
@@ -1877,6 +1890,7 @@ impl Handler {
     }
 
     /// Edit the original deferred interaction response.
+/// refs: none
     async fn send_webhook(&self, embed: &Embed, components: &[Component], token: &str) {
         let url = self.original_response_url(token);
         let payload = serde_json::json!({

@@ -1,4 +1,5 @@
 //! Champion name autocomplete — replaces championAutocompleteChoices() from commands.ts
+//! refs: none
 
 use unicode_normalization::UnicodeNormalization;
 
@@ -13,11 +14,13 @@ const CHOICE_LEN: usize = 100;
 
 /// Simple in-memory champion list holder.
 /// (External caching via `cache::RenderCache` handles HTTP deduplication.)
+/// refs: none
 #[allow(dead_code)] // Kept for potential future autocomplete optimization
 /// Define ChampionList.
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct ChampionList {
     names: Option<Vec<String>>,
 }
@@ -27,6 +30,7 @@ impl ChampionList {
     /// Create an empty champion-name cache.
     ///
     /// I/O: () -> `ChampionList`
+/// refs: none
     pub fn new() -> Self {
         Self { names: None }
     }
@@ -34,6 +38,7 @@ impl ChampionList {
     /// Return the cached champion names, fetching from the API on first use.
     ///
     /// I/O: `&ApiClient` -> `&[String]`
+/// refs: none
     pub async fn get(&mut self, api: &ApiClient) -> &[String] {
         if self.names.is_none() {
             self.names = api.champion_names().await.ok();
@@ -83,6 +88,7 @@ fn score(name: &str, query: &str) -> u8 {
 /// Filter champion names into Discord autocomplete choices for a query.
 ///
 /// I/O: `&[String]` (names), `&str` (query) -> `Vec<(String, String)>`
+/// refs: none
 pub fn champion_autocomplete_choices(names: &[String], query: &str) -> Vec<(String, String)> {
     let query = normalize(query);
     let mut seen = std::collections::HashMap::new();
