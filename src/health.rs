@@ -5,6 +5,7 @@
 //!   GET /                        — root text ping
 //!   GET /matches/{id}/image     — canonical PNG render E2E surface
 //!   GET /preview/cmd/{command}  — HTTP dispatch of bot commands (mirrors TS bot test surfaces)
+//! refs: none
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -26,11 +27,13 @@ use crate::image::ImageService;
 /// Shared state injected via Router::with_state so all routes see the same
 /// ApiClient + RenderCache + metrics.  Atomic counters are wrapped in Arc so
 /// AppState can implement Clone (required by axum's Router state machinery).
+/// refs: none
 #[derive(Clone)]
 /// Define AppState.
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct AppState {
     pub api: Arc<ApiClient>,
     pub render_cache: Arc<RenderCache>,
@@ -47,6 +50,7 @@ impl AppState {
     /// Create the health + preview server state.
     ///
     /// I/O: `Arc<ApiClient>`, `Arc<RenderCache>`, `Option<Arc<ImageService>>`, `String` (web url) -> `AppState`
+/// refs: none
     pub fn new(
         api: Arc<ApiClient>,
         render_cache: Arc<RenderCache>,
@@ -65,6 +69,7 @@ impl AppState {
     }
 
     /// Record a completed command dispatch (ms).
+/// refs: none
     fn record(&self, latency_ms: u64) {
         self.commands_processed.fetch_add(1, Ordering::Relaxed);
         self.last_latency_ms.store(latency_ms, Ordering::Relaxed);
@@ -73,6 +78,7 @@ impl AppState {
     }
 
     /// Build the /health metrics sub-object.
+/// refs: none
     fn health_metrics(&self) -> serde_json::Value {
         let cmds = self.commands_processed.load(Ordering::Relaxed);
         let total = self.total_latency_ms.load(Ordering::Relaxed);
@@ -96,6 +102,7 @@ impl AppState {
 /// Start the health + preview server and return a JoinHandle.
 ///
 /// I/O: `u16` (port), `Arc<ApiClient>`, `Arc<RenderCache>`, `Option<Arc<ImageService>>`, `String` (web url) -> `JoinHandle<Result<(), std::io::Error>>`
+/// refs: none
 pub fn spawn_server(
     port: u16,
     api: Arc<ApiClient>,
@@ -212,6 +219,7 @@ async fn match_image_handler(State(state): State<AppState>, Path(id): Path<Strin
 ///
 /// Dispatches the same API pipeline as the Discord slash-command handlers, but
 /// returns JSON instead of Discord embeds.
+/// refs: GET /preview/cmd/{command}?params…
 async fn preview_cmd_handler(
     State(state): State<AppState>,
     Path(cmd): Path<String>,
@@ -284,6 +292,7 @@ fn json_id(value: Option<&serde_json::Value>) -> Option<String> {
 // ── Preview implementations ──────────────────────────────────────────────────
 
 /// /preview/cmd/player?name=xxx
+/// refs: none
 async fn preview_player(state: &AppState, params: &HashMap<String, String>) -> serde_json::Value {
     let name = param(params, "name");
     match name {
@@ -300,6 +309,7 @@ async fn preview_player(state: &AppState, params: &HashMap<String, String>) -> s
 }
 
 /// /preview/cmd/match?id=xxx
+/// refs: none
 async fn preview_match(state: &AppState, params: &HashMap<String, String>) -> serde_json::Value {
     let id = param(params, "id");
     match id {
@@ -314,6 +324,7 @@ async fn preview_match(state: &AppState, params: &HashMap<String, String>) -> se
 }
 
 /// /preview/cmd/history?name=xxx
+/// refs: none
 async fn preview_history(state: &AppState, params: &HashMap<String, String>) -> serde_json::Value {
     let name = param(params, "name");
     match name {
@@ -354,6 +365,7 @@ async fn preview_history(state: &AppState, params: &HashMap<String, String>) -> 
 }
 
 /// /preview/cmd/current?name=xxx
+/// refs: none
 async fn preview_current(state: &AppState, params: &HashMap<String, String>) -> serde_json::Value {
     let name = param(params, "name");
     match name {
@@ -370,6 +382,7 @@ async fn preview_current(state: &AppState, params: &HashMap<String, String>) -> 
 }
 
 /// /preview/cmd/champion?name=xxx   (or no name → list all champions)
+/// refs: none
 async fn preview_champion(state: &AppState, params: &HashMap<String, String>) -> serde_json::Value {
     let name = param(params, "name");
     match name {
@@ -394,6 +407,7 @@ async fn preview_champion(state: &AppState, params: &HashMap<String, String>) ->
 }
 
 /// /preview/cmd/loadout?name=xxx&champion=xxx
+/// refs: none
 async fn preview_loadout(state: &AppState, params: &HashMap<String, String>) -> serde_json::Value {
     let name = param(params, "name");
     let champion = param(params, "champion");
@@ -438,6 +452,7 @@ async fn preview_loadout(state: &AppState, params: &HashMap<String, String>) -> 
 }
 
 /// /preview/cmd/maps?limit=N
+/// refs: none
 async fn preview_maps(state: &AppState, params: &HashMap<String, String>) -> serde_json::Value {
     let limit = param_int(params, "limit", 10);
     match state.api.ranked_maps(limit).await {
@@ -447,6 +462,7 @@ async fn preview_maps(state: &AppState, params: &HashMap<String, String>) -> ser
 }
 
 /// /preview/cmd/composition?limit=N
+/// refs: none
 async fn preview_composition(
     state: &AppState,
     params: &HashMap<String, String>,
@@ -461,6 +477,7 @@ async fn preview_composition(
 }
 
 /// /preview/cmd/items?limit=N
+/// refs: none
 async fn preview_items(state: &AppState, params: &HashMap<String, String>) -> serde_json::Value {
     let limit = param_int(params, "limit", 10);
     let scope = params.get("lobby").map(String::as_str).unwrap_or("global");

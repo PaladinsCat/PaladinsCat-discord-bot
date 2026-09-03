@@ -1,12 +1,14 @@
 //! Bot configuration — replaces config.ts
 //!
 //! Environment-based configuration loading with sensible defaults.
+//! refs: none
 
 #[derive(Debug, Clone)]
 /// Define Config.
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct Config {
     pub bot_mode: String,
     pub discord_token: String,
@@ -24,6 +26,7 @@ impl Config {
     /// Load config from environment variables with defaults.
     ///
     /// I/O: () -> `Result<Config, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub fn load() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Config {
             bot_mode: std::env::var("DISCORD_BOT_MODE").unwrap_or_else(|_| "render".into()),
@@ -45,6 +48,7 @@ impl Config {
 /// Read an optional secret env var (None when unset).
 ///
 /// I/O: `&str` (name) -> `Result<Option<String>, Box<dyn Error + Send + Sync>>`
+/// refs: none
 pub fn optional_secret(
     name: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {

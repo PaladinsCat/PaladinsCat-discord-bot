@@ -1,4 +1,5 @@
 //! Slash command registration — replaces command-registration.ts
+//! refs: none
 
 use std::collections::HashSet;
 use twilight_http::Client;
@@ -10,11 +11,13 @@ use twilight_model::id::marker::{ApplicationMarker, GuildMarker};
 use twilight_model::id::Id;
 
 /// Result of a registration run.
+/// refs: none
 #[derive(Debug, Clone)]
 /// Define RegistrationResult.
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct RegistrationResult {
     pub scope: String,
     pub registered: usize,
@@ -194,6 +197,7 @@ fn option_match_id() -> CommandOption {
 /// Build the full command set (social commands included when enabled).
 ///
 /// I/O: `bool` (social enabled) -> `Vec<Command>`
+/// refs: none
 pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
     let mut commands = vec![
         command("help", "List PaladinsCat bot commands", vec![]),
@@ -406,6 +410,7 @@ pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
 /// Register the global command set with Discord.
 ///
 /// I/O: `&Client`, `Id<ApplicationMarker>` -> `Result<RegistrationResult, twilight_http::Error>`
+/// refs: none
 pub async fn register_global_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -425,6 +430,7 @@ pub async fn register_global_commands(
 /// Register the command set for a specific guild.
 ///
 /// I/O: `&Client`, `Id<ApplicationMarker>`, `Id<GuildMarker>`, `bool` (social enabled) -> `Result<RegistrationResult, twilight_http::Error>`
+/// refs: none
 pub async fn register_guild_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -446,6 +452,7 @@ pub async fn register_guild_commands(
 /// Remove all registered commands from a guild.
 ///
 /// I/O: `&Client`, `Id<ApplicationMarker>`, `Id<GuildMarker>` -> `Result<(), twilight_http::Error>`
+/// refs: none
 pub async fn clear_guild_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -460,6 +467,7 @@ pub async fn clear_guild_commands(
 /// Register commands globally, or for a development guild when one is set.
 ///
 /// I/O: `&Client`, `Id<ApplicationMarker>`, `Option<Id<GuildMarker>>` (dev guild), `&[Id<GuildMarker]]` (connected), `bool` (social enabled) -> `Result<RegistrationResult, twilight_http::Error>`
+/// refs: none
 pub async fn register_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,

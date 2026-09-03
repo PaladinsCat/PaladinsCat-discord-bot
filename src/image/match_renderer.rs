@@ -8,6 +8,7 @@
 //! 3. Create a new page, set viewport, inject HTML template
 //! 4. Wait for fonts/images, then screenshot the target element
 //! 5. Return PNG bytes
+//! refs: none
 
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,23 +22,29 @@ use crate::image::cdp_client::CdpClient;
 use crate::image::template::TemplateEngine;
 
 /// Page dimensions for rendering.
+/// refs: none
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 720;
 
 /// Device scale factor for match scoreboards (1280 × 1.6 = 2048px).
+/// refs: none
 const MATCH_SCALE: f64 = 1.6;
 
 /// Device scale factor for loadout cards (1280 × 1.0 = 1280px).
+/// refs: none
 const LOADOUT_SCALE: f64 = 1.0;
 static RENDER_DOCUMENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Template version for cache invalidation keys.
+/// refs: none
 const TEMPLATE_VERSION: u32 = 18;
 
 /// Loadout template version for cache invalidation keys.
+/// refs: none
 const LOADOUT_TEMPLATE_VERSION: u32 = 11;
 
 /// Maximum time to wait for the browser debug port to appear.
+/// refs: none
 const BROWSER_START_TIMEOUT: Duration = Duration::from_secs(8);
 
 const WEB_SCOREBOARD_EXPORT_TIMEOUT: Duration = Duration::from_secs(18);
@@ -90,15 +97,19 @@ const WEB_SCOREBOARD_BOOTSTRAP: &str = r#"(() => {
 })()"#;
 
 /// Configuration for the match renderer.
+/// refs: none
 #[derive(Debug, Clone)]
 /// Define MatchRendererConfig.
 ///
 /// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
 ///
+/// refs: none
 pub struct MatchRendererConfig {
     /// Path to the Chromium/chrome executable.
+/// refs: none
     pub chromium_path: String,
     /// Remote debugging port (0 = auto-select).
+/// refs: none
     pub debug_port: u16,
 }
 
@@ -114,21 +125,29 @@ impl Default for MatchRendererConfig {
 /// Browser renderer for rendering HTML templates to PNG images via CDP.
 ///
 /// Mirrors TS `MatchRenderer` from `match-renderer.ts`.
+/// refs: none
 pub struct MatchRenderer {
     /// Template engine for data binding.
+/// refs: none
     template_engine: TemplateEngine,
     /// Renderer configuration.
+/// refs: none
     config: MatchRendererConfig,
     /// Browser child process (Some while Chromium is running).
+/// refs: none
     browser_process: StdMutex<Option<Child>>,
     /// Browser WebSocket URL for CDP (set after spawn + discovery).
+/// refs: none
     ws_url: StdMutex<Option<String>>,
     /// Current CDP client (wrapped in Arc for cloning across tasks).
+/// refs: none
     cdp_client: StdMutex<Option<Arc<CdpClient>>>,
     /// Actual debug port in use (set after spawn; 0 until spawned).
+/// refs: none
     active_port: StdMutex<u16>,
     /// Serializes access to the single shared Chromium page so concurrent
     /// renders can't corrupt each other's DOM/viewport state.
+/// refs: none
     render_lock: tokio::sync::Mutex<()>,
 }
 
@@ -136,6 +155,7 @@ impl MatchRenderer {
     /// Template version for cache key generation.
     ///
     /// I/O: () -> `u32`
+/// refs: none
     pub fn template_version(&self) -> u32 {
         TEMPLATE_VERSION
     }
@@ -143,6 +163,7 @@ impl MatchRenderer {
     /// Loadout template version for cache key generation.
     ///
     /// I/O: () -> `u32`
+/// refs: none
     pub fn loadout_template_version(&self) -> u32 {
         LOADOUT_TEMPLATE_VERSION
     }
@@ -150,6 +171,7 @@ impl MatchRenderer {
     /// Create a new renderer with the given template engine and config.
     ///
     /// I/O: `TemplateEngine`, `MatchRendererConfig` -> `MatchRenderer`
+/// refs: none
     pub fn new(template_engine: TemplateEngine, config: MatchRendererConfig) -> Self {
         let initial_port = config.debug_port;
         Self {
@@ -170,6 +192,7 @@ impl MatchRenderer {
     /// Warm up the browser by spawning it and performing a dummy navigation.
     ///
     /// I/O: () -> `Result<(), Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn warm(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.ensure_browser().await?;
         Ok(())
@@ -178,6 +201,7 @@ impl MatchRenderer {
     /// Render a match scoreboard JSON record to PNG bytes.
     ///
     /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn render(
         &self,
         record: &Value,
@@ -192,6 +216,7 @@ impl MatchRenderer {
     /// fallbacks, team markers, markup, and CSS instead of duplicating them.
     ///
     /// I/O: `&str` (url) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn render_web_match(
         &self,
         url: &str,
@@ -249,6 +274,7 @@ impl MatchRenderer {
     /// Render a loadout card JSON record to PNG bytes.
     ///
     /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
+/// refs: none
     pub async fn render_loadout(
         &self,
         record: &Value,
@@ -261,6 +287,7 @@ impl MatchRenderer {
     /// Close the browser and release all resources.
     ///
     /// I/O: `MatchRenderer` (self) -> `()`
+/// refs: none
     pub async fn close(&self) {
         {
             let mut proc = self.browser_process.lock().unwrap();
@@ -287,6 +314,7 @@ impl MatchRenderer {
     /// drops the client. The next render lazily starts a clean browser.
     ///
     /// I/O: `MatchRenderer` (self) -> `()`
+/// refs: none
     pub async fn recycle(&self) {
         tracing::info!("Recycling browser…");
         {
@@ -311,6 +339,7 @@ impl MatchRenderer {
     // -----------------------------------------------------------------------
 
     /// Ensure a browser process is running and connected, returning the CDP client as Arc.
+/// refs: none
     async fn ensure_browser(
         &self,
     ) -> Result<Arc<CdpClient>, Box<dyn std::error::Error + Send + Sync>> {
@@ -361,6 +390,7 @@ impl MatchRenderer {
     }
 
     /// Spawn headless Chromium with remote debugging enabled.
+/// refs: none
     fn spawn_browser(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let debug_port = if self.config.debug_port == 0 {
             let mut port = 9222;
@@ -419,11 +449,13 @@ impl MatchRenderer {
     }
 
     /// Discover the debug port from the config or child process.
+/// refs: none
     fn discover_debug_port(&self) -> u16 {
         *self.active_port.lock().unwrap()
     }
 
     /// Wait for the browser debug port to accept connections.
+/// refs: none
     async fn wait_for_browser_ready(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let port = self.discover_debug_port();
         let deadline = Instant::now() + BROWSER_START_TIMEOUT;
@@ -453,6 +485,7 @@ impl MatchRenderer {
     }
 
     /// Connect to the browser's CDP WebSocket.
+/// refs: none
     async fn connect_client(
         &self,
         ws_url: String,
@@ -474,6 +507,7 @@ impl MatchRenderer {
     // -----------------------------------------------------------------------
 
     /// Full render pipeline: inject HTML, wait for assets, screenshot element.
+/// refs: none
     async fn render_element(
         &self,
         document_html: &str,
@@ -578,6 +612,7 @@ fn tagged_render_document(document_html: &str, render_id: u64) -> String {
 
 /// Substitute only paladinscat.com's origin when an internal origin is set.
 /// Localhost and other URLs remain untouched for development and tests.
+/// refs: none
 fn internal_render_url(url: &str, internal_origin: Option<&str>) -> String {
     const PUBLIC_HTTP: &str = "http://paladinscat.com";
     const PUBLIC_HTTPS: &str = "https://paladinscat.com";
@@ -602,6 +637,7 @@ fn internal_render_url(url: &str, internal_origin: Option<&str>) -> String {
 /// /json/version target). Page.*, Runtime.* and Emulation.* commands only work
 /// on a page target, so we reuse an existing tab or create a fresh about:blank
 /// tab via `PUT /json/new`, then connect to that tab's webSocketDebuggerUrl.
+/// refs: PUT /json/new`,
 async fn resolve_page_ws_url(
     port: u16,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
@@ -670,6 +706,7 @@ async fn page_target_title(port: u16) -> Option<String> {
 /// Build a base64 `data:text/html;base64,...` URI from raw HTML. Base64-encoding
 /// (vs percent-encoding) guarantees `#` from CSS hex colors is never parsed as a
 /// URL fragment, which would truncate the document.
+/// refs: none
 fn html_data_uri(document_html: &str) -> String {
     use base64::Engine as _;
     let b64 = base64::engine::general_purpose::STANDARD.encode(document_html.as_bytes());
