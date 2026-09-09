@@ -529,7 +529,7 @@ impl ApiClient {
         );
         let result = self.get_json(&url).await?;
         match result.get("state").and_then(serde_json::Value::as_str) {
-            Some("resolved") if json_id(result.get("id")).is_some() => Ok(result),
+            Some("resolved" | "unverified_id") if json_id(result.get("id")).is_some() => Ok(result),
             Some("ambiguous") => Err(ApiError {
                 status: Some(409),
                 code: Some("PLAYER_AMBIGUOUS".to_owned()),
