@@ -513,62 +513,30 @@ impl ApiClient {
         }
     }
 
-    /// Resolve a player name or numeric ID to a canonical numeric player ID.
-    ///
-    /// Mirrors TS: resolvePlayer(input).
-    /// - Numeric inputs pass through unchanged.
-    /// - Names resolved via /players/search?name=...&limit=5.
-    /// - Exact match (case-insensitive) preferred; fallback to first result.
-    /// - Returns a player JSON object with a string id; empty input, no match, or a missing id
-    ///   returns ApiError.
-    ///
-    /// Trim input; numeric inputs produce id/name strings without HTTP. Other inputs search at most
-    /// five rows and normalize the chosen id to a string; lookup or HTTP/auth/JSON failures return
-    /// ApiError.
-    ///
-    /// I/O: `&str` (input) -> `Result<serde_json::Value, ApiError>`
-    /// refs: endpoints: GET /players/search
+    /// Resolve an exact name or numeric ID through the backend identity owner.
+    /// I/O: player input -> typed resolved JSON or error; no local search fallback.
+    /// Ambiguous identities require an ID; an older backend response is rejected.
+    /// refs: endpoints: GET /players/search?exact=true
     pub async fn resolve_player(&self, input: &str) -> Result<serde_json::Value, ApiError> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
             return Err(player_not_found(trimmed));
         }
-        if trimmed.chars().all(|c| c.is_ascii_digit()) {
-            return Ok(serde_json::json!({"id": trimmed, "name": trimmed}));
-        }
-
-        // TS: searchPlayers(input, 5) — limit=5
-        let search_url = format!(
-            "{}/players/search?name={}&limit=5",
+        let url = format!(
+            "{}/players/search?name={}&exact=true",
             self.base,
             encode(trimmed)
         );
-        let val = self.get_json(&search_url).await?;
-        let rows = match val.as_array() {
-            Some(arr) => arr.to_vec(),
-            _ => vec![],
-        };
-
-        // TS: exact match first (case-insensitive), then first result
-        let exact = rows.iter().find(|row| {
-            row.get("name")
-                .and_then(|v| v.as_str())
-                .map(|n| n.eq_ignore_ascii_case(trimmed))
-                .unwrap_or(false)
-        });
-
-        let mut result = exact
-            .or_else(|| rows.first())
-            .cloned()
-            .ok_or_else(|| player_not_found(trimmed))?;
-        let Some(id) = json_id(result.get("id")) else {
-            return Err(player_not_found(trimmed));
-        };
-        let Some(object) = result.as_object_mut() else {
-            return Err(player_not_found(trimmed));
-        };
-        object.insert("id".to_string(), serde_json::Value::String(id));
-        Ok(result)
+        let result = self.get_json(&url).await?;
+        match result.get("state").and_then(serde_json::Value::as_str) {
+            Some("resolved") if json_id(result.get("id")).is_some() => Ok(result),
+            Some("ambiguous") => Err(ApiError {
+                status: Some(409),
+                code: Some("PLAYER_AMBIGUOUS".to_owned()),
+                message: "Multiple players share this name. Use a player ID.".to_owned(),
+            }),
+            _ => Err(player_not_found(trimmed)),
+        }
     }
 
     async fn resolve_player_id(&self, input: &str) -> Result<String, ApiError> {
