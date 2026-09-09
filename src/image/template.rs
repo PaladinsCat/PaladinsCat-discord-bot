@@ -1,5 +1,8 @@
-//! HTML template data binding — builds data-bound scoreboard/loadout documents.
-//! refs: none
+//! Bind backend JSON to scoreboard and loadout HTML documents.
+//!
+//! Read local templates/CSS, resolve game assets, and escape interpolated content.
+//! Document builders return HTML; the renderer owns Chromium navigation and screenshot capture.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -15,11 +18,10 @@ static ASSET_DATA_URL_CACHE: OnceLock<RwLock<HashMap<PathBuf, String>>> = OnceLo
 const PLAYER_TAG_MINIMUM_COUNT: i64 = 5;
 
 #[derive(Debug, Clone)]
-/// Define TemplateConfig.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Carry match/loadout template paths, optional canonical scoreboard CSS path, cheater-pattern
+/// path, and asset root.
+/// Paths are consumed by TemplateEngine::load; constructing config does not load templates.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct TemplateConfig {
     pub match_template_path: String,
     pub canonical_match_css_path: Option<String>,
@@ -31,8 +33,11 @@ pub struct TemplateConfig {
 impl TemplateConfig {
     /// Default template config for development.
     ///
+    /// Choose local development template/asset paths and prefer workspace CSS when it exists;
+    /// otherwise use the legacy src/frontend/app/globals.css path. No template contents are loaded.
+    ///
     /// I/O: () -> `TemplateConfig`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn dev_defaults() -> Self {
         let workspace_css = "../paladinscat-frontend/app/globals.css";
         Self {
@@ -53,15 +58,14 @@ impl TemplateConfig {
 }
 
 #[derive(Clone)]
-/// Define TemplateEngine.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Share loaded template text, optional canonical scoreboard CSS, cheater-pattern data URL, and an
+/// asset catalog.
+/// Document construction binds JSON with local asset fallbacks and escaping; Chromium execution is
+/// owned by MatchRenderer.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct TemplateEngine {
     match_template: Arc<String>,
     canonical_match_css: Option<Arc<String>>,
-    loadout_template: Arc<String>,
     cheater_pattern_url: String,
     assets: AssetCatalog,
 }
@@ -343,7 +347,7 @@ fn player_display_tier(player: &serde_json::Value) -> i64 {
             .get("profile_snapshot")
             .and_then(|p| p.get("kbm_rank"))),
     );
-    if value == 26 && rank.is_finite() && rank >= 1.0 && rank <= 100.0 {
+    if value == 26 && rank.is_finite() && (1.0..=100.0).contains(&rank) {
         27
     } else {
         value
@@ -373,8 +377,12 @@ fn metrics(player: &serde_json::Value) -> [i64; 6] {
 impl TemplateEngine {
     /// Load a template engine from a config.
     ///
-    /// I/O: `&TemplateConfig` -> `Result<TemplateEngine, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Read match/loadout templates and optional canonical CSS, requiring a #browser-scoreboard
+    /// block when configured. Required file/CSS errors propagate; missing optional cheater artwork
+    /// yields an empty URL.
+    ///
+    /// I/O: `&TemplateConfig` -> `Result<TemplateEngine, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn load(config: &TemplateConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let match_template = fs::read_to_string(&config.match_template_path).map_err(|e| {
             format!(
@@ -382,7 +390,7 @@ impl TemplateEngine {
                 config.match_template_path, e
             )
         })?;
-        let loadout_template = fs::read_to_string(&config.loadout_template_path).map_err(|e| {
+        fs::read_to_string(&config.loadout_template_path).map_err(|e| {
             format!(
                 "Failed to load loadout template {}: {}",
                 config.loadout_template_path, e
@@ -411,7 +419,6 @@ impl TemplateEngine {
         Ok(Self {
             match_template: Arc::new(match_template),
             canonical_match_css,
-            loadout_template: Arc::new(loadout_template),
             cheater_pattern_url,
             assets: AssetCatalog::new(&config.asset_root_path),
         })
@@ -419,8 +426,11 @@ impl TemplateEngine {
 
     /// Extract the CSS block from a template document.
     ///
+    /// Return the first style block, removing Google Fonts @import lines; absent or malformed
+    /// blocks return an empty String. No I/O.
+    ///
     /// I/O: `&str` (template) -> `String`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn extract_css(template: &str) -> String {
         if let Some(idx) = template.find("<style") {
             let rest = &template[idx..];
@@ -476,8 +486,12 @@ impl TemplateEngine {
     /// wholesale — we reuse its CSS and build the hero / columns / team rows /
     /// summary from the record JSON.
     ///
+    /// Bind match/team/player data with canonical CSS when available, local assets, escaping, and
+    /// missing-data fallbacks. Asset lookup may read/cache files; no browser or network request is
+    /// made.
+    ///
     /// I/O: `&Value` (data) -> `String`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn match_document(&self, data: &serde_json::Value) -> String {
         let css = match self.canonical_match_css.as_deref() {
             Some(css) => Cow::Borrowed(css.as_str()),
@@ -513,7 +527,7 @@ impl TemplateEngine {
 
     /// Build scoreboard section markup (hero + columns + both teams), mirroring
     /// the TS `document()` inner structure.
-/// refs: none
+    /// refs: none
     fn scoreboard_markup(&self, data: &serde_json::Value) -> String {
         let match_obj = data.get("match");
         let players = data
@@ -535,7 +549,7 @@ impl TemplateEngine {
 
         let mut sorted_bans = bans.clone();
         sorted_bans.sort_by_key(|b| num(b.get("ban_slot")));
-        let split = (sorted_bans.len() + 1) / 2;
+        let split = sorted_bans.len().div_ceil(2);
 
         let party_numbers = match_party_numbers(&players);
         let hero = self.hero_markup(match_obj, &players, queue_id, &sorted_bans, split);
@@ -563,8 +577,7 @@ impl TemplateEngine {
             .map(|m| {
                 let s = str_of(m.get("map"));
                 // Strip lead-in queue tokens & version suffixes like the TS.
-                let no_prefix = regex_strip_prefix(&s);
-                no_prefix
+                regex_strip_prefix(&s)
             })
             .unwrap_or_default();
         let region = str_of(match_obj.and_then(|m| m.get("region")));
@@ -1007,8 +1020,11 @@ impl TemplateEngine {
 
     /// Build the complete, data-bound loadout-card document.
     ///
+    /// Bind player/loadout/card JSON with level/frame/card assets and escaped text; local asset
+    /// reads/caches may occur. Returns HTML without browser execution.
+    ///
     /// I/O: `&Value` (data) -> `String`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn loadout_document(&self, data: &serde_json::Value) -> String {
         let player = data.get("player");
         let loadout = data.get("loadout");
@@ -1092,14 +1108,6 @@ impl TemplateEngine {
             deck = escape_html(loadout_name),
         )
     }
-
-    /// URL of the cheater-pattern asset.
-    ///
-    /// I/O: () -> `&str`
-/// refs: none
-    pub fn cheater_pattern_url(&self) -> &str {
-        &self.cheater_pattern_url
-    }
 }
 
 const LOADOUT_DOCUMENT_CSS: &str = r#"
@@ -1150,8 +1158,10 @@ fn utc_timestamp_str(s: &str) -> String {
 
 /// Escape HTML special characters.
 ///
+/// Replace ampersand, angle brackets, double quotes, and apostrophes with HTML entities; no I/O.
+///
 /// I/O: `&str` -> `String`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -1256,7 +1266,6 @@ mod tests {
         let engine = TemplateEngine {
             match_template: Arc::new(String::new()),
             canonical_match_css: None,
-            loadout_template: Arc::new(String::new()),
             cheater_pattern_url: String::new(),
             assets: AssetCatalog::new("missing-test-assets"),
         };
@@ -1308,7 +1317,6 @@ mod tests {
         let engine = TemplateEngine {
             match_template: Arc::new(String::new()),
             canonical_match_css: None,
-            loadout_template: Arc::new(String::new()),
             cheater_pattern_url: String::new(),
             assets: AssetCatalog::new("missing-test-assets"),
         };
@@ -1334,7 +1342,6 @@ mod tests {
         let engine = TemplateEngine {
             match_template: Arc::new(String::new()),
             canonical_match_css: None,
-            loadout_template: Arc::new(String::new()),
             cheater_pattern_url: String::new(),
             assets: AssetCatalog::new("missing-test-assets"),
         };
@@ -1381,7 +1388,6 @@ mod tests {
         let engine = TemplateEngine {
             match_template: Arc::new(String::new()),
             canonical_match_css: None,
-            loadout_template: Arc::new(String::new()),
             cheater_pattern_url: String::new(),
             assets: AssetCatalog::new("missing-test-assets"),
         };
@@ -1398,7 +1404,6 @@ mod tests {
         let engine = TemplateEngine {
             match_template: Arc::new("<style>:root{--bg:#080d13;--text:#fff}</style>".into()),
             canonical_match_css: None,
-            loadout_template: Arc::new(String::new()),
             cheater_pattern_url: String::new(),
             assets: AssetCatalog::new("missing-test-assets"),
         };
@@ -1465,7 +1470,6 @@ mod tests {
         let engine = TemplateEngine {
             match_template: Arc::new(String::new()),
             canonical_match_css: None,
-            loadout_template: Arc::new(String::new()),
             cheater_pattern_url: String::new(),
             assets: AssetCatalog::new("missing-test-assets"),
         };

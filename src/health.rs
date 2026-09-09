@@ -1,11 +1,8 @@
-//! Health & preview HTTP server — replaces health.ts
+//! Serve bot health, command previews, and match PNGs over HTTP.
 //!
-//! Exposes:
-//!   GET /health                — status + performance metrics
-//!   GET /                        — root text ping
-//!   GET /matches/{id}/image     — canonical PNG render E2E surface
-//!   GET /preview/cmd/{command}  — HTTP dispatch of bot commands (mirrors TS bot test surfaces)
-//! refs: none
+//! Routes share API/cache/render services and in-memory performance metrics.
+//! Preview requests can invoke backend HTTP and Chromium rendering.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,18 +24,16 @@ use crate::image::ImageService;
 /// Shared state injected via Router::with_state so all routes see the same
 /// ApiClient + RenderCache + metrics.  Atomic counters are wrapped in Arc so
 /// AppState can implement Clone (required by axum's Router state machinery).
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 #[derive(Clone)]
-/// Define AppState.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Share API, render cache, optional image service, and atomic command/latency metrics
+/// among health and preview routes.
+/// Clones retain the same Arc-owned services and counters; new instances start their counters at zero.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct AppState {
     pub api: Arc<ApiClient>,
     pub render_cache: Arc<RenderCache>,
     pub image_service: Option<Arc<ImageService>>,
-    pub web_url: String,
 
     // Metrics (wrapped in Arc so AppState: Clone)
     commands_processed: Arc<AtomicU64>,
@@ -49,19 +44,20 @@ pub struct AppState {
 impl AppState {
     /// Create the health + preview server state.
     ///
-    /// I/O: `Arc<ApiClient>`, `Arc<RenderCache>`, `Option<Arc<ImageService>>`, `String` (web url) -> `AppState`
-/// refs: none
+    /// Own the supplied Arc services and initialize fresh shared atomic metrics to zero; no
+    /// listener is opened.
+    ///
+    /// I/O: `Arc<ApiClient>`, `Arc<RenderCache>`, `Option<Arc<ImageService>>` -> `AppState`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn new(
         api: Arc<ApiClient>,
         render_cache: Arc<RenderCache>,
         image_service: Option<Arc<ImageService>>,
-        web_url: String,
     ) -> Self {
         Self {
             api,
             render_cache,
             image_service,
-            web_url,
             commands_processed: Arc::new(AtomicU64::new(0)),
             last_latency_ms: Arc::new(AtomicU64::new(0)),
             total_latency_ms: Arc::new(AtomicU64::new(0)),
@@ -69,7 +65,7 @@ impl AppState {
     }
 
     /// Record a completed command dispatch (ms).
-/// refs: none
+    /// refs: none
     fn record(&self, latency_ms: u64) {
         self.commands_processed.fetch_add(1, Ordering::Relaxed);
         self.last_latency_ms.store(latency_ms, Ordering::Relaxed);
@@ -78,12 +74,12 @@ impl AppState {
     }
 
     /// Build the /health metrics sub-object.
-/// refs: none
+    /// refs: none
     fn health_metrics(&self) -> serde_json::Value {
         let cmds = self.commands_processed.load(Ordering::Relaxed);
         let total = self.total_latency_ms.load(Ordering::Relaxed);
         let last = self.last_latency_ms.load(Ordering::Relaxed);
-        let avg = if cmds == 0 { 0 } else { total / cmds };
+        let avg = total.checked_div(cmds).unwrap_or(0);
         let entries = self.render_cache.entry_count();
         let bytes = self.render_cache.approximate_bytes();
 
@@ -101,16 +97,19 @@ impl AppState {
 
 /// Start the health + preview server and return a JoinHandle.
 ///
-/// I/O: `u16` (port), `Arc<ApiClient>`, `Arc<RenderCache>`, `Option<Arc<ImageService>>`, `String` (web url) -> `JoinHandle<Result<(), std::io::Error>>`
-/// refs: none
+/// Spawn a Tokio task that binds 0.0.0.0 on the supplied port and serves health, root, match-image,
+/// and command-preview GET routes. Bind/serve errors are returned through the JoinHandle; requires
+/// an active Tokio runtime.
+///
+/// I/O: `u16` (port), `Arc<ApiClient>`, `Arc<RenderCache>`, `Option<Arc<ImageService>>` -> `JoinHandle<Result<(), std::io::Error>>`
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn spawn_server(
     port: u16,
     api: Arc<ApiClient>,
     render_cache: Arc<RenderCache>,
     image_service: Option<Arc<ImageService>>,
-    web_url: String,
 ) -> tokio::task::JoinHandle<Result<(), std::io::Error>> {
-    let state = AppState::new(api, render_cache, image_service, web_url);
+    let state = AppState::new(api, render_cache, image_service);
     let app = Router::new()
         .route("/health", get(health_handler))
         .route("/", get(root_handler))
@@ -215,11 +214,11 @@ async fn match_image_handler(State(state): State<AppState>, Path(id): Path<Strin
     }
 }
 
-/// GET /preview/cmd/{command}?params…
+/// Dispatch GET /preview/cmd/:cmd with command-specific string query parameters.
 ///
 /// Dispatches the same API pipeline as the Discord slash-command handlers, but
 /// returns JSON instead of Discord embeds.
-/// refs: GET /preview/cmd/{command}?params…
+/// refs: endpoints: GET /preview/cmd/:cmd
 async fn preview_cmd_handler(
     State(state): State<AppState>,
     Path(cmd): Path<String>,
@@ -261,9 +260,9 @@ async fn preview_cmd_handler(
 
     // Attach latency metadata
     let mut response = result;
-    response.as_object_mut().map(|obj| {
+    if let Some(obj) = response.as_object_mut() {
         obj.insert("latency_ms".into(), serde_json::json!(elapsed_ms));
-    });
+    }
 
     (StatusCode::OK, Json(response))
 }

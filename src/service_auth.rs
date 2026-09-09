@@ -1,6 +1,8 @@
-//! Discord integration module: commands, transport, rendering, or support helpers.
+//! Authenticate the bot service to Keycloak using signed client assertions.
 //!
-//! refs: none
+//! Validate realm/token endpoint boundaries and read an external RSA key.
+//! Refresh short-lived bearer tokens under a shared lock; tokens are never logged here.
+//! refs: doc: documents/02-technical/security/service-identity.md
 use futures_util::StreamExt;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use reqwest::Client;
@@ -16,11 +18,10 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
-/// Define ServiceAuthConfig.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Carry the HTTPS Keycloak realm issuer, matching public/internal token endpoint, client ID, and
+/// external RSA private-key filename.
+/// Environment loading validates endpoint boundaries but does not read the key or request tokens.
+/// refs: doc: documents/02-technical/security/service-identity.md
 pub struct ServiceAuthConfig {
     pub issuer: String,
     pub token_url: String,
@@ -29,10 +30,14 @@ pub struct ServiceAuthConfig {
 }
 
 impl ServiceAuthConfig {
-    /// Build a service-token provider from environment variables.
+    /// Load and validate service-auth configuration from environment variables.
     ///
-    /// I/O: () -> `Result<ServiceTokenProvider, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Require four PALADINSCAT_SERVICE_OIDC_* values, trim them, and validate an HTTPS realm plus
+    /// its exact public or keycloak:8080 token endpoint. Missing values or invalid URLs return
+    /// errors; no key read or HTTP.
+    ///
+    /// I/O: () -> `Result<ServiceAuthConfig, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/02-technical/security/service-identity.md
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let config = Self {
             issuer: required_env("PALADINSCAT_SERVICE_OIDC_ISSUER")?,
@@ -113,11 +118,10 @@ struct CachedToken {
 }
 
 #[derive(Clone)]
-/// Define ServiceTokenProvider.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Share a configured HTTP client, RSA signing key, and bearer-token cache across clones.
+/// A Tokio mutex serializes token refresh; private-key material is loaded once and never serialized
+/// by this provider.
+/// refs: doc: documents/02-technical/security/service-identity.md
 pub struct ServiceTokenProvider {
     client: Client,
     config: Arc<ServiceAuthConfig>,
@@ -128,8 +132,12 @@ pub struct ServiceTokenProvider {
 impl ServiceTokenProvider {
     /// Build a service-token provider from a config.
     ///
-    /// I/O: `ServiceAuthConfig` -> `Result<ServiceTokenProvider, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Validate endpoints and read one external RSA PEM file (at most 32 KiB; at least 3072 bits),
+    /// then create a ten-second HTTP client without redirects. URL/file/UTF-8/PEM/key-size/client
+    /// errors propagate; no token is requested.
+    ///
+    /// I/O: `ServiceAuthConfig` -> `Result<ServiceTokenProvider, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/02-technical/security/service-identity.md
     pub fn new(
         config: ServiceAuthConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -217,8 +225,12 @@ impl ServiceTokenProvider {
 
     /// Return a current bearer token, refreshing it when close to expiry.
     ///
-    /// I/O: () -> `Result<String, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Hold the shared async cache mutex while minting an RS256 client assertion and POSTing
+    /// client_credentials on a miss/expiry. Validate bounded Bearer responses and cache until
+    /// thirty seconds before expiry; clock/signing/HTTP/response errors propagate.
+    ///
+    /// I/O: () -> `Result<String, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/02-technical/security/service-identity.md
     pub async fn token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let mut cache = self.cache.lock().await;
         if let Some(cached) = cache

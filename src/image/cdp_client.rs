@@ -1,5 +1,8 @@
-//! Chrome DevTools Protocol WebSocket client — communicates with headless Chromium.
-//! refs: none
+//! Exchange CDP commands and responses with headless Chromium over WebSocket.
+//!
+//! Spawn reader/writer tasks and correlate replies through one shared pending map.
+//! Response waits time out; protocol errors remain in raw responses unless a helper converts them.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -10,16 +13,13 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Debug, Clone)]
-/// Define CdpResponse.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Represent a correlated CDP command reply with its result and optional protocol error.
+/// A transport-successful response can still contain a protocol error that the caller must inspect.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct CdpResponse {
-    pub method: String,
-    pub params: Value,
     pub result: Value,
     pub error: Option<Value>,
+    #[cfg(test)]
     pub id: Option<u64>,
 }
 
@@ -27,11 +27,10 @@ struct PendingRequest {
     tx: oneshot::Sender<CdpResponse>,
 }
 
-/// Define CdpClient.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Own CDP request IDs, a shared pending-response map, and an outgoing message channel.
+/// Reader and writer tasks correlate responses over one WebSocket; individual sends use bounded
+/// response waits.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct CdpClient {
     next_id: Mutex<u64>,
     // Shared with the reader task so `send()` inserts into the exact map
@@ -43,8 +42,11 @@ pub struct CdpClient {
 impl CdpClient {
     /// Open a WebSocket to the CDP endpoint and return a ready client.
     ///
-    /// I/O: `String` (ws url) -> `Result<CdpClient, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Open the WebSocket and spawn reader/writer tasks with a 64-message send channel; connection
+    /// failures return a boxed error.
+    ///
+    /// I/O: `String` (ws url) -> `Result<CdpClient, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn connect(ws_url: String) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url)
             .await
@@ -77,10 +79,9 @@ impl CdpClient {
                                 let mut guard = pending_clone.lock().await;
                                 if let Some(pending_req) = guard.remove(&id) {
                                     let response = CdpResponse {
-                                        method: resp.method,
-                                        params: resp.params,
                                         result: resp.result,
                                         error: resp.error,
+                                        #[cfg(test)]
                                         id: Some(id),
                                     };
                                     let _ = pending_req.tx.send(response);
@@ -112,15 +113,18 @@ impl CdpClient {
             next_id: Mutex::new(0),
             // Share the SAME Arc used by the reader task (P0 fix: the old code
             // stored a fresh empty map here, so responses were never matched).
-            pending: pending,
+            pending,
             sender: msg_tx,
         })
     }
 
     /// Send a CDP method with params and await the response.
     ///
-    /// I/O: `&str` (method), `Value` (params) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Use a ten-second response deadline; transport/channel/timeout failures return errors, while
+    /// protocol errors remain in CdpResponse.error.
+    ///
+    /// I/O: `&str` (method), `Value` (params) -> `Result<CdpResponse, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn send(
         &self,
         method: &str,
@@ -132,8 +136,12 @@ impl CdpClient {
 
     /// Send a CDP method with params, enforcing a deadline.
     ///
-    /// I/O: `&str` (method), `Value` (params), `Duration` (timeout) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Allocate an ID under a mutex, register a oneshot response, and enqueue JSON; the deadline
+    /// starts after channel enqueue. Remove pending entries on send failure/timeout; raw protocol
+    /// errors are returned inside CdpResponse.
+    ///
+    /// I/O: `&str` (method), `Value` (params), `Duration` (timeout) -> `Result<CdpResponse, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn send_timeout(
         &self,
         method: &str,
@@ -173,21 +181,14 @@ impl CdpClient {
         }
     }
 
-    /// Navigate the page to a URL.
-    ///
-    /// I/O: `&str` (url) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
-/// refs: none
-    pub async fn navigate(
-        &self,
-        url: &str,
-    ) -> Result<CdpResponse, Box<dyn std::error::Error + Send + Sync>> {
-        self.send("Page.navigate", json!({ "url": url })).await
-    }
-
     /// Evaluate a JavaScript expression and return the value.
     ///
-    /// I/O: `&str` (expression) -> `Result<Value, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Send Runtime.evaluate with returnByValue and awaitPromise; return the nested result.value or
+    /// an error for missing value, protocol error, or transport failure. The expression may mutate
+    /// page state.
+    ///
+    /// I/O: `&str` (expression) -> `Result<Value, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn evaluate(
         &self,
         expression: &str,
@@ -213,27 +214,13 @@ impl CdpClient {
         }
     }
 
-    /// Execute a CDP command and return the raw response.
+    /// Evaluate JavaScript with promise awaiting and return the raw CDP response.
     ///
-    /// I/O: `&str` (expression) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
-/// refs: none
-    pub async fn execute(
-        &self,
-        expression: &str,
-    ) -> Result<CdpResponse, Box<dyn std::error::Error + Send + Sync>> {
-        self.send(
-            "Runtime.evaluate",
-            json!({
-                "expression": expression, "returnByValue": true,
-            }),
-        )
-        .await
-    }
-
-    /// Execute a CDP command and await its result.
+    /// Set returnByValue and awaitPromise on Runtime.evaluate; the expression can mutate page
+    /// state. Transport/deadline failures propagate; protocol errors remain in the raw response.
     ///
-    /// I/O: `&str` (expression) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// I/O: `&str` (expression) -> `Result<CdpResponse, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn execute_await(
         &self,
         expression: &str,
@@ -249,8 +236,11 @@ impl CdpClient {
 
     /// Set the device scale factor and viewport dimensions.
     ///
-    /// I/O: `f64` (factor), `u32` (width), `u32` (height) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Send desktop Emulation.setDeviceMetricsOverride; transport/deadline failures propagate and
+    /// protocol errors remain in the raw response.
+    ///
+    /// I/O: `f64` (factor), `u32` (width), `u32` (height) -> `Result<CdpResponse, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn set_device_scale_factor(
         &self,
         factor: f64,
@@ -268,8 +258,12 @@ impl CdpClient {
 
     /// Capture the page as PNG bytes.
     ///
-    /// I/O: () -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Send Page.captureScreenshot and decode validated PNG bytes; missing data, protocol errors,
+    /// invalid base64/PNG, and transport/deadline failures return errors.
+    ///
+    /// I/O: () -> `Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
+    #[cfg(test)]
     pub async fn screenshot(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         let resp = self
             .send(
@@ -290,8 +284,12 @@ impl CdpClient {
 
     /// Capture a single element (CSS selector) as PNG bytes.
     ///
-    /// I/O: `&str` (selector) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Evaluate the selector bounding box, round its origin/size, and capture that clip at scale 1.
+    /// Missing element/data, protocol errors, invalid base64/PNG, and transport/deadline failures
+    /// return errors.
+    ///
+    /// I/O: `&str` (selector) -> `Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn screenshot_element(
         &self,
         selector: &str,
@@ -330,27 +328,11 @@ impl CdpClient {
         }
     }
 
-    /// Create an isolated JavaScript world for the page.
+    /// Queue an empty text message, ignoring a closed sender.
+    /// This does not send a WebSocket close frame or join the reader/writer tasks.
     ///
-    /// I/O: `&str` (world name) -> `Result<CdpResponse, Box<dyn Error + Send + Sync>>`
-/// refs: none
-    pub async fn create_isolated_world(
-        &self,
-        world_name: &str,
-    ) -> Result<CdpResponse, Box<dyn std::error::Error + Send + Sync>> {
-        self.send(
-            "Page.createIsolatedWorld",
-            json!({
-                "frameId": "", "worldName": world_name,
-            }),
-        )
-        .await
-    }
-
-    /// Close the CDP connection and release the client.
-    ///
-    /// I/O: `CdpClient` (self) -> `()`
-/// refs: none
+    /// I/O: `&CdpClient` (self) -> `()`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn close(&self) {
         let _ = self.sender.send(String::new()).await;
     }
@@ -358,7 +340,9 @@ impl CdpClient {
 
 struct ParsedCdp {
     id: Option<u64>,
+    #[cfg(test)]
     method: String,
+    #[cfg(test)]
     params: Value,
     result: Value,
     error: Option<Value>,
@@ -368,6 +352,7 @@ fn parse_cdp_message(text: &str) -> Result<ParsedCdp, String> {
     let msg: Value = serde_json::from_str(text).map_err(|e| format!("JSON parse error: {}", e))?;
     Ok(ParsedCdp {
         id: msg.get("id").and_then(|v| v.as_u64()),
+        #[cfg(test)]
         method: msg
             .get("method")
             .and_then(|v| v.as_str())
@@ -375,6 +360,7 @@ fn parse_cdp_message(text: &str) -> Result<ParsedCdp, String> {
             .to_string(),
         // CDP command responses carry their payload in the top-level "result"
         // field; "params" is only populated on (unsolicited) events.
+        #[cfg(test)]
         params: msg.get("params").cloned().unwrap_or(Value::Null),
         result: msg.get("result").cloned().unwrap_or(Value::Null),
         error: msg.get("error").cloned(),

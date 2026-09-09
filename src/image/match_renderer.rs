@@ -1,14 +1,8 @@
-//! Browser renderer — spawns headless Chromium, loads templates, screenshots to PNG.
+//! Spawn headless Chromium and render scoreboard or loadout PNGs.
 //!
-//! Mirrors TS `match-renderer.ts` Puppeteer pipeline using direct CDP communication.
-//!
-//! # Architecture
-//! 1. Spawn headless Chromium with `--remote-debugging-port`
-//! 2. Connect CdpClient to the debug WebSocket
-//! 3. Create a new page, set viewport, inject HTML template
-//! 4. Wait for fonts/images, then screenshot the target element
-//! 5. Return PNG bytes
-//! refs: none
+//! Discover the debug WebSocket, connect CDP, set viewport, and bind HTML or navigate the web exporter.
+//! Serialize the shared page, await fonts/images, and capture its target element; recovery resets Chromium.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -47,9 +41,13 @@ const LOADOUT_TEMPLATE_VERSION: u32 = 11;
 /// refs: none
 const BROWSER_START_TIMEOUT: Duration = Duration::from_secs(8);
 
+#[cfg(test)]
 const WEB_SCOREBOARD_EXPORT_TIMEOUT: Duration = Duration::from_secs(18);
+#[cfg(test)]
 const WEB_SCOREBOARD_READY_TITLE: &str = "PALADINSCAT_SCOREBOARD_EXPORT_READY";
+#[cfg(test)]
 const WEB_SCOREBOARD_ERROR_TITLE: &str = "PALADINSCAT_SCOREBOARD_EXPORT_ERROR:";
+#[cfg(test)]
 const WEB_SCOREBOARD_BOOTSTRAP: &str = r#"(() => {
   const timer = setInterval(async () => {
     if (window.__paladinscatExportStarted) return;
@@ -97,19 +95,17 @@ const WEB_SCOREBOARD_BOOTSTRAP: &str = r#"(() => {
 })()"#;
 
 /// Configuration for the match renderer.
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 #[derive(Debug, Clone)]
-/// Define MatchRendererConfig.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Configure the Chromium executable path and remote-debugging u16 port.
+/// A zero port requests automatic selection when the browser is started.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct MatchRendererConfig {
     /// Path to the Chromium/chrome executable.
-/// refs: none
+    /// refs: none
     pub chromium_path: String,
     /// Remote debugging port (0 = auto-select).
-/// refs: none
+    /// refs: none
     pub debug_port: u16,
 }
 
@@ -125,29 +121,29 @@ impl Default for MatchRendererConfig {
 /// Browser renderer for rendering HTML templates to PNG images via CDP.
 ///
 /// Mirrors TS `MatchRenderer` from `match-renderer.ts`.
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct MatchRenderer {
     /// Template engine for data binding.
-/// refs: none
+    /// refs: none
     template_engine: TemplateEngine,
     /// Renderer configuration.
-/// refs: none
+    /// refs: none
     config: MatchRendererConfig,
     /// Browser child process (Some while Chromium is running).
-/// refs: none
+    /// refs: none
     browser_process: StdMutex<Option<Child>>,
     /// Browser WebSocket URL for CDP (set after spawn + discovery).
-/// refs: none
+    /// refs: none
     ws_url: StdMutex<Option<String>>,
     /// Current CDP client (wrapped in Arc for cloning across tasks).
-/// refs: none
+    /// refs: none
     cdp_client: StdMutex<Option<Arc<CdpClient>>>,
     /// Actual debug port in use (set after spawn; 0 until spawned).
-/// refs: none
+    /// refs: none
     active_port: StdMutex<u16>,
     /// Serializes access to the single shared Chromium page so concurrent
     /// renders can't corrupt each other's DOM/viewport state.
-/// refs: none
+    /// refs: none
     render_lock: tokio::sync::Mutex<()>,
 }
 
@@ -155,7 +151,7 @@ impl MatchRenderer {
     /// Template version for cache key generation.
     ///
     /// I/O: () -> `u32`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn template_version(&self) -> u32 {
         TEMPLATE_VERSION
     }
@@ -163,15 +159,18 @@ impl MatchRenderer {
     /// Loadout template version for cache key generation.
     ///
     /// I/O: () -> `u32`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn loadout_template_version(&self) -> u32 {
         LOADOUT_TEMPLATE_VERSION
     }
 
     /// Create a new renderer with the given template engine and config.
     ///
+    /// Initialize process/connection state without starting Chromium; retain the template engine
+    /// and configured debug port.
+    ///
     /// I/O: `TemplateEngine`, `MatchRendererConfig` -> `MatchRenderer`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn new(template_engine: TemplateEngine, config: MatchRendererConfig) -> Self {
         let initial_port = config.debug_port;
         Self {
@@ -189,10 +188,13 @@ impl MatchRenderer {
     // Public API
     // -----------------------------------------------------------------------
 
-    /// Warm up the browser by spawning it and performing a dummy navigation.
+    /// Ensure that the browser process and CDP connection are ready.
     ///
-    /// I/O: () -> `Result<(), Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Lazily spawn/discover/connect Chromium; propagate startup, discovery, and CDP failures.
+    /// Existing initialized connections are reused.
+    ///
+    /// I/O: () -> `Result<(), Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn warm(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.ensure_browser().await?;
         Ok(())
@@ -200,8 +202,11 @@ impl MatchRenderer {
 
     /// Render a match scoreboard JSON record to PNG bytes.
     ///
-    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Bind local scoreboard HTML and serialize shared-page rendering of #scoreboard; may spawn
+    /// Chromium and read assets. Browser/CDP/readiness/screenshot failures return boxed errors.
+    ///
+    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn render(
         &self,
         record: &Value,
@@ -211,12 +216,16 @@ impl MatchRenderer {
             .await
     }
 
-    /// Render the canonical web scoreboard itself. This is the `/match`
-    /// command path, so the Discord PNG shares the web component's data
-    /// fallbacks, team markers, markup, and CSS instead of duplicating them.
+    /// Render the web scoreboard for opt-in browser regression tests.
+    /// Production commands render the local template through render().
     ///
-    /// I/O: `&str` (url) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Serialize the shared page, optionally rewrite only the origin via
+    /// PALADINSCAT_RENDER_WEB_URL, and wait up to eighteen seconds for exporter title readiness
+    /// before capturing 2048x1152 PNG. Startup/CDP/export/timeout errors propagate.
+    ///
+    /// I/O: `&str` (url) -> `Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
+    #[cfg(test)]
     pub async fn render_web_match(
         &self,
         url: &str,
@@ -273,8 +282,11 @@ impl MatchRenderer {
 
     /// Render a loadout card JSON record to PNG bytes.
     ///
-    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Bind local loadout HTML and serialize shared-page rendering of #loadout; may spawn Chromium
+    /// and read assets. Browser/CDP/readiness/screenshot failures return boxed errors.
+    ///
+    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn render_loadout(
         &self,
         record: &Value,
@@ -284,10 +296,14 @@ impl MatchRenderer {
             .await
     }
 
-    /// Close the browser and release all resources.
+    /// Stop the stored browser process and clear connection state.
     ///
-    /// I/O: `MatchRenderer` (self) -> `()`
-/// refs: none
+    /// Take and kill the child best-effort, clear the WebSocket URL, and invoke close on the
+    /// removed CDP client. Kill errors are ignored and the child is not joined.
+    ///
+    /// I/O: `&MatchRenderer` (self) -> `()`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
+    #[cfg(test)]
     pub async fn close(&self) {
         {
             let mut proc = self.browser_process.lock().unwrap();
@@ -299,11 +315,9 @@ impl MatchRenderer {
             let mut ws = self.ws_url.lock().unwrap();
             *ws = None;
         }
-        {
-            let mut client = self.cdp_client.lock().unwrap();
-            if let Some(c) = client.take() {
-                c.close().await;
-            }
+        let client = self.cdp_client.lock().unwrap().take();
+        if let Some(client) = client {
+            client.close().await;
         }
     }
 
@@ -313,8 +327,11 @@ impl MatchRenderer {
     /// the timeout, so recovery deliberately kills the child process and
     /// drops the client. The next render lazily starts a clean browser.
     ///
-    /// I/O: `MatchRenderer` (self) -> `()`
-/// refs: none
+    /// Take and kill the child best-effort, drop the stored CDP connection/URL, and allow lazy
+    /// restart; kill errors are ignored and the child is not joined.
+    ///
+    /// I/O: `&MatchRenderer` (self) -> `()`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn recycle(&self) {
         tracing::info!("Recycling browser…");
         {
@@ -339,7 +356,7 @@ impl MatchRenderer {
     // -----------------------------------------------------------------------
 
     /// Ensure a browser process is running and connected, returning the CDP client as Arc.
-/// refs: none
+    /// refs: none
     async fn ensure_browser(
         &self,
     ) -> Result<Arc<CdpClient>, Box<dyn std::error::Error + Send + Sync>> {
@@ -390,7 +407,7 @@ impl MatchRenderer {
     }
 
     /// Spawn headless Chromium with remote debugging enabled.
-/// refs: none
+    /// refs: none
     fn spawn_browser(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let debug_port = if self.config.debug_port == 0 {
             let mut port = 9222;
@@ -449,13 +466,13 @@ impl MatchRenderer {
     }
 
     /// Discover the debug port from the config or child process.
-/// refs: none
+    /// refs: none
     fn discover_debug_port(&self) -> u16 {
         *self.active_port.lock().unwrap()
     }
 
     /// Wait for the browser debug port to accept connections.
-/// refs: none
+    /// refs: none
     async fn wait_for_browser_ready(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let port = self.discover_debug_port();
         let deadline = Instant::now() + BROWSER_START_TIMEOUT;
@@ -485,7 +502,7 @@ impl MatchRenderer {
     }
 
     /// Connect to the browser's CDP WebSocket.
-/// refs: none
+    /// refs: none
     async fn connect_client(
         &self,
         ws_url: String,
@@ -507,7 +524,7 @@ impl MatchRenderer {
     // -----------------------------------------------------------------------
 
     /// Full render pipeline: inject HTML, wait for assets, screenshot element.
-/// refs: none
+    /// refs: none
     async fn render_element(
         &self,
         document_html: &str,
@@ -613,6 +630,7 @@ fn tagged_render_document(document_html: &str, render_id: u64) -> String {
 /// Substitute only paladinscat.com's origin when an internal origin is set.
 /// Localhost and other URLs remain untouched for development and tests.
 /// refs: none
+#[cfg(test)]
 fn internal_render_url(url: &str, internal_origin: Option<&str>) -> String {
     const PUBLIC_HTTP: &str = "http://paladinscat.com";
     const PUBLIC_HTTPS: &str = "https://paladinscat.com";
@@ -688,6 +706,7 @@ async fn resolve_page_ws_url(
     Ok(ws.to_string())
 }
 
+#[cfg(test)]
 async fn page_target_title(port: u16) -> Option<String> {
     let url = format!("http://127.0.0.1:{port}/json/list");
     let Ok(response) = reqwest::get(url).await else {
@@ -707,6 +726,7 @@ async fn page_target_title(port: u16) -> Option<String> {
 /// (vs percent-encoding) guarantees `#` from CSS hex colors is never parsed as a
 /// URL fragment, which would truncate the document.
 /// refs: none
+#[cfg(test)]
 fn html_data_uri(document_html: &str) -> String {
     use base64::Engine as _;
     let b64 = base64::engine::general_purpose::STANDARD.encode(document_html.as_bytes());
@@ -726,7 +746,7 @@ fn default_chromium_path() -> String {
                         .starts_with("chromium_headless_shell-")
                 })
                 .collect();
-            shells.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+            shells.sort_by_key(|entry| std::cmp::Reverse(entry.file_name()));
             for entry in shells {
                 let exe = entry
                     .path()
@@ -1065,7 +1085,7 @@ document.querySelector('img').decode=()=>new Promise(resolve=>setTimeout(()=>{do
             .and_then(|v| v.first())
             .unwrap_or(&payload);
         let renderer = test_renderer();
-        let document = renderer.template_engine.match_document(&record);
+        let document = renderer.template_engine.match_document(record);
         let expected_player_assets = record
             .get("players")
             .and_then(serde_json::Value::as_array)

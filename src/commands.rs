@@ -1,5 +1,8 @@
-//! Slash command handlers — dispatches InteractionCreate events.
-//! refs: none
+//! Dispatch Discord gateway events, slash commands, and interactive controls.
+//!
+//! Handlers call the API/render services and send Discord responses.
+//! Readiness controls command registration; the social feature flag gates social commands.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -102,12 +105,17 @@ struct RateWindow {
 }
 
 /// Main event dispatcher — routes gateway events to command handlers.
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 #[allow(clippy::too_many_arguments)]
 /// Dispatch a Discord gateway event to the matching command handler.
 ///
+/// Handle readiness/registration, guild events, autocomplete, slash commands, and components;
+/// update shared gateway state and send Discord HTTP responses. The registration flag prevents
+/// duplicate startup registration; handler failures are logged or rendered to the interaction
+/// rather than returned.
+///
 /// I/O: `Event`, `Arc<ApiClient>`, `Arc<RenderCache>`, `Arc<HttpClient>`, `String` (web url), `Option<Arc<ImageService>>`, `Option<Id<ApplicationMarker>>`, `Option<Id<GuildMarker>>`, `Arc<AtomicBool>`, `Arc<InMemoryCache>`, `bool` (social enabled) -> ()
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub async fn handle_event(
     event: Event,
     api: Arc<ApiClient>,
@@ -1169,7 +1177,7 @@ impl Handler {
     }
 
     /// Handle `/loadout` — session-based select menu matching the TS bot 1:1.
-/// refs: none
+    /// refs: none
     async fn loadout(&self, interaction: &Interaction, opts: &[CommandDataOption]) {
         let input = match self.player_input(interaction, opts).await {
             Ok(input) => input,
@@ -1852,7 +1860,7 @@ impl Handler {
     }
 
     /// Defer the initial interaction response inside Discord's 3-second ACK window.
-/// refs: none
+    /// refs: none
     async fn defer_response(&self, interaction: &Interaction, ephemeral: bool) {
         let data = ephemeral.then(|| InteractionResponseData {
             flags: Some(MessageFlags::EPHEMERAL),
@@ -1890,7 +1898,7 @@ impl Handler {
     }
 
     /// Edit the original deferred interaction response.
-/// refs: none
+    /// refs: none
     async fn send_webhook(&self, embed: &Embed, components: &[Component], token: &str) {
         let url = self.original_response_url(token);
         let payload = serde_json::json!({

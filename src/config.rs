@@ -1,14 +1,14 @@
-//! Bot configuration — replaces config.ts
+//! Load Discord bot configuration and external runtime secrets.
 //!
-//! Environment-based configuration loading with sensible defaults.
-//! refs: none
+//! Environment values and *_FILE inputs supply secrets; configuration is not written back.
+//! Ordinary numeric settings fall back to defaults when parsing fails.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 #[derive(Debug, Clone)]
-/// Define Config.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Carry bot mode, Discord token, API/web URLs, cache byte and TTL limits, health port, development
+/// guild, Chromium path, and social-command flag.
+/// Loading reads environment or runtime secret files; constructing this value alone starts no services.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct Config {
     pub bot_mode: String,
     pub discord_token: String,
@@ -25,8 +25,11 @@ pub struct Config {
 impl Config {
     /// Load config from environment variables with defaults.
     ///
-    /// I/O: () -> `Result<Config, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Require DISCORD_TOKEN or its *_FILE source; unreadable secret files and a missing token
+    /// return errors. Invalid ordinary numeric settings use defaults; no services are started.
+    ///
+    /// I/O: () -> `Result<Config, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn load() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Config {
             bot_mode: std::env::var("DISCORD_BOT_MODE").unwrap_or_else(|_| "render".into()),
@@ -47,8 +50,11 @@ impl Config {
 
 /// Read an optional secret env var (None when unset).
 ///
-/// I/O: `&str` (name) -> `Result<Option<String>, Box<dyn Error + Send + Sync>>`
-/// refs: none
+/// Prefer a trimmed nonempty environment value, then read the path in NAME_FILE. Return None for
+/// absent/empty sources, and propagate file read or UTF-8 errors; never writes the secret.
+///
+/// I/O: `&str` (name) -> `Result<Option<String>, Box<dyn std::error::Error + Send + Sync>>`
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn optional_secret(
     name: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {

@@ -1,8 +1,8 @@
-//! PaladinsCat API client — replaces api.ts
+//! Call PaladinsCat /v1 endpoints and normalize backend JSON for bot commands.
 //!
-//! reqwest wrapper for PaladinsCat API endpoints.
-//! Mirrors api.ts: player, match, champion, history lookups.
-//! refs: none
+//! Normal and slow clients attach optional service tokens; only the static champion roster is cached.
+//! GET rate-limit retries are bounded; mutations use explicit PUT, POST, or DELETE requests.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 use crate::service_auth::ServiceTokenProvider;
 use moka::future::Cache;
@@ -11,11 +11,10 @@ use reqwest::Client as HttpClient;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 #[derive(Debug)]
-/// Define ApiError.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Represent an API failure with an optional HTTP status, user-facing message, and optional backend
+/// error code.
+/// Transport and service-auth failures may have no status; response failures preserve the status.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct ApiError {
     pub status: Option<u16>,
     pub message: String,
@@ -154,33 +153,31 @@ fn player_not_found(input: &str) -> ApiError {
 }
 
 /// API client wrapper — stores base URL separately from reqwest client.
-/// All path parameters are percent-encoded. Responses to 429 get exponential backoff.
+/// URL path segments and GET query values are percent-encoded. GET responses to 429 receive bounded backoff.
 /// Mirrors TS: PaladinsCatApi with service token auth.
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 #[derive(Clone)]
-/// Define ApiClient.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Own normal (15 s) and slow (125 s) HTTP clients, a normalized /v1 base URL, optional service
+/// identity, and a ten-minute champion-list cache.
+/// GET retries only HTTP 429, at most three attempts with 500 ms and 1 s waits; profile and match
+/// reads are not cached here.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct ApiClient {
     inner: HttpClient,
     inner_slow: HttpClient,
     base: String,
     /// Short-lived Keycloak service identity; private key remains external to the repo.
-/// refs: none
+    /// refs: none
     service_auth: Option<Arc<ServiceTokenProvider>>,
     /// Short-lived cache only for the static champion roster used by autocomplete.
-/// refs: none
+    /// refs: none
     response_cache: Cache<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
-/// Define LoadoutsResponse.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Carry loadout JSON rows, the backend refresh flag, and an optional refresh error.
+/// A refresh error can accompany a successful HTTP response and existing loadouts.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct LoadoutsResponse {
     pub loadouts: Vec<serde_json::Value>,
     pub refreshed: bool,
@@ -188,11 +185,10 @@ pub struct LoadoutsResponse {
 }
 
 #[derive(Debug, Clone, Default)]
-/// Define HistoryFilters.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Carry optional queue, champion, and win-status strings plus a zero-based usize offset.
+/// Only nonempty optional values become encoded history query parameters; the caller supplies the
+/// limit separately.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct HistoryFilters {
     pub queue_id: Option<String>,
     pub champion_id: Option<String>,
@@ -279,8 +275,11 @@ impl ApiClient {
     /// Mirrors TS: PaladinsCatApi constructor.
     /// `service_auth` supplies short-lived client-credentials bearer tokens.
     ///
+    /// Normalize base to one trailing /v1 and allocate clients/cache without sending HTTP; client
+    /// construction panics if reqwest initialization fails.
+    ///
     /// I/O: `&str` (base), `Option<ServiceTokenProvider>` -> `ApiClient`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn new(base: &str, service_auth: Option<ServiceTokenProvider>) -> Self {
         Self {
             inner: HttpClient::builder()
@@ -320,13 +319,13 @@ impl ApiClient {
 
     /// Send a GET request with exponential backoff on 429 (rate limited).
     /// Retries up to 3 times with 500ms, 1s, 2s delays.
-/// refs: none
+    /// refs: none
     async fn get_json(&self, url: &str) -> Result<serde_json::Value, ApiError> {
         self.get_json_impl(&self.inner, url).await
     }
 
     /// Send a GET request with slow timeout (125s) — used for match endpoints.
-/// refs: none
+    /// refs: none
     async fn get_json_slow(&self, url: &str) -> Result<serde_json::Value, ApiError> {
         self.get_json_impl(&self.inner_slow, url).await
     }
@@ -392,8 +391,11 @@ impl ApiClient {
     /// Hi-Rez profile info (gamertag, peak rank, headroom).
     /// Requires the configured Keycloak service identity.
     ///
-    /// I/O: `&str` (player input) -> `Result<Value, ApiError>`
-/// refs: GET /players/discord?player=<input>.
+    /// Send an encoded player query and return the raw enriched JSON. Authentication, transport,
+    /// non-success status, and JSON failures return ApiError.
+    ///
+    /// I/O: `&str` (player input) -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: GET /players/discord
     pub async fn discord_player(&self, name: &str) -> Result<serde_json::Value, ApiError> {
         let url = format!("{}/players/discord?player={}", self.base, encode(name));
         let val = self.get_json(&url).await?;
@@ -402,8 +404,11 @@ impl ApiClient {
 
     /// Return the default player saved for a Discord user.
     ///
-    /// I/O: `&str` (discord user id), `&str` (slot) -> `Result<Value, ApiError>`
-/// refs: none
+    /// GET the encoded user/slot mapping and unwrap its player field, falling back to the whole
+    /// response. HTTP/auth/JSON failures return ApiError.
+    ///
+    /// I/O: `&str` (discord user id), `&str` (slot) -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: GET /players/discord/saved-player
     pub async fn saved_discord_player(
         &self,
         discord_user_id: &str,
@@ -421,8 +426,11 @@ impl ApiClient {
 
     /// Persist the authoritative player ID resolved by `/players/discord`.
     ///
-    /// I/O: `&str` (discord user id), `&str` (player id), `&str` (slot) -> `Result<Value, ApiError>`
-/// refs: none
+    /// PUT user/player/slot JSON and unwrap player from the response. This persists the backend
+    /// mapping; HTTP/auth/JSON failures return ApiError.
+    ///
+    /// I/O: `&str` (discord user id), `&str` (player id), `&str` (slot) -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: PUT /players/discord/saved-player
     pub async fn save_discord_player(
         &self,
         discord_user_id: &str,
@@ -449,8 +457,11 @@ impl ApiClient {
 
     /// Delete the saved default player for a Discord user/slot.
     ///
+    /// DELETE the encoded user/slot mapping; absent or nonnumeric deleted counts become zero.
+    /// HTTP/auth/JSON failures return ApiError.
+    ///
     /// I/O: `&str` (discord user id), `&str` (slot) -> `Result<usize, ApiError>` (rows removed)
-/// refs: none
+    /// refs: endpoints: DELETE /players/discord/saved-player
     pub async fn forget_discord_player(
         &self,
         discord_user_id: &str,
@@ -482,8 +493,11 @@ impl ApiClient {
     /// Resolve player name/ID to numeric ID and fetch profile.
     /// Used by history, loadout, current commands to get player ID.
     ///
-    /// I/O: `&str` (name or id) -> `Result<Value, ApiError>`
-/// refs: none
+    /// Resolve the input, GET the profile with ratings, and unwrap an object-valued player field.
+    /// Resolution or HTTP/auth/JSON failures return ApiError.
+    ///
+    /// I/O: `&str` (name or id) -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: GET /players/search, GET /players/{id}
     pub async fn player(&self, name: &str) -> Result<serde_json::Value, ApiError> {
         let resolved = self.resolve_player(name).await?;
         let player_id = json_id(resolved.get("id")).unwrap_or_default();
@@ -505,10 +519,15 @@ impl ApiClient {
     /// - Numeric inputs pass through unchanged.
     /// - Names resolved via /players/search?name=...&limit=5.
     /// - Exact match (case-insensitive) preferred; fallback to first result.
-    /// - Returns empty string when no player matches.
+    /// - Returns a player JSON object with a string id; empty input, no match, or a missing id
+    ///   returns ApiError.
     ///
-    /// I/O: `&str` (input) -> `Result<Value, ApiError>`
-/// refs: none
+    /// Trim input; numeric inputs produce id/name strings without HTTP. Other inputs search at most
+    /// five rows and normalize the chosen id to a string; lookup or HTTP/auth/JSON failures return
+    /// ApiError.
+    ///
+    /// I/O: `&str` (input) -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: GET /players/search
     pub async fn resolve_player(&self, input: &str) -> Result<serde_json::Value, ApiError> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
@@ -557,16 +576,17 @@ impl ApiClient {
         json_id(resolved.get("id")).ok_or_else(|| player_not_found(input.trim()))
     }
 
-    /// Get match details by ID.
+    /// Fetch a complete match record and enrich player rows for rendering.
     ///
-    /// Mirrors TS: match(id).
-    /// - Primary: GET /matches/{id} with 125s timeout (slow client).
-    /// - Parallel: GET /matches/fact/{id} (best-effort, 15s timeout).
-    /// - Returns hydrated match object with facts merged into players.
-    /// - Envelope: {"count": N, "matches": [{"match": {...}}]} → inner match object.
+    /// Fetch /matches/batch and optional facts concurrently with the normal 15-second client.
+    /// On a batch miss/error, use /matches/{id} with the 125-second client and retry missing facts.
+    /// Preserve the first complete matches entry (match, players, bans), or return the raw response.
+    /// Promote non-null profile-snapshot fields and best-effort /players/bulk moderation into players;
+    /// attach fact-player rows as facts (empty on absence). Supplemental failures are tolerated;
+    /// required fallback HTTP/auth/JSON failures return ApiError. Arbitrary successful JSON is retained.
     ///
-    /// I/O: `&str` (match id) -> `Result<Value, ApiError>`
-/// refs: GET /matches/{id} · GET /matches/fact/{id}
+    /// I/O: `&str` (match id) -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: GET /matches/batch, GET /matches/{id}, GET /matches/fact/{match_id}, GET /players/bulk
     pub async fn match_info(&self, match_id: &str) -> Result<serde_json::Value, ApiError> {
         let encoded = encode(match_id);
 
@@ -684,8 +704,12 @@ impl ApiClient {
 
     /// Get all champion names.
     ///
+    /// GET /champions only on a ten-minute cache miss; accept strings or object name fields and
+    /// skip other rows. Non-array JSON yields an empty vector; HTTP/auth/JSON failures return
+    /// ApiError.
+    ///
     /// I/O: () -> `Result<Vec<String>, ApiError>`
-/// refs: none
+    /// refs: endpoints: GET /champions
     pub async fn champion_names(&self) -> Result<Vec<String>, ApiError> {
         let url = format!("{}/champions", self.base);
         let val: serde_json::Value = match self.response_cache.get(&url).await {
@@ -712,12 +736,15 @@ impl ApiClient {
     }
 
     /// Get all champions list.
-/// refs: none
+    /// refs: endpoints: GET /champions
     #[allow(dead_code)] // Kept for potential future use
     /// Get the full champion list as raw JSON.
     ///
-    /// I/O: () -> `Result<Value, ApiError>`
-/// refs: none
+    /// Fetch uncached /champions JSON; authentication, transport, non-success status, and JSON
+    /// failures return ApiError.
+    ///
+    /// I/O: () -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: GET /champions
     pub async fn champions(&self) -> Result<serde_json::Value, ApiError> {
         let url = format!("{}/champions", self.base);
         self.get_json(&url).await
@@ -725,8 +752,11 @@ impl ApiClient {
 
     /// Resolve a champion name (case-insensitive) to its ID from the champion list.
     ///
+    /// Fetch champions over HTTP; return None if no matching name has an ID. HTTP/auth/JSON
+    /// failures return ApiError.
+    ///
     /// I/O: `&str` (name) -> `Result<Option<String>, ApiError>`
-/// refs: none
+    /// refs: endpoints: GET /champions
     pub async fn champion_id(&self, name: &str) -> Result<Option<String>, ApiError> {
         let value = self.champions().await?;
         Ok(value.as_array().and_then(|rows| {
@@ -743,10 +773,13 @@ impl ApiClient {
     ///
     /// Mirrors TS: playerHistoryById(playerId, limit).
     /// Route: GET /players/{id}/matches?limit={}
-    /// Uses slow client (30s timeout) — large history sets can be slow.
+    /// Uses slow client (125s timeout) — large history sets can be slow.
     ///
-    /// I/O: `&str` (player id), `usize` (limit), `&HistoryFilters` -> `Result<Vec<Value>, ApiError>`
-/// refs: GET /players/{id}/matches?limit={}
+    /// Encode nonempty filters and pass limit/offset without local clamping; an array is returned
+    /// directly and other JSON is wrapped as one row. HTTP/auth/JSON failures return ApiError.
+    ///
+    /// I/O: `&str` (player id), `usize` (limit), `&HistoryFilters` -> `Result<Vec<serde_json::Value>, ApiError>`
+    /// refs: endpoints: GET /players/{id}/matches
     pub async fn player_history(
         &self,
         player_id: &str,
@@ -781,8 +814,11 @@ impl ApiClient {
     /// read-through contract explicit; the backend performs no Hi-Rez call
     /// while fresh and synchronously persists an expired refresh.
     ///
-    /// I/O: `&str` (player id) -> `Result<Option<Value>, ApiError>`
-/// refs: none
+    /// Request limit=1 with refresh=true using the slow client; return the first array row, None
+    /// for null/empty arrays, or the single JSON value. HTTP/auth/JSON failures return ApiError.
+    ///
+    /// I/O: `&str` (player id) -> `Result<Option<serde_json::Value>, ApiError>`
+    /// refs: endpoints: GET /players/{id}/matches
     pub async fn latest_player_match(
         &self,
         player_id: &str,
@@ -799,8 +835,11 @@ impl ApiClient {
 
     /// Get a player's champion roster.
     ///
-    /// I/O: `&str` (player id) -> `Result<Vec<Value>, ApiError>`
-/// refs: none
+    /// GET the encoded player roster; non-array JSON yields an empty vector. HTTP/auth/JSON
+    /// failures return ApiError.
+    ///
+    /// I/O: `&str` (player id) -> `Result<Vec<serde_json::Value>, ApiError>`
+    /// refs: endpoints: GET /players/{id}/champions
     pub async fn player_champions(
         &self,
         player_id: &str,
@@ -817,8 +856,12 @@ impl ApiClient {
 
     /// Get ranked leaderboard rows for a category (class / champion-elo / performance).
     ///
-    /// I/O: `&str` (category), `Option<&str>` (metric), `Option<&str>` (role), `Option<&str>` (champion id) -> `Result<Value, ApiError>`
-/// refs: none
+    /// Map class to class, champion to champion-elo, and other categories to performance; request
+    /// ten rows in queue 486 with nonempty encoded filters. HTTP/auth/JSON failures return
+    /// ApiError.
+    ///
+    /// I/O: `&str` (category), `Option<&str>` (metric), `Option<&str>` (role), `Option<&str>` (champion id) -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: GET /players/leaderboard/class, GET /players/leaderboard/champion-elo, GET /players/leaderboard/performance
     pub async fn leaderboard(
         &self,
         category: &str,
@@ -849,8 +892,11 @@ impl ApiClient {
 
     /// Get live activity: presence and match-overview fetched in parallel.
     ///
-    /// I/O: () -> `Result<Value, ApiError>`
-/// refs: none
+    /// Fail if either concurrent slow-client GET fails; otherwise return an object containing
+    /// presence and overview. HTTP/auth/JSON failures return ApiError.
+    ///
+    /// I/O: () -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: GET /stats/presence, GET /matches/overview
     pub async fn activity(&self) -> Result<serde_json::Value, ApiError> {
         let presence_url = format!("{}/stats/presence?view=activity-v4", self.base);
         let overview_url = format!("{}/matches/overview?view=activity-v3", self.base);
@@ -863,8 +909,11 @@ impl ApiClient {
 
     /// Get the Hi-Rez API status (`/system/hirez-status`).
     ///
-    /// I/O: () -> `Result<Value, ApiError>`
-/// refs: none
+    /// Return the raw status JSON over HTTP; authentication, transport, non-success status, and
+    /// JSON failures return ApiError.
+    ///
+    /// I/O: () -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: GET /system/hirez-status
     pub async fn status(&self) -> Result<serde_json::Value, ApiError> {
         self.get_json(&format!("{}/system/hirez-status", self.base))
             .await
@@ -875,8 +924,11 @@ impl ApiClient {
     /// Mirrors TS: liveMatch(input) → resolvePlayer → GET /live/players/{id}.
     /// Returns object with `in_game` boolean.
     ///
-    /// I/O: `&str` (player) -> `Result<Value, ApiError>`
-/// refs: GET /live/players/{id}.
+    /// Resolve the player and GET live JSON; object responses receive in_game=true exactly when
+    /// match exists and is non-null. Resolution or HTTP/auth/JSON failures return ApiError.
+    ///
+    /// I/O: `&str` (player) -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: GET /players/search, GET /live/players/{player_id}
     pub async fn live_match(&self, player: &str) -> Result<serde_json::Value, ApiError> {
         let player_id = self.resolve_player_id(player).await?;
         // TS: GET /live/players/{id}
@@ -896,16 +948,23 @@ impl ApiClient {
     /// Route: GET /players/{id}/loadouts
     /// Backend returns {"loadouts": [...], "freshness": {...}}; unwraps loadouts array.
     ///
-    /// I/O: `&str` (player id) -> `Result<Vec<Value>, ApiError>`
-/// refs: GET /players/{id}/loadouts
+    /// Delegate to the non-refreshing structured loadout read and return only its rows;
+    /// HTTP/auth/JSON failures return ApiError.
+    ///
+    /// I/O: `&str` (player id) -> `Result<Vec<serde_json::Value>, ApiError>`
+    /// refs: endpoints: GET /players/{id}/loadouts
     pub async fn loadouts(&self, player_id: &str) -> Result<Vec<serde_json::Value>, ApiError> {
         Ok(self.loadouts_response(player_id).await?.loadouts)
     }
 
     /// Get a player's loadouts with `refresh=false` as a structured response.
     ///
+    /// GET with refresh=false; accept a loadouts array, a top-level array, or wrap other JSON as
+    /// one row. Missing refreshed is false; refresh_error stays separate from HTTP/auth/JSON
+    /// ApiError failures.
+    ///
     /// I/O: `&str` (player id) -> `Result<LoadoutsResponse, ApiError>`
-/// refs: none
+    /// refs: endpoints: GET /players/{id}/loadouts
     pub async fn loadouts_response(&self, player_id: &str) -> Result<LoadoutsResponse, ApiError> {
         let url = format!(
             "{}/players/{}/loadouts?refresh=false",
@@ -935,8 +994,12 @@ impl ApiClient {
 
     /// Mirrors the TS explicit refresh endpoint; the backend owns its guard.
     ///
+    /// POST an empty refresh request, potentially refreshing backend loadout storage. Missing
+    /// loadouts yields an empty vector; backend refresh_error can accompany success, while
+    /// HTTP/auth/JSON failures return ApiError.
+    ///
     /// I/O: `&str` (player id) -> `Result<LoadoutsResponse, ApiError>`
-/// refs: none
+    /// refs: endpoints: POST /players/{id}/loadouts/refresh
     pub async fn refresh_loadouts(&self, player_id: &str) -> Result<LoadoutsResponse, ApiError> {
         let url = format!(
             "{}/players/{}/loadouts/refresh",
@@ -967,10 +1030,14 @@ impl ApiClient {
     /// Mirrors TS: championPageData(idOrSlug, scope).
     /// - scope maps to tierMin/tierMax via lobby_scope_to_tiers().
     /// - "global" or unknown scope → no tier filter (no query params).
+    ///
     /// Route: GET /champions/{slug}/page-data?tierMin={}&tierMax={}
     ///
-    /// I/O: `&str` (slug), `&str` (scope) -> `Result<Value, ApiError>`
-/// refs: GET /champions/{slug}/page-data?tierMin={}&tierMax={}
+    /// GET the encoded champion slug with optional lobby tier bounds; HTTP/auth/JSON failures
+    /// return ApiError.
+    ///
+    /// I/O: `&str` (slug), `&str` (scope) -> `Result<serde_json::Value, ApiError>`
+    /// refs: endpoints: GET /champions/{id}/page-data
     pub async fn champion_page_data(
         &self,
         slug: &str,
@@ -990,8 +1057,10 @@ impl ApiClient {
     /// Mirrors TS: rankedMaps(limit=100).
     /// Route: GET /stats/maps?queueId=486&limit={} (clamped 1-100)
     ///
-    /// I/O: `usize` (limit) -> `Result<Vec<Value>, ApiError>`
-/// refs: GET /stats/maps?queueId=486&limit={}
+    /// Return array rows or wrap non-array JSON as one row. HTTP/auth/JSON failures return ApiError.
+    ///
+    /// I/O: `usize` (limit) -> `Result<Vec<serde_json::Value>, ApiError>`
+    /// refs: endpoints: GET /stats/maps
     pub async fn ranked_maps(&self, limit: usize) -> Result<Vec<serde_json::Value>, ApiError> {
         let clamped = clamp(limit, 1, 100);
         // TS: queueId=486 is the ranked queue
@@ -1009,8 +1078,11 @@ impl ApiClient {
     /// Route: GET /matches/compositions?sortBy=count&order=desc&limit={} (clamped 1-25)
     /// Backend returns {"total": N, "data": [...]} — unwraps data array.
     ///
-    /// I/O: `usize` (limit) -> `Result<Vec<Value>, ApiError>`
-/// refs: GET /matches/compositions?sortBy=count&order=desc&limit={}
+    /// Prefer the data array, then a top-level array, otherwise wrap JSON as one row.
+    /// HTTP/auth/JSON failures return ApiError.
+    ///
+    /// I/O: `usize` (limit) -> `Result<Vec<serde_json::Value>, ApiError>`
+    /// refs: endpoints: GET /matches/compositions
     pub async fn ranked_compositions(
         &self,
         limit: usize,
@@ -1036,8 +1108,11 @@ impl ApiClient {
     /// Route: GET /stats/items?mode=ranked&limit={} (clamped 1-50).
     /// "global" scope → no tier filter appended.
     ///
-    /// I/O: `&str` (scope), `usize` (limit) -> `Result<Vec<Value>, ApiError>`
-/// refs: GET /stats/items?mode=ranked&limit={}
+    /// Apply optional lobby tier bounds and return array rows or wrap other JSON as one row.
+    /// HTTP/auth/JSON failures return ApiError.
+    ///
+    /// I/O: `&str` (scope), `usize` (limit) -> `Result<Vec<serde_json::Value>, ApiError>`
+    /// refs: endpoints: GET /stats/items
     pub async fn ranked_items(
         &self,
         scope: &str,

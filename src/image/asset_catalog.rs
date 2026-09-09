@@ -1,5 +1,8 @@
-//! Game asset lookup — mirrors TS `asset-catalog.ts`.
-//! refs: none
+//! Resolve local champion, map, rank, icon, and loadout assets.
+//!
+//! Normalize lookup names and retain directory/reference results in shared caches.
+//! Missing assets use bounded local fallbacks; no network fetching occurs.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -38,11 +41,10 @@ fn preferred_image<'a>(files: impl Iterator<Item = &'a PathBuf>) -> Option<&'a P
 }
 
 #[derive(Clone)]
-/// Define AssetCatalog.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Resolve game asset paths and loadout metadata beneath a configured filesystem root.
+/// Shared RwLock caches retain directory listings, metadata, and successful or missing lookups
+/// across clones; no assets are downloaded.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct AssetCatalog {
     root: PathBuf,
     champion_files: Arc<RwLock<Option<Vec<PathBuf>>>>,
@@ -60,11 +62,9 @@ pub struct AssetCatalog {
 }
 
 #[derive(Clone)]
-/// Define LoadoutCardAsset.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Carry a card name, full and short descriptions, and an optional local icon PathBuf.
+/// Metadata may exist even when no supported icon path resolves.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct LoadoutCardAsset {
     pub name: String,
     pub description: String,
@@ -73,11 +73,9 @@ pub struct LoadoutCardAsset {
 }
 
 #[derive(Clone)]
-/// Define LoadoutFrameAsset.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Carry a loadout rarity label and local frame icon PathBuf for a card level.
+/// The catalog clamps requested levels to 1 through 5 before looking up this value.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct LoadoutFrameAsset {
     pub rarity: String,
     pub icon_path: PathBuf,
@@ -86,8 +84,10 @@ pub struct LoadoutFrameAsset {
 impl AssetCatalog {
     /// Create an asset catalog rooted at a directory.
     ///
+    /// Allocate empty shared lookup caches without reading directories.
+    ///
     /// I/O: `impl Into<PathBuf>` (root) -> `AssetCatalog`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -108,8 +108,11 @@ impl AssetCatalog {
 
     /// Resolve a loadout card asset by id.
     ///
+    /// Load local card-reference metadata lazily under RwLock caches; return a cloned record or
+    /// None for a missing card. No HTTP.
+    ///
     /// I/O: `u32` (card id) -> `Option<LoadoutCardAsset>`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn loadout_card(&self, card_id: u32) -> Option<LoadoutCardAsset> {
         if self.card_reference.read().unwrap().is_none() {
             let loaded = self.load_card_reference();
@@ -125,8 +128,11 @@ impl AssetCatalog {
 
     /// Resolve a loadout frame asset by level.
     ///
+    /// Clamp level to 1..=5 and lazily load local frame metadata; return None if the clamped level
+    /// has no asset. No HTTP.
+    ///
     /// I/O: `u32` (level) -> `Option<LoadoutFrameAsset>`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn loadout_frame(&self, level: u32) -> Option<LoadoutFrameAsset> {
         if self.frame_reference.read().unwrap().is_none() {
             let loaded = self.load_frame_reference();
@@ -142,8 +148,12 @@ impl AssetCatalog {
 
     /// Resolve a champion icon path by name.
     ///
+    /// Cache normalized lookup results; try the exact champion-icon stem before a
+    /// champion-name/icon substring fallback among local files. Return None when neither resolves;
+    /// no HTTP.
+    ///
     /// I/O: `&str` (champion name) -> `Option<PathBuf>`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn champion_icon(&self, champion_name: &str) -> Option<PathBuf> {
         let key = normalized(champion_name);
         if let Some(v) = self.champion_icons.read().unwrap().get(&key) {
@@ -172,8 +182,11 @@ impl AssetCatalog {
 
     /// Resolve a champion banner path by name.
     ///
+    /// Cache the exact normalized banner lookup, falling back to champion_icon when absent. Read
+    /// local listings on first use; no HTTP.
+    ///
     /// I/O: `&str` (champion name) -> `Option<PathBuf>`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn champion_banner(&self, champion_name: &str) -> Option<PathBuf> {
         let key = normalized(champion_name);
         if let Some(v) = self.champion_banners.read().unwrap().get(&key) {
@@ -197,8 +210,12 @@ impl AssetCatalog {
 
     /// Resolve a talent icon path by id or name.
     ///
+    /// Use the optional ID in the cache key, but resolve the file by normalized champion/talent
+    /// name; Seris Resuscitate uses Soul Collector artwork. Cache missing results too; local reads
+    /// only.
+    ///
     /// I/O: `Option<u32>` (talent id), `&str` (champion name), `&str` (talent name) -> `Option<PathBuf>`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn talent_icon(
         &self,
         talent_id: Option<u32>,
@@ -236,8 +253,11 @@ impl AssetCatalog {
 
     /// Resolve a map image path by name.
     ///
+    /// Strip ranked/live/wip and v-number tokens, prefer ranked-name matches, then general name
+    /// matches, then neutral Match_Test_Maps artwork. Cache the path or None; local reads only.
+    ///
     /// I/O: `&str` (map name) -> `Option<PathBuf>`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn map_image(&self, map_name: &str) -> Option<PathBuf> {
         let cleaned: String = map_name
             .split_whitespace()
@@ -293,8 +313,11 @@ impl AssetCatalog {
 
     /// Resolve a rank icon path by tier.
     ///
+    /// Map tier 0 to qualifying, 26 to Master, >=27 to Grandmaster, and 1..25 to Bronze-Diamond
+    /// divisions. Cache the local path or None; no HTTP.
+    ///
     /// I/O: `u32` (tier) -> `Option<PathBuf>`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn rank_icon(&self, tier: u32) -> Option<PathBuf> {
         if let Some(v) = self.rank_icons.read().unwrap().get(&tier) {
             return v.clone();
@@ -342,8 +365,11 @@ impl AssetCatalog {
 
     /// Resolve a generic icon path by name with a preferred extension.
     ///
+    /// Prefer an exact normalized stem with the requested extension, then the standard image
+    /// preference. Cache hits and misses; local directory reads only.
+    ///
     /// I/O: `&str` (name), `Option<&str>` (preferred ext) -> `Option<PathBuf>`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn icon(&self, name: &str, preferred_ext: Option<&str>) -> Option<PathBuf> {
         let key = format!("{}:{}", normalized(name), preferred_ext.unwrap_or(""));
         if let Some(v) = self.icons.read().unwrap().get(&key) {
@@ -599,20 +625,17 @@ impl AssetCatalog {
 
     fn load_nested_files(&self, directory: &Path) -> Vec<PathBuf> {
         let mut files = Vec::new();
-        match std::fs::read_dir(directory) {
-            Ok(entries) => {
-                for entry in entries.filter_map(|e| e.ok()) {
-                    let p = entry.path();
-                    if p.is_file() {
-                        if is_image_ext(&p) {
-                            files.push(p);
-                        }
-                    } else {
-                        files.extend(self.load_nested_files(&p));
+        if let Ok(entries) = std::fs::read_dir(directory) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let p = entry.path();
+                if p.is_file() {
+                    if is_image_ext(&p) {
+                        files.push(p);
                     }
+                } else {
+                    files.extend(self.load_nested_files(&p));
                 }
             }
-            Err(_) => {}
         }
         files
     }

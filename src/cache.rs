@@ -1,17 +1,16 @@
-//! In-memory render cache — replaces render-cache.ts
+//! Cache rendered PNG bytes in process with moka.
 //!
-//! Uses moka for async-safe LRU caching with TTL eviction.
-//! refs: none
+//! Clones share TTL and byte-weighted storage; keys contribute to entry weights.
+//! The cache performs no HTTP requests and has no durable backing store.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 use moka::future::Cache;
 use std::time::Duration;
 
 #[derive(Clone)]
-/// Define RenderCache.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Share an asynchronous moka cache of String keys and Vec<u8> image bytes across clones.
+/// TTL and a byte-weighted capacity bound retention; each entry weight includes both key and value lengths.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct RenderCache {
     inner: Cache<String, Vec<u8>>,
 }
@@ -19,8 +18,8 @@ pub struct RenderCache {
 impl RenderCache {
     /// Create an in-memory cache with a byte budget and TTL.
     ///
-    /// I/O: `usize` (max bytes), `u64` (ttl secs) -> `InMemoryCache`
-/// refs: none
+    /// I/O: `usize` (max bytes), `u64` (ttl secs) -> `RenderCache`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn new(max_bytes: usize, ttl_secs: u64) -> Self {
         Self {
             inner: Cache::builder()
@@ -37,7 +36,7 @@ impl RenderCache {
     /// Return the cached value for a key, or None if absent/expired.
     ///
     /// I/O: `&str` (key) -> `Option<Vec<u8>>`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn get(&self, key: &str) -> Option<Vec<u8>> {
         self.inner.get(key).await
     }
@@ -46,7 +45,7 @@ impl RenderCache {
     /// Store a value under a key (evicts to stay within the byte budget).
     ///
     /// I/O: `String` (key), `Vec<u8>` (value) -> ()
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn set(&self, key: String, value: Vec<u8>) {
         self.inner.insert(key, value).await;
     }
@@ -54,7 +53,7 @@ impl RenderCache {
     /// Approximate number of cached entries.
     ///
     /// I/O: () -> `u64`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn entry_count(&self) -> u64 {
         self.inner.entry_count()
     }
@@ -62,7 +61,7 @@ impl RenderCache {
     /// Current weighted cache size in bytes, including key bytes.
     ///
     /// I/O: () -> `u64`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn approximate_bytes(&self) -> u64 {
         self.inner.weighted_size()
     }

@@ -1,8 +1,8 @@
-//! PaladinsCat Discord Bot — Rust rewrite with Twilight 0.16
+//! Wire configuration, service identity, rendering, health HTTP, and the Discord gateway.
 //!
-//! Replaces Node.js + Puppeteer pipeline with native Twilight embed builders.
-//! Target: 50-200ms latency, 10-50MB memory, zero GC pressure.
-//! refs: none
+//! Startup selects the configured bot mode and shares clients across event handlers.
+//! Runtime secret loading and browser lifecycle remain delegated to their owning modules.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 mod api;
 mod autocomplete;
@@ -94,7 +94,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         api.clone(),
         render_cache.clone(),
         image_service.clone(),
-        cfg.web_url.clone(),
     );
 
     // Initialize Discord gateway. Slash commands arrive via InteractionCreate,

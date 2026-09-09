@@ -1,5 +1,8 @@
-//! Discord embed message builders — mirrors TS message-builders.ts 1-to-1.
-//! refs: none
+//! Build Discord embeds and format game metrics from backend JSON.
+//!
+//! Builders produce payloads locally and link to the configured web URL.
+//! Missing fields use command-specific fallbacks; no Discord messages are sent here.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 use chrono::Datelike;
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
@@ -26,7 +29,7 @@ fn url_encode(value: &str) -> String {
 }
 
 /// Queue labels — matches TS QUEUE_LABELS
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub const QUEUE_LABELS: &[(i32, &str)] = &[
     (1, "Casual Queue"),
     (2, "KBM"),
@@ -47,7 +50,7 @@ pub const QUEUE_LABELS: &[(i32, &str)] = &[
 ];
 
 /// Tier names — matches TS TIER_NAMES
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub const TIER_NAMES: &[&str] = &[
     "Unranked",
     "Bronze V",
@@ -81,8 +84,11 @@ pub const TIER_NAMES: &[&str] = &[
 
 /// Escape Discord markdown special characters — mirrors TS cleanDiscordText
 ///
+/// Use fallback for non-string input, trim text, and return fallback verbatim for an empty result;
+/// otherwise prefix Discord markdown characters with backslashes. Pure formatting.
+///
 /// I/O: `&Value`, `&str` (fallback) -> `String`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn clean_discord_text(value: &Value, fallback: &str) -> String {
     let text = value.as_str().unwrap_or(fallback).trim().to_string();
     if text.is_empty() {
@@ -101,8 +107,11 @@ pub fn clean_discord_text(value: &Value, fallback: &str) -> String {
 
 /// Numeric metric extraction — mirrors TS numericMetric
 ///
+/// Accept finite JSON numbers or parseable numeric strings; reject null, booleans, other JSON
+/// kinds, and non-finite values. No I/O.
+///
 /// I/O: `&Value` -> `Option<f64>`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn numeric_metric(value: &Value) -> Option<f64> {
     if value.is_null() || value.is_boolean() {
         return None;
@@ -124,8 +133,11 @@ pub fn numeric_metric(value: &Value) -> Option<f64> {
 
 /// Format number with locale grouping — mirrors TS toLocaleString
 ///
+/// Group exactly representable i64 integers with commas; other f64 values use Rust display
+/// formatting. No locale state or I/O is consulted.
+///
 /// I/O: `f64` -> `String`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn format_number(value: f64) -> String {
     let i = value as i64;
     if (i as f64) == value {
@@ -147,7 +159,7 @@ fn format_grouped(n: i64) -> String {
     let bytes = digits.as_bytes();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (idx, &b) in bytes.iter().enumerate() {
-        if idx > 0 && (bytes.len() - idx) % 3 == 0 {
+        if idx > 0 && (bytes.len() - idx).is_multiple_of(3) {
             out.push(',');
         }
         out.push(b as char);
@@ -161,8 +173,11 @@ fn format_grouped(n: i64) -> String {
 
 /// Format number with decimals — mirrors TS formattedNumber
 ///
+/// Return an em dash for None; round to the requested precision and group the integer part with
+/// commas. No I/O.
+///
 /// I/O: `Option<f64>`, `usize` (decimals) -> `String`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn format_number_dec(value: Option<f64>, decimals: usize) -> String {
     let Some(value) = value else {
         return "—".to_string();
@@ -183,7 +198,11 @@ pub fn format_number_dec(value: Option<f64>, decimals: usize) -> String {
 }
 
 /// Duration label — mirrors TS durationLabel
-/// refs: none
+/// Read finite numeric JSON or numeric strings, default invalid values to zero, clamp negatives,
+/// and round seconds before formatting Xm YYs. No I/O.
+///
+/// I/O: `&Value` (seconds) -> `String`
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn duration_label(value: &Value) -> String {
     let seconds = numeric_metric(value).unwrap_or(0.0).max(0.0).round() as i64;
     let mins = seconds / 60;
@@ -193,8 +212,10 @@ pub fn duration_label(value: &Value) -> String {
 
 /// Get queue label — mirrors TS QUEUE_LABELS lookup
 ///
+/// Use QUEUE_LABELS when known, Queue #N for other positive IDs, and Unknown queue otherwise. No I/O.
+///
 /// I/O: `i32` (queue id) -> `String`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn queue_label(queue_id: i32) -> String {
     for &(id, label) in QUEUE_LABELS {
         if id == queue_id {
@@ -237,8 +258,10 @@ fn strip_map_prefix(name: &str) -> String {
 
 /// Get tier name — mirrors TS TIER_NAMES lookup
 ///
+/// Use TIER_NAMES for indices 0 through 27 and Unranked outside that range. No I/O.
+///
 /// I/O: `i32` (tier) -> `String`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn tier_name(tier: i32) -> String {
     if tier >= 0 && (tier as usize) < TIER_NAMES.len() {
         TIER_NAMES[tier as usize].to_string()
@@ -249,8 +272,10 @@ pub fn tier_name(tier: i32) -> String {
 
 /// Build a simple embed with title, description, and optional URL — mirrors TS simpleEmbed
 ///
+/// Set the accent color and optional URL; return an unsent payload without HTTP.
+///
 /// I/O: `&str` (title), `&str` (description), `Option<&str>` (url) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn simple_embed(title: &str, description: &str, url: Option<&str>) -> Embed {
     let mut builder = EmbedBuilder::new()
         .color(ACCENT)
@@ -264,8 +289,10 @@ pub fn simple_embed(title: &str, description: &str, url: Option<&str>) -> Embed 
 
 /// Build embed with footer — mirrors TS embedPayload
 ///
+/// Set the supplied color/footer; return an unsent payload without HTTP.
+///
 /// I/O: `&str` (title), `&str` (description), `&str` (footer), `u32` (color) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn embed_with_footer(title: &str, description: &str, footer: &str, color: u32) -> Embed {
     EmbedBuilder::new()
         .color(color)
@@ -277,8 +304,11 @@ pub fn embed_with_footer(title: &str, description: &str, footer: &str, color: u3
 
 /// Build history payload — mirrors TS buildHistoryPayload
 ///
+/// Inspect at most ten history entries, skip nonobjects, show win/map/champion/KDA details, and
+/// link matches. Empty output uses No recent matches found; no HTTP.
+///
 /// I/O: `&str` (player name), `&[Value]` (history), `&str` (web url) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn build_history_payload(player_name: &str, history: &[Value], web_url: &str) -> Embed {
     let mut lines = Vec::new();
     for row in history.iter().take(10) {
@@ -295,7 +325,7 @@ pub fn build_history_payload(player_name: &str, history: &[Value], web_url: &str
                 .unwrap_or("");
             let dur = obj
                 .get("duration_seconds")
-                .and_then(|v| numeric_metric(v))
+                .and_then(numeric_metric)
                 .map(|s| format!("{}m", (s / 60.0).round() as i64))
                 .unwrap_or_default();
             let region = obj.get("region").and_then(|v| v.as_str()).unwrap_or("");
@@ -305,21 +335,15 @@ pub fn build_history_payload(player_name: &str, history: &[Value], web_url: &str
                 .unwrap_or("Unknown");
             let kda = format!(
                 "{}/{}/{}",
-                obj.get("kills")
-                    .and_then(|v| numeric_metric(v))
-                    .unwrap_or(0.0) as i64,
-                obj.get("deaths")
-                    .and_then(|v| numeric_metric(v))
-                    .unwrap_or(0.0) as i64,
-                obj.get("assists")
-                    .and_then(|v| numeric_metric(v))
-                    .unwrap_or(0.0) as i64,
+                obj.get("kills").and_then(numeric_metric).unwrap_or(0.0) as i64,
+                obj.get("deaths").and_then(numeric_metric).unwrap_or(0.0) as i64,
+                obj.get("assists").and_then(numeric_metric).unwrap_or(0.0) as i64,
             );
             let id = json_id(obj.get("match_id")).unwrap_or_default();
-            let parts: Vec<&str> = vec![w, map, &dur, region, champ, &kda]
+            let parts: Vec<&str> = [w, map, &dur, region, champ, &kda]
                 .iter()
                 .filter(|s| !s.is_empty())
-                .map(|s| *s)
+                .copied()
                 .collect();
             let joined = parts.join(" · ");
             lines.push(format!("{} · [{}]({}/matches/{})", joined, id, web_url, id));
@@ -336,16 +360,22 @@ pub fn build_history_payload(player_name: &str, history: &[Value], web_url: &str
 
 /// Build current payload — mirrors TS buildCurrentPayload
 ///
+/// Choose pending, absent-match, or active-team layout; include available rank, global win rate,
+/// queue Elo, and a team win estimate. Champion-detail metrics are omitted; no HTTP.
+///
 /// I/O: `&Value` (result), `&str` (web url) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn build_current_payload(result: &Value, web_url: &str) -> Embed {
     build_current_payload_with_details(result, web_url, false)
 }
 
 /// Build the detailed current-match embed.
 ///
+/// Use the same pending/absent/active layout and team estimate as the basic embed, adding available
+/// champion Elo, win rate, and KDA to player lines; no HTTP.
+///
 /// I/O: `&Value` (result), `&str` (web url) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn build_current_payload_detailed(result: &Value, web_url: &str) -> Embed {
     build_current_payload_with_details(result, web_url, true)
 }
@@ -387,17 +417,14 @@ fn build_current_payload_with_details(result: &Value, web_url: &str, details: bo
             .unwrap_or_default();
         let queue_id = match_data
             .get("queue_id")
-            .and_then(|v| numeric_metric(v))
+            .and_then(numeric_metric)
             .unwrap_or(0.0) as i32;
         let queue = queue_label(queue_id);
-        let map = clean_discord_text(
-            &match_data.get("map").unwrap_or(&Value::Null),
-            "Unknown map",
-        );
+        let map = clean_discord_text(match_data.get("map").unwrap_or(&Value::Null), "Unknown map");
         // Strip leading "Live ", "Ranked ", "WIP " prefixes (repeated) — mirrors TS regex
         let map = strip_map_prefix(&map);
         let region = clean_discord_text(
-            &match_data.get("region").unwrap_or(&Value::Null),
+            match_data.get("region").unwrap_or(&Value::Null),
             "Unknown region",
         );
         let title = format!("{} · Live match", map);
@@ -410,7 +437,7 @@ fn build_current_payload_with_details(result: &Value, web_url: &str, details: bo
             if let Some(obj) = player.as_object() {
                 let tf = obj
                     .get("task_force")
-                    .and_then(|v| numeric_metric(v))
+                    .and_then(numeric_metric)
                     .unwrap_or(0.0) as i32;
                 let line = current_player_line(player, &player_id, web_url, details);
                 if tf == 1 {
@@ -495,7 +522,7 @@ fn current_player_line(
         .get("kbm_tier")
         .or_else(|| player.get("live_tier"))
         .or_else(|| player.get("tier"))
-        .and_then(|v| numeric_metric(v))
+        .and_then(numeric_metric)
         .unwrap_or(0.0) as i32;
     let tier = tier_name(tier_number);
 
@@ -514,10 +541,8 @@ fn current_player_line(
         ""
     };
 
-    let global_wr = player
-        .get("profile_win_rate")
-        .and_then(|v| numeric_metric(v));
-    let queue_elo = player.get("queue_elo").and_then(|v| numeric_metric(v));
+    let global_wr = player.get("profile_win_rate").and_then(numeric_metric);
+    let queue_elo = player.get("queue_elo").and_then(numeric_metric);
 
     let mut details = Vec::new();
     if tier != "Unranked" {
@@ -571,10 +596,7 @@ fn estimate_live_team_win_chance(players: &[Value]) -> Option<TeamWinEstimate> {
         let team: Vec<_> = players
             .iter()
             .filter(|p| {
-                p.get("task_force")
-                    .and_then(|v| numeric_metric(v))
-                    .unwrap_or(0.0) as i32
-                    == task_force
+                p.get("task_force").and_then(numeric_metric).unwrap_or(0.0) as i32 == task_force
             })
             .collect();
 
@@ -582,7 +604,7 @@ fn estimate_live_team_win_chance(players: &[Value]) -> Option<TeamWinEstimate> {
             .iter()
             .filter_map(|p| {
                 p.get("queue_elo")
-                    .and_then(|v| numeric_metric(v))
+                    .and_then(numeric_metric)
                     .filter(|&v| v > 0.0 && v <= 3500.0)
             })
             .collect();
@@ -591,8 +613,8 @@ fn estimate_live_team_win_chance(players: &[Value]) -> Option<TeamWinEstimate> {
             .iter()
             .filter_map(|p| {
                 p.get("profile_win_rate")
-                    .and_then(|v| numeric_metric(v))
-                    .filter(|&v| v >= 0.0 && v <= 100.0)
+                    .and_then(numeric_metric)
+                    .filter(|&v| (0.0..=100.0).contains(&v))
             })
             .collect();
 
@@ -624,7 +646,13 @@ fn estimate_live_team_win_chance(players: &[Value]) -> Option<TeamWinEstimate> {
         (Some(w1), Some(w2)) if w1 + w2 > 0.0 => w1 / (w1 + w2),
         _ => 0.5,
     };
-    let blended = (elo_prob * 0.85 + wr_prob * 0.15).max(0.15).min(0.85);
+    let blended = elo_prob * 0.85 + wr_prob * 0.15;
+    // Preserve the previous lower-bound fallback when the probability is NaN.
+    let blended = if blended.is_nan() {
+        0.15
+    } else {
+        blended.clamp(0.15, 0.85)
+    };
     let team_one = (blended * 100.0).round() as i32;
     Some(TeamWinEstimate {
         team_one,
@@ -632,47 +660,13 @@ fn estimate_live_team_win_chance(players: &[Value]) -> Option<TeamWinEstimate> {
     })
 }
 
-/// Build loadouts payload — mirrors TS buildLoadoutsPayload
-///
-/// I/O: `&str` (player name), `&[Value]` (loadouts), `&str` (web url), `Option<&str>` (player id) -> `Embed`
-/// refs: none
-pub fn build_loadouts_payload(
-    player_name: &str,
-    loadouts: &[Value],
-    web_url: &str,
-    player_id: Option<&str>,
-) -> Embed {
-    let lines: Vec<String> = loadouts
-        .iter()
-        .take(15)
-        .map(|row| {
-            let champ = row
-                .get("champion_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Champion");
-            let name = row
-                .get("loadout_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unnamed");
-            format!("• **{}** · {}", champ, name)
-        })
-        .collect();
-
-    let description = if lines.is_empty() {
-        "No saved loadouts found.".to_string()
-    } else {
-        lines.join("\n")
-    };
-
-    let title = format!("{} · Loadouts", player_name);
-    let url = player_id.map(|pid| format!("{}/players/{}/loadouts", web_url, pid));
-    simple_embed(&title, &description, url.as_deref())
-}
-
 /// Build champion payload — mirrors TS buildChampionPayload
 ///
+/// Bind champion identity, lobby/tier/record, seven performance metrics with P10-P90 ranges, and
+/// top-three talents. Missing numeric data uses placeholders; no HTTP.
+///
 /// I/O: `&Value` (result), `&str` (web url), `&str` (lobby label) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) -> Embed {
     let champion = result.get("champion").unwrap_or(&Value::Null);
     let stats = result.get("stats").unwrap_or(&Value::Null);
@@ -698,7 +692,7 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
         .unwrap_or("Unknown");
 
     // Tier
-    let avg_tier = stats.get("avg_league_tier").and_then(|v| numeric_metric(v));
+    let avg_tier = stats.get("avg_league_tier").and_then(numeric_metric);
     let tier_value = if let Some(t) = avg_tier.filter(|t| *t > 0.0) {
         let rounded = t.round() as i32;
         let clamped = rounded.max(0).min((TIER_NAMES.len() - 1) as i32);
@@ -709,19 +703,13 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
     };
 
     // Win rate and record
-    let win_rate = stats.get("win_rate").and_then(|v| numeric_metric(v));
-    let wins = stats
-        .get("wins")
-        .and_then(|v| numeric_metric(v))
-        .unwrap_or(0.0);
-    let losses = stats
-        .get("losses")
-        .and_then(|v| numeric_metric(v))
-        .unwrap_or(0.0);
+    let win_rate = stats.get("win_rate").and_then(numeric_metric);
+    let wins = stats.get("wins").and_then(numeric_metric).unwrap_or(0.0);
+    let losses = stats.get("losses").and_then(numeric_metric).unwrap_or(0.0);
     let total = stats
         .get("total_plays")
         .or_else(|| stats.get("total_matches"))
-        .and_then(|v| numeric_metric(v))
+        .and_then(numeric_metric)
         .unwrap_or(0.0);
     let record_value = format!(
         "{}\n{} W · {} L\n{} total plays",
@@ -747,9 +735,9 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
 
     for (label, key, decimals) in &metrics {
         let metric = performance.get(key).unwrap_or(&Value::Null);
-        let avg = metric.get("avgValue").and_then(|v| numeric_metric(v));
-        let p10 = metric.get("p10").and_then(|v| numeric_metric(v));
-        let p90 = metric.get("p90").and_then(|v| numeric_metric(v));
+        let avg = metric.get("avgValue").and_then(numeric_metric);
+        let p10 = metric.get("p10").and_then(numeric_metric);
+        let p90 = metric.get("p90").and_then(numeric_metric);
         let value = format!(
             "**{}**\nP10–P90 {}–{}",
             format_number_dec(avg, *decimals as usize),
@@ -766,7 +754,7 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
     // Talents
     let talent_coverage = talent_stats
         .get("talentCoveredMatches")
-        .and_then(|v| numeric_metric(v))
+        .and_then(numeric_metric)
         .unwrap_or(0.0)
         .max(0.0) as i64;
     let empty_talents: Vec<Value> = Vec::new();
@@ -776,14 +764,8 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
         .unwrap_or(&empty_talents);
     let mut sorted_talents: Vec<_> = talents.iter().collect();
     sorted_talents.sort_by(|a, b| {
-        let pa = a
-            .get("totalPlays")
-            .and_then(|v| numeric_metric(v))
-            .unwrap_or(0.0);
-        let pb = b
-            .get("totalPlays")
-            .and_then(|v| numeric_metric(v))
-            .unwrap_or(0.0);
+        let pa = a.get("totalPlays").and_then(numeric_metric).unwrap_or(0.0);
+        let pb = b.get("totalPlays").and_then(numeric_metric).unwrap_or(0.0);
         pb.partial_cmp(&pa).unwrap_or(std::cmp::Ordering::Equal)
     });
     let top3 = sorted_talents.iter().take(3);
@@ -791,14 +773,14 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
         .map(|talent| {
             let plays = talent
                 .get("totalPlays")
-                .and_then(|v| numeric_metric(v))
+                .and_then(numeric_metric)
                 .unwrap_or(0.0);
             let pick_rate = if talent_coverage > 0 {
                 format!("{:.1}%", 100.0 * plays / talent_coverage as f64)
             } else {
                 "—".to_string()
             };
-            let wr = talent.get("winRate").and_then(|v| numeric_metric(v));
+            let wr = talent.get("winRate").and_then(numeric_metric);
             let name =
                 clean_discord_text(talent.get("talentName").unwrap_or(&Value::Null), "Unknown");
             format!(
@@ -842,7 +824,7 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
 
     let mut builder = EmbedBuilder::new()
         .color(ACCENT)
-        .title(&format!("{} · Ranked performance", name))
+        .title(format!("{} · Ranked performance", name))
         .url(&url)
         .description(&description)
         .field(class_field)
@@ -860,8 +842,11 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
 
 /// Build maps payload — mirrors TS buildMapsPayload
 ///
+/// Show map links, counts, pool share, and average duration; append complete lines only within a
+/// 4000-byte description budget. Empty input uses a no-statistics message; no HTTP.
+///
 /// I/O: `&[Value]` (rows), `&str` (web url) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn build_maps_payload(rows: &[Value], web_url: &str) -> Embed {
     let mut lines = Vec::new();
     for row in rows {
@@ -872,11 +857,11 @@ pub fn build_maps_payload(rows: &[Value], web_url: &str) -> Embed {
         );
         let matches = row
             .get("total_matches")
-            .and_then(|v| numeric_metric(v))
+            .and_then(numeric_metric)
             .unwrap_or(0.0)
             .max(0.0)
             .round() as i64;
-        let share = row.get("distribution_rate").and_then(|v| numeric_metric(v));
+        let share = row.get("distribution_rate").and_then(numeric_metric);
         let share_str = share
             .map(|value| format!("{:.1}%", value))
             .unwrap_or_else(|| "—".into());
@@ -928,8 +913,11 @@ pub fn build_maps_payload(rows: &[Value], web_url: &str) -> Embed {
 
 /// Build composition payload — mirrors TS buildCompositionPayload
 ///
+/// Show up to five role-composition fields in input order and link the compositions page. Missing
+/// counts default to zero and missing win rate to an em dash; no HTTP.
+///
 /// I/O: `&[Value]` (rows), `&str` (web url) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn build_composition_payload(rows: &[Value], web_url: &str) -> Embed {
     let fields: Vec<EmbedField> = rows
         .iter()
@@ -938,31 +926,31 @@ pub fn build_composition_payload(rows: &[Value], web_url: &str) -> Embed {
         .map(|(i, row)| {
             let frontline = row
                 .get("frontline")
-                .and_then(|v| numeric_metric(v))
+                .and_then(numeric_metric)
                 .unwrap_or(0.0)
                 .round() as i32;
             let damage = row
                 .get("damage")
-                .and_then(|v| numeric_metric(v))
+                .and_then(numeric_metric)
                 .unwrap_or(0.0)
                 .round() as i32;
             let flank = row
                 .get("flank")
-                .and_then(|v| numeric_metric(v))
+                .and_then(numeric_metric)
                 .unwrap_or(0.0)
                 .round() as i32;
             let support = row
                 .get("support")
-                .and_then(|v| numeric_metric(v))
+                .and_then(numeric_metric)
                 .unwrap_or(0.0)
                 .round() as i32;
             let count = row
                 .get("count")
-                .and_then(|v| numeric_metric(v))
+                .and_then(numeric_metric)
                 .unwrap_or(0.0)
                 .max(0.0)
                 .round() as i64;
-            let wr = row.get("winrate").and_then(|v| numeric_metric(v));
+            let wr = row.get("winrate").and_then(numeric_metric);
             let roles = format!(
                 "{} Frontline · {} Damage · {} Flank · {} Support",
                 frontline, damage, flank, support
@@ -1005,8 +993,12 @@ pub fn build_composition_payload(rows: &[Value], web_url: &str) -> Embed {
 
 /// Build items payload — mirrors TS buildItemsPayload
 ///
+/// Show up to twenty item rows with usage/pick/win metrics, retaining complete lines within a
+/// 4000-byte body budget before adding the lobby label. Empty input uses a no-statistics message;
+/// no HTTP.
+///
 /// I/O: `&[Value]` (rows), `&str` (web url), `&str` (lobby label) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn build_items_payload(rows: &[Value], web_url: &str, lobby_label: &str) -> Embed {
     let mut lines = Vec::new();
     for (i, row) in rows.iter().enumerate().take(20) {
@@ -1015,12 +1007,12 @@ pub fn build_items_payload(rows: &[Value], web_url: &str, lobby_label: &str) -> 
         let uses = row
             .get("total_uses")
             .or_else(|| row.get("total_usage"))
-            .and_then(|v| numeric_metric(v))
+            .and_then(numeric_metric)
             .unwrap_or(0.0)
             .max(0.0)
             .round() as i64;
-        let pick_rate = row.get("pick_rate").and_then(|v| numeric_metric(v));
-        let win_rate = row.get("win_rate").and_then(|v| numeric_metric(v));
+        let pick_rate = row.get("pick_rate").and_then(numeric_metric);
+        let win_rate = row.get("win_rate").and_then(numeric_metric);
         let linked_name = if !id.is_empty() {
             format!("[{}]({}/game/items/{})", name, web_url, url_encode(id))
         } else {
@@ -1369,8 +1361,12 @@ fn player_avatar_url(value: &Value, avatar_id: &Value, web_url: &str) -> String 
 
 /// Build player profile payload — mirrors TS buildPlayerProfileMessage.
 ///
+/// Build the profile summary from enriched backend JSON, formatting identity, statistics, rank,
+/// links, avatar, and profile refresh timestamp with fallbacks; return an unsent embed without
+/// HTTP.
+///
 /// I/O: `&Value` (result), `&str` (web url) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn build_player_profile(result: &Value, web_url: &str) -> Embed {
     let player = result.get("player").unwrap_or(result);
     let player_id = json_id(player.get("id")).unwrap_or_default();
@@ -1543,8 +1539,11 @@ pub fn build_player_profile(result: &Value, web_url: &str) -> Embed {
 /// Build loadout selection payload — mirrors TS buildLoadoutSelectionPayload
 /// Returns embed for displaying loadout choices to user.
 ///
+/// Return a selection prompt with player/champion identity, count, player-loadouts link, and
+/// refreshed/cached status; no HTTP.
+///
 /// I/O: `&str` (player name), `&str` (champion name), `usize` (count), `&str` (web url), `&str` (player id), `bool` (refreshed) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn build_loadout_selection_payload(
     player_name: &str,
     champion_name: &str,
@@ -1567,7 +1566,7 @@ pub fn build_loadout_selection_payload(
     let url = format!("{}/players/{}/loadouts", web_url, player_id);
     EmbedBuilder::new()
         .color(ACCENT)
-        .title(&format!("{} · {}", player_name, champion_name))
+        .title(format!("{} · {}", player_name, champion_name))
         .url(&url)
         .description(&description)
         .footer(EmbedFooterBuilder::new(footer_text))
@@ -1576,8 +1575,11 @@ pub fn build_loadout_selection_payload(
 
 /// Build no-loadouts payload — mirrors TS buildNoLoadoutsPayload
 ///
+/// Return a no-loadouts prompt with player/champion identity. A non-cooldown refresh error adds a
+/// generic stale-result notice; the raw error is not shown. No HTTP.
+///
 /// I/O: `&str` (player name), `&str` (champion name), `Option<&str>` (refresh error) -> `Embed`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn build_no_loadouts_payload(
     player_name: &str,
     champion_name: &str,

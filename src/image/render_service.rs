@@ -1,7 +1,9 @@
-//! Queue + cache + recovery wrapper — mirrors TS `render-service.ts`.
-//! refs: none
+//! Coordinate queued rendering, PNG caching, and browser recovery.
+//!
+//! Cache keys include template versions; the shared browser uses one queue permit.
+//! Failed attempts can recycle Chromium; queued callers share in-flight results.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
@@ -12,13 +14,10 @@ use crate::image::match_renderer::MatchRenderer;
 use crate::image::render_queue::{BoundedWorkQueue, QueueSnapshot};
 
 #[derive(Debug, Clone)]
-/// Define ImageServiceConfig.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Configure queue limit, execution timeout in milliseconds, and cache byte/TTL budgets.
+/// ImageService uses one queue permit for its shared CDP page.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct ImageServiceConfig {
-    pub concurrency: usize,
     pub queue_limit: usize,
     pub timeout_ms: u64,
     pub cache_bytes: usize,
@@ -28,7 +27,6 @@ pub struct ImageServiceConfig {
 impl Default for ImageServiceConfig {
     fn default() -> Self {
         Self {
-            concurrency: 1,
             queue_limit: 10,
             // Match the TypeScript production budget. The command-level 12s
             // timeout remains the hang boundary and recycles a stalled browser.
@@ -40,48 +38,32 @@ impl Default for ImageServiceConfig {
 }
 
 #[derive(Debug, Clone)]
-/// Define ServiceSnapshot.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Report queue state (including deduplication), cached entry/byte estimates, render retries, browser
+/// recoveries, and per-attempt timeout milliseconds.
+/// The service and queue counters are read from separate locks and are not one atomic snapshot.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct ServiceSnapshot {
     pub queue: QueueSnapshot,
     pub cache_entries: u64,
     pub cache_bytes: u64,
-    pub deduplicated: usize,
     pub render_retries: usize,
     pub browser_recoveries: usize,
     pub render_attempt_timeout_ms: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct ServiceStats {
-    deduplicated: usize,
     render_retries: usize,
     browser_recoveries: usize,
 }
 
-impl Default for ServiceStats {
-    fn default() -> Self {
-        Self {
-            deduplicated: 0,
-            render_retries: 0,
-            browser_recoveries: 0,
-        }
-    }
-}
-
-/// Define ImageService.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Coordinate a shared renderer, PNG cache, bounded queue, and recovery counters.
+/// Queued render entry points cache successful PNGs and share in-flight work by key.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct ImageService {
     renderer: Arc<MatchRenderer>,
     cache: RenderCache,
     queue: BoundedWorkQueue<Vec<u8>>,
-    in_flight_matches: StdMutex<HashMap<String, Arc<tokio::sync::Mutex<Option<Vec<u8>>>>>>,
     render_attempt_timeout_ms: u64,
     stats: StdMutex<ServiceStats>,
 }
@@ -89,13 +71,13 @@ pub struct ImageService {
 impl ImageService {
     /// Create an image service from a renderer and config.
     ///
+    /// Force one queue permit for the shared CDP page and set attempt timeout to clamp(40% of queue
+    /// timeout, 1, 6000) milliseconds. Allocate caches/counters without starting Chromium.
+    ///
     /// I/O: `Arc<MatchRenderer>`, `ImageServiceConfig` -> `ImageService`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn new(renderer: Arc<MatchRenderer>, config: ImageServiceConfig) -> Self {
-        let render_attempt_timeout_ms = std::cmp::max(
-            1,
-            std::cmp::min(6000, (config.timeout_ms as f64 * 0.4) as u64),
-        );
+        let render_attempt_timeout_ms = ((config.timeout_ms as f64 * 0.4) as u64).clamp(1, 6000);
         Self {
             renderer,
             cache: RenderCache::new(config.cache_bytes, config.cache_ttl_secs),
@@ -108,7 +90,6 @@ impl ImageService {
                 config.timeout_ms,
                 "Render",
             ),
-            in_flight_matches: StdMutex::new(HashMap::new()),
             render_attempt_timeout_ms,
             stats: StdMutex::new(ServiceStats::default()),
         }
@@ -116,8 +97,14 @@ impl ImageService {
 
     /// Render a match scoreboard record to PNG bytes (queued + cached).
     ///
-    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Use match.match_id plus template version for caching; on a miss admit keyed work and render
+    /// with recovery, then cache success. Queue admission, execution, and exhausted recovery errors
+    /// propagate.
+    ///
+    /// Rendering retries once after an error; each failed attempt recycles Chromium.
+    ///
+    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn render_match(
         &self,
         record: &Value,
@@ -150,7 +137,7 @@ impl ImageService {
     /// This preserves the cache-first path for repeated match commands.
     ///
     /// I/O: `&str` (match id) -> `Option<Vec<u8>>`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn cached_match(&self, match_id: &str) -> Option<Vec<u8>> {
         let cache_key = format!(
             "match:{}:summary:v{}",
@@ -163,39 +150,16 @@ impl ImageService {
             .filter(|png| !png.is_empty())
     }
 
-    /// Render the canonical web scoreboard for a match.
-    ///
-    /// I/O: `&str` (match id), `&str` (url) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
-/// refs: none
-    pub async fn render_web_match(
-        &self,
-        match_id: &str,
-        url: &str,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-        let cache_key = format!(
-            "match:{}:summary:v{}",
-            match_id,
-            self.renderer.template_version()
-        );
-        if let Some(cached) = self.cached_match(match_id).await {
-            return Ok(cached);
-        }
-        let result = self
-            .queue
-            .add(match_id.to_string(), || async {
-                self.render_with_recovery(|| async { self.renderer.render_web_match(url).await })
-                    .await
-            })
-            .await;
-        let result = self.finish_queued_render(result).await?;
-        self.cache.set(cache_key, result.clone()).await;
-        Ok(result)
-    }
-
     /// Render a loadout card record to PNG bytes (queued + cached).
     ///
-    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Key by player/loadout ID, updated_at or fetched_at, and template version; queue cache misses
+    /// and render with recovery. Cache successful PNGs; queue and exhausted recovery errors
+    /// propagate.
+    ///
+    /// Rendering retries once after an error; each failed attempt recycles Chromium.
+    ///
+    /// I/O: `&Value` (record) -> `Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn render_loadout(
         &self,
         record: &Value,
@@ -232,94 +196,42 @@ impl ImageService {
         Ok(result)
     }
 
-    /// Render a match by id, loading the record via the provided closure.
-    ///
-    /// I/O: `String` (match id), `F: FnOnce() -> Box<dyn Future>` (load) -> `Result<Vec<u8>, Box<dyn Error + Send + Sync>>`
-/// refs: none
-    pub async fn match_by_id<F>(
-        &self,
-        match_id: String,
-        load: F,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>
-    where
-        F: FnOnce() -> Box<
-            dyn std::future::Future<
-                    Output = Result<Value, Box<dyn std::error::Error + Send + Sync>>,
-                > + Send,
-        >,
-    {
-        let cache_key = format!(
-            "match:{}:summary:v{}",
-            match_id,
-            self.renderer.template_version()
-        );
-        if let Some(cached) = self.cache.get(&cache_key).await {
-            return Ok(cached);
-        }
-
-        let holder = self.get_or_create_in_flight(&match_id);
-        {
-            let guard = holder.lock().await;
-            if let Some(result) = guard.as_ref() {
-                return Ok(result.clone());
-            }
-        }
-
-        // SAFETY: `load()` returns a `impl Future` which is always `Unpin`
-        let record = unsafe {
-            let f = std::pin::Pin::new_unchecked(load());
-            f.await?
-        };
-        let result = self
-            .render_with_recovery(|| async { self.renderer.render(&record).await })
-            .await?;
-
-        {
-            let mut guard = holder.lock().await;
-            *guard = Some(result.clone());
-        }
-
-        self.cache.set(cache_key, result.clone()).await;
-        Ok(result)
-    }
-
     /// Warm up the underlying renderer.
     ///
-    /// I/O: () -> `Result<(), Box<dyn Error + Send + Sync>>`
-/// refs: none
+    /// Delegate browser startup to the renderer and propagate startup/discovery/CDP errors; no
+    /// render is cached.
+    ///
+    /// I/O: () -> `Result<(), Box<dyn std::error::Error + Send + Sync>>`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn warm(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.renderer.warm().await
-    }
-
-    /// Close the service and release the renderer.
-    ///
-    /// I/O: `ImageService` (self) -> `()`
-/// refs: none
-    pub async fn close(&self) {
-        self.renderer.close().await;
     }
 
     /// Discard a renderer left mid-request by a caller-level timeout.
     /// The command timeout cancels its future before `render_with_recovery`
     /// can observe an error, so it must explicitly reset Chromium.
     ///
-    /// I/O: `ImageService` (self) -> `()`
-/// refs: none
+    /// Delegate browser reset to the renderer; service cache and counters remain allocated.
+    ///
+    /// I/O: `&ImageService` (self) -> `()`
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn recycle(&self) {
         self.renderer.recycle().await;
     }
 
     /// Get a snapshot of the service state.
     ///
+    /// Read service counters under a mutex and obtain separate queue/cache estimates; no network or
+    /// rendering is triggered.
+    ///
     /// I/O: () -> `ServiceSnapshot`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn snapshot(&self) -> ServiceSnapshot {
         let stats = self.stats.lock().unwrap();
         ServiceSnapshot {
             queue: self.queue.snapshot(),
             cache_entries: self.cache.entry_count(),
             cache_bytes: self.cache.approximate_bytes(),
-            deduplicated: stats.deduplicated,
             render_retries: stats.render_retries,
             browser_recoveries: stats.browser_recoveries,
             render_attempt_timeout_ms: self.render_attempt_timeout_ms,
@@ -372,45 +284,6 @@ impl ImageService {
         }
         Err("Render recovery exhausted".into())
     }
-
-    async fn render_with_dedup<F, Fut>(
-        &self,
-        match_id: &str,
-        render: F,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>
-    where
-        F: FnOnce() -> Fut,
-        Fut:
-            std::future::Future<Output = Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>>,
-    {
-        let holder = self.get_or_create_in_flight(match_id);
-        {
-            let guard = holder.lock().await;
-            if let Some(result) = guard.as_ref() {
-                self.stats.lock().unwrap().deduplicated += 1;
-                return Ok(result.clone());
-            }
-        }
-
-        let result = render().await?;
-        {
-            let mut guard = holder.lock().await;
-            *guard = Some(result.clone());
-        }
-        Ok(result)
-    }
-
-    fn get_or_create_in_flight(&self, match_id: &str) -> Arc<tokio::sync::Mutex<Option<Vec<u8>>>> {
-        let mut map = self.in_flight_matches.lock().unwrap();
-        match map.get(match_id) {
-            Some(h) => Arc::clone(h),
-            None => {
-                let holder = Arc::new(tokio::sync::Mutex::new(None));
-                map.insert(match_id.to_string(), Arc::clone(&holder));
-                holder
-            }
-        }
-    }
 }
 
 fn value_id(value: Option<&serde_json::Value>) -> String {
@@ -428,7 +301,6 @@ mod tests {
     #[test]
     fn defaults_match_ts_render_budget() {
         let config = ImageServiceConfig::default();
-        assert_eq!(config.concurrency, 1);
         assert_eq!(config.queue_limit, 10);
         assert_eq!(config.timeout_ms, 20_000);
         assert_eq!(config.cache_bytes, 32 * 1024 * 1024);

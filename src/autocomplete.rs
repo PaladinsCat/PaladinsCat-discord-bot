@@ -1,5 +1,8 @@
-//! Champion name autocomplete — replaces championAutocompleteChoices() from commands.ts
-//! refs: none
+//! Cache champion names and rank Discord autocomplete choices.
+//!
+//! API failures return an empty borrowed list and remain retryable.
+//! Choice matching normalizes names, deduplicates results, and applies Discord size limits.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 use unicode_normalization::UnicodeNormalization;
 
@@ -13,14 +16,12 @@ const MAX_CHOICES: usize = 25;
 const CHOICE_LEN: usize = 100;
 
 /// Simple in-memory champion list holder.
-/// (External caching via `cache::RenderCache` handles HTTP deduplication.)
-/// refs: none
+/// The API client caches the static champion roster; this holder retains its first successful list.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 #[allow(dead_code)] // Kept for potential future autocomplete optimization
-/// Define ChampionList.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Store an optional owned Vec<String> of champion names.
+/// Successful first retrieval is retained without a local TTL; failures leave it uninitialized for retry.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct ChampionList {
     names: Option<Vec<String>>,
 }
@@ -30,23 +31,23 @@ impl ChampionList {
     /// Create an empty champion-name cache.
     ///
     /// I/O: () -> `ChampionList`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub fn new() -> Self {
         Self { names: None }
     }
 
     /// Return the cached champion names, fetching from the API on first use.
     ///
+    /// Mutate the holder on a successful API read; return an empty slice on failure and retry on
+    /// the next call. Existing names are borrowed without further HTTP.
+    ///
     /// I/O: `&ApiClient` -> `&[String]`
-/// refs: none
+    /// refs: doc: documents/05-operations/runbooks/discord-bot.md
     pub async fn get(&mut self, api: &ApiClient) -> &[String] {
         if self.names.is_none() {
             self.names = api.champion_names().await.ok();
         }
-        self.names
-            .as_ref()
-            .map(|v| v.as_slice())
-            .unwrap_or_default()
+        self.names.as_deref().unwrap_or_default()
     }
 }
 
@@ -87,8 +88,12 @@ fn score(name: &str, query: &str) -> u8 {
 
 /// Filter champion names into Discord autocomplete choices for a query.
 ///
+/// Normalize with NFKD/lowercase ASCII alphanumerics, keep the first duplicate name, rank
+/// exact/prefix/word-prefix/substring matches, then sort by name. Return at most 25 identical
+/// label/value pairs capped at 100 characters; no I/O.
+///
 /// I/O: `&[String]` (names), `&str` (query) -> `Vec<(String, String)>`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn champion_autocomplete_choices(names: &[String], query: &str) -> Vec<(String, String)> {
     let query = normalize(query);
     let mut seen = std::collections::HashMap::new();

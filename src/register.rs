@@ -1,5 +1,8 @@
-//! Slash command registration — replaces command-registration.ts
-//! refs: none
+//! Build and register slash-command definitions with Discord.
+//!
+//! Registration replaces global or development-guild command sets.
+//! Global setup clears connected guild overrides and reports cleanup failures separately.
+//! refs: doc: documents/05-operations/runbooks/discord-bot.md
 
 use std::collections::HashSet;
 use twilight_http::Client;
@@ -11,13 +14,11 @@ use twilight_model::id::marker::{ApplicationMarker, GuildMarker};
 use twilight_model::id::Id;
 
 /// Result of a registration run.
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 #[derive(Debug, Clone)]
-/// Define RegistrationResult.
-///
-/// Contract: accepts the arguments shown in the signature and returns the documented result; side effects follow the implementation.
-///
-/// refs: none
+/// Report global or guild registration scope, command count, and successful/failed guild-clear counts.
+/// Failed cleanup scopes are counted separately from a failure to register the primary command set.
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub struct RegistrationResult {
     pub scope: String,
     pub registered: usize,
@@ -196,8 +197,10 @@ fn option_match_id() -> CommandOption {
 
 /// Build the full command set (social commands included when enabled).
 ///
+/// Build 21 core commands, adding random and teams for 23 when social commands are enabled; no HTTP.
+///
 /// I/O: `bool` (social enabled) -> `Vec<Command>`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
     let mut commands = vec![
         command("help", "List PaladinsCat bot commands", vec![]),
@@ -409,8 +412,11 @@ pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
 #[allow(dead_code)] // Kept for manual registration scenarios
 /// Register the global command set with Discord.
 ///
+/// Replace the global command set over Discord HTTP with social commands disabled; propagate the
+/// Discord request error. No guild overrides are cleared by this helper.
+///
 /// I/O: `&Client`, `Id<ApplicationMarker>` -> `Result<RegistrationResult, twilight_http::Error>`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub async fn register_global_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -429,8 +435,11 @@ pub async fn register_global_commands(
 
 /// Register the command set for a specific guild.
 ///
+/// Replace the selected guild command set over Discord HTTP and propagate request failures; global
+/// commands are unchanged.
+///
 /// I/O: `&Client`, `Id<ApplicationMarker>`, `Id<GuildMarker>`, `bool` (social enabled) -> `Result<RegistrationResult, twilight_http::Error>`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub async fn register_guild_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -451,8 +460,10 @@ pub async fn register_guild_commands(
 
 /// Remove all registered commands from a guild.
 ///
+/// Replace the guild command set with an empty array over Discord HTTP; propagate request failures.
+///
 /// I/O: `&Client`, `Id<ApplicationMarker>`, `Id<GuildMarker>` -> `Result<(), twilight_http::Error>`
-/// refs: none
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub async fn clear_guild_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
@@ -466,8 +477,12 @@ pub async fn clear_guild_commands(
 
 /// Register commands globally, or for a development guild when one is set.
 ///
-/// I/O: `&Client`, `Id<ApplicationMarker>`, `Option<Id<GuildMarker>>` (dev guild), `&[Id<GuildMarker]]` (connected), `bool` (social enabled) -> `Result<RegistrationResult, twilight_http::Error>`
-/// refs: none
+/// Use only the development guild when set; otherwise replace global commands and clear each
+/// distinct connected guild override. Primary registration errors propagate; cleanup failures are
+/// counted in the successful result.
+///
+/// I/O: `&Client`, `Id<ApplicationMarker>`, `Option<Id<GuildMarker>>` (dev guild), `&[Id<GuildMarker>]` (connected), `bool` (social enabled) -> `Result<RegistrationResult, twilight_http::Error>`
+/// refs: doc: documents/05-operations/runbooks/discord-bot.md
 pub async fn register_commands(
     http: &Client,
     application_id: Id<ApplicationMarker>,
