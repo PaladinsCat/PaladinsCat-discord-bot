@@ -41,6 +41,30 @@ const LOADOUT_TEMPLATE_VERSION: u32 = 11;
 /// refs: none
 const BROWSER_START_TIMEOUT: Duration = Duration::from_secs(8);
 
+// Templates embed assets as data URLs and use installed fonts. CDP readiness
+// evaluation remains available, but the document cannot run scripts or fetch
+// network/file resources, frames, plugins, or a replacement base URL.
+const RENDER_CONTENT_POLICY: &str = r#"<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; script-src 'none'; base-uri 'none'; form-action 'none'">"#;
+
+struct BrowserProcess {
+    child: Child,
+    directory: tempfile::TempDir,
+}
+
+impl Drop for BrowserProcess {
+    fn drop(&mut self) {
+        // Chromium and its descendants share a dedicated process group on Linux;
+        // recycling a timed-out renderer must not accumulate orphan processes.
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(self.child.id() as i32), libc::SIGKILL);
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        // TempDir removes this browser's profile and stderr after it is reaped.
+    }
+}
+
 #[cfg(test)]
 const WEB_SCOREBOARD_EXPORT_TIMEOUT: Duration = Duration::from_secs(18);
 #[cfg(test)]
@@ -131,7 +155,7 @@ pub struct MatchRenderer {
     config: MatchRendererConfig,
     /// Browser child process (Some while Chromium is running).
     /// refs: none
-    browser_process: StdMutex<Option<Child>>,
+    browser_process: StdMutex<Option<BrowserProcess>>,
     /// Browser WebSocket URL for CDP (set after spawn + discovery).
     /// refs: none
     ws_url: StdMutex<Option<String>>,
@@ -298,8 +322,8 @@ impl MatchRenderer {
 
     /// Stop the stored browser process and clear connection state.
     ///
-    /// Take and kill the child best-effort, clear the WebSocket URL, and invoke close on the
-    /// removed CDP client. Kill errors are ignored and the child is not joined.
+    /// Kill and reap the browser, remove its private profile, clear the WebSocket URL,
+    /// and close the removed CDP client.
     ///
     /// I/O: `&MatchRenderer` (self) -> `()`
     /// refs: doc: documents/05-operations/runbooks/discord-bot.md
@@ -307,9 +331,7 @@ impl MatchRenderer {
     pub async fn close(&self) {
         {
             let mut proc = self.browser_process.lock().unwrap();
-            if let Some(mut child) = proc.take() {
-                let _ = child.kill();
-            }
+            proc.take();
         }
         {
             let mut ws = self.ws_url.lock().unwrap();
@@ -327,8 +349,8 @@ impl MatchRenderer {
     /// the timeout, so recovery deliberately kills the child process and
     /// drops the client. The next render lazily starts a clean browser.
     ///
-    /// Take and kill the child best-effort, drop the stored CDP connection/URL, and allow lazy
-    /// restart; kill errors are ignored and the child is not joined.
+    /// Kill and reap the browser, remove its private profile, drop the stored CDP
+    /// connection/URL, and allow lazy restart with the same sandbox requirements.
     ///
     /// I/O: `&MatchRenderer` (self) -> `()`
     /// refs: doc: documents/05-operations/runbooks/discord-bot.md
@@ -336,9 +358,7 @@ impl MatchRenderer {
         tracing::info!("Recycling browser…");
         {
             let mut proc = self.browser_process.lock().unwrap();
-            if let Some(mut child) = proc.take() {
-                let _ = child.kill();
-            }
+            proc.take();
         }
         {
             // Extract the client, drop the guard, then await — std::sync::MutexGuard is !Send
@@ -369,13 +389,17 @@ impl MatchRenderer {
         }
 
         // Spawn a fresh browser unless we already have a live child process.
-        // try_wait requires &mut Child, so check pid existence instead.
         let has_live_child = {
-            let proc = self.browser_process.lock().unwrap();
-            match proc.as_ref() {
-                Some(child) => child.id() != 0,
-                None => false,
+            let mut proc = self.browser_process.lock().unwrap();
+            let alive = if let Some(browser) = proc.as_mut() {
+                browser.child.try_wait()?.is_none()
+            } else {
+                false
+            };
+            if !alive {
+                proc.take();
             }
+            alive
         };
 
         if !has_live_child {
@@ -383,7 +407,10 @@ impl MatchRenderer {
         }
 
         // Wait for the debug port to accept connections
-        self.wait_for_browser_ready().await?;
+        if let Err(error) = self.wait_for_browser_ready().await {
+            self.browser_process.lock().unwrap().take();
+            return Err(error);
+        }
 
         // Resolve the ws_url if we haven't already
         let maybe_url = self.ws_url.lock().unwrap().clone();
@@ -432,31 +459,56 @@ impl MatchRenderer {
             *ap = debug_port;
         }
 
-        // Capture Chromium stderr to a temp file so startup failures are diagnosable.
-        let stderr_path = std::env::temp_dir().join("paladinscat-chromium-stderr.log");
+        // A new private profile prevents shared browser state and stale debug targets.
+        let directory = tempfile::Builder::new()
+            .prefix("paladinscat-chromium-")
+            .tempdir()?;
+        let stderr_path = directory.path().join("stderr.log");
         let stderr_file = std::fs::File::create(&stderr_path)
             .map_err(|e| format!("Failed to create Chromium stderr log: {}", e))?;
 
-        let child = Command::new(&self.config.chromium_path)
+        let mut command = Command::new(&self.config.chromium_path);
+        // Crashpad and Chromium caches must share the private writable lifetime
+        // of the profile, including when the container root filesystem is read-only.
+        command.env("XDG_CONFIG_HOME", directory.path().join("config"));
+        command.env("XDG_CACHE_HOME", directory.path().join("cache"));
+        command
             .args([
                 "--headless",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
+                "--disable-background-networking",
+                "--no-first-run",
+                "--no-default-browser-check",
                 "--font-render-hinting=medium",
-                "--allow-file-access-from-files",
+                &format!(
+                    "--user-data-dir={}",
+                    directory.path().join("profile").display()
+                ),
                 &format!("--remote-debugging-port={}", debug_port),
                 "--remote-debugging-address=127.0.0.1",
                 "about:blank",
             ])
             .stdout(Stdio::null())
-            .stderr(Stdio::from(stderr_file))
+            .stderr(Stdio::from(stderr_file));
+        // User-namespace sandboxing must be permitted by the Linux host/seccomp
+        // policy. Never retry with --no-sandbox or require a setuid/SYS_ADMIN grant.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        let child = command
             .spawn()
             .map_err(|e| format!("Failed to spawn Chromium: {}", e))?;
 
         let mut proc = self.browser_process.lock().unwrap();
-        *proc = Some(child);
+        *proc = Some(BrowserProcess { child, directory });
         tracing::info!(
             chromium_path = %self.config.chromium_path,
             debug_port,
@@ -478,8 +530,15 @@ impl MatchRenderer {
         let deadline = Instant::now() + BROWSER_START_TIMEOUT;
 
         loop {
-            if Instant::now() > deadline {
-                let stderr_path = std::env::temp_dir().join("paladinscat-chromium-stderr.log");
+            let (exited, stderr_path) = {
+                let mut proc = self.browser_process.lock().unwrap();
+                let browser = proc.as_mut().ok_or("Chromium process is unavailable")?;
+                (
+                    browser.child.try_wait()?.is_some(),
+                    browser.directory.path().join("stderr.log"),
+                )
+            };
+            if exited || Instant::now() > deadline {
                 let stderr_tail = std::fs::read_to_string(&stderr_path)
                     .map(|s| {
                         let bytes = s.as_bytes();
@@ -488,7 +547,7 @@ impl MatchRenderer {
                     })
                     .unwrap_or_default();
                 return Err(format!(
-                    "Browser debug port {} did not become ready in {:?}. Chromium stderr: {}",
+                    "Sandboxed Chromium did not become ready on port {} within {:?}. Verify unprivileged user namespaces and container seccomp policy; unsafe fallback is disabled. Chromium stderr: {}",
                     port, BROWSER_START_TIMEOUT, stderr_tail
                 )
                 .into());
@@ -535,6 +594,23 @@ impl MatchRenderer {
         let _render_guard = self.render_lock.lock().await;
 
         let client = self.ensure_browser().await?;
+
+        // Local templates need no network responses. Apply Chromium's offline
+        // mode in addition to CSP, and abort if that policy cannot be installed.
+        let offline = client
+            .send(
+                "Network.emulateNetworkConditions",
+                json!({
+                    "offline": true,
+                    "latency": 0,
+                    "downloadThroughput": 0,
+                    "uploadThroughput": 0
+                }),
+            )
+            .await?;
+        if let Some(error) = offline.error {
+            return Err(format!("Could not isolate render network: {error}").into());
+        }
 
         // Inject the generated document directly into the existing page frame.
         // This avoids base64-encoding an HTML document whose AVIF assets are
@@ -615,6 +691,12 @@ impl MatchRenderer {
 }
 
 fn tagged_render_document(document_html: &str, render_id: u64) -> String {
+    let secured = if document_html.contains("<head>") {
+        document_html.replacen("<head>", &format!("<head>{RENDER_CONTENT_POLICY}"), 1)
+    } else {
+        format!("{RENDER_CONTENT_POLICY}{document_html}")
+    };
+    let document_html = secured.as_str();
     let marker = format!(r#"<meta name="paladinscat-render-id" content="{render_id}">"#);
     if let Some(insert_at) = document_html.rfind("</body>") {
         let mut tagged = String::with_capacity(document_html.len() + marker.len());
@@ -774,7 +856,7 @@ fn default_chromium_path() -> String {
 #[cfg(test)]
 mod tests {
     use super::{html_data_uri, internal_render_url, tagged_render_document};
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn html_data_uri_is_base64_and_preserves_css_hex_colors() {
@@ -920,11 +1002,23 @@ mod tests {
             return;
         }
         let renderer = test_renderer();
+        let client = renderer.ensure_browser().await.expect("sandboxed browser");
+        // Install the synthetic decoder through trusted CDP. A broken data
+        // image has no intrinsic dimensions and exercises the fallback decode
+        // path without requiring document scripts or a CSP bypass.
+        client
+            .evaluate(
+                r#"HTMLImageElement.prototype.decode = function() {
+                return new Promise(resolve => setTimeout(() => {
+                    document.documentElement.classList.add('ready'); resolve();
+                }, 350));
+            }"#,
+            )
+            .await
+            .expect("install delayed decoder");
         let doc = r#"<!doctype html><html><head><style>
 #scoreboard{width:200px;height:100px;background:#100000}.ready #scoreboard{background:#00d070}
-</style></head><body><div id="scoreboard"></div><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"><script>
-document.querySelector('img').decode=()=>new Promise(resolve=>setTimeout(()=>{document.documentElement.classList.add('ready');resolve()},350));
-</script></body></html>"#;
+</style></head><body><div id="scoreboard"></div><img src="data:image/png;base64,broken"></body></html>"#;
         let png = renderer
             .render_element(doc, "#scoreboard", 1.0)
             .await
@@ -936,6 +1030,85 @@ document.querySelector('img').decode=()=>new Promise(resolve=>setTimeout(()=>{do
             "capture occurred before image decode: {center:?}"
         );
         renderer.close().await;
+    }
+
+    #[tokio::test]
+    async fn chromium_integration_isolates_document_and_cleans_profile() {
+        if !integration_enabled() {
+            return;
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let local_asset = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([255, 0, 0, 255]))
+            .save(local_asset.path())
+            .unwrap();
+        let local_url = reqwest::Url::from_file_path(local_asset.path()).unwrap();
+        let renderer = test_renderer();
+        let doc = format!(
+            r#"<!doctype html><html><head><style>
+            #scoreboard{{width:200px;height:100px;background:#00d070}}
+            </style><base href="http://{address}/"></head><body>
+            <div id="scoreboard"><img id="embedded" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'/%3E"></div>
+            <img id="external" src="http://{address}/blocked">
+            <img id="local" src="{local_url}">
+            <iframe src="http://{address}/frame"></iframe>
+            <script>window.documentScriptRan=true</script></body></html>"#
+        );
+        let png = renderer
+            .render_element(&doc, "#scoreboard", 1.0)
+            .await
+            .unwrap();
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let client = renderer.cdp_client.lock().unwrap().clone().unwrap();
+        let state = client
+            .evaluate(
+                r#"({
+            scriptRan: window.documentScriptRan === true,
+            embeddedWidth: document.querySelector('#embedded').naturalWidth,
+            externalWidth: document.querySelector('#external').naturalWidth,
+            localWidth: document.querySelector('#local').naturalWidth,
+            base: document.baseURI
+        })"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(state["scriptRan"], false);
+        assert_eq!(state["embeddedWidth"], 10);
+        assert_eq!(state["externalWidth"], 0);
+        assert_eq!(state["localWidth"], 0);
+        assert_eq!(state["base"], "about:blank");
+        // Chromium may speculatively open a socket while scanning the HTML;
+        // no HTTP request or document data may cross the resource boundary.
+        if let Ok(Ok((mut connection, _))) =
+            tokio::time::timeout(Duration::from_millis(250), listener.accept()).await
+        {
+            use tokio::io::AsyncReadExt;
+            let mut request = [0; 1024];
+            if let Ok(Ok(count)) =
+                tokio::time::timeout(Duration::from_millis(250), connection.read(&mut request))
+                    .await
+            {
+                assert_eq!(
+                    count,
+                    0,
+                    "unexpected request: {}",
+                    String::from_utf8_lossy(&request[..count])
+                );
+            }
+        }
+        let directory = renderer
+            .browser_process
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .directory
+            .path()
+            .to_owned();
+        assert!(directory.exists());
+        renderer.close().await;
+        assert!(!directory.exists());
     }
 
     #[tokio::test]

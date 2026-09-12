@@ -3,12 +3,10 @@
 //! Validate realm/token endpoint boundaries and read an external RSA key.
 //! Refresh short-lived bearer tokens under a shared lock; tokens are never logged here.
 //! refs: doc: documents/02-technical/security/service-identity.md
+use aws_lc_rs::signature::{KeyPair, RsaKeyPair, RsaPublicKeyComponents};
 use futures_util::StreamExt;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use reqwest::Client;
-use rsa::{
-    pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey, traits::PublicKeyParts, RsaPrivateKey,
-};
 use serde::Serialize;
 use std::{
     sync::Arc,
@@ -144,16 +142,7 @@ impl ServiceTokenProvider {
         validate_endpoints(&config)?;
         // The key is read once from the runtime-mounted file and is never logged or serialized.
         let key = std::fs::read(&config.private_key_file)?;
-        if key.len() > 32 * 1024 {
-            return Err("service OIDC private key exceeds 32 KiB".into());
-        }
-        let key_text = std::str::from_utf8(&key)?;
-        let rsa_key = RsaPrivateKey::from_pkcs8_pem(key_text)
-            .or_else(|_| RsaPrivateKey::from_pkcs1_pem(key_text))?;
-        if rsa_key.n().bits() < 3072 {
-            return Err("service OIDC RSA private key must be at least 3072 bits".into());
-        }
-        let signing_key = EncodingKey::from_rsa_pem(&key)?;
+        let signing_key = parse_signing_key(&key)?;
         Ok(Self {
             client: Client::builder()
                 .timeout(Duration::from_secs(10))
@@ -165,8 +154,7 @@ impl ServiceTokenProvider {
         })
     }
 
-    async fn mint(&self) -> Result<CachedToken, Box<dyn std::error::Error + Send + Sync>> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    fn assertion(&self, now: u64) -> jsonwebtoken::errors::Result<String> {
         let claims = ClientAssertion {
             iss: &self.config.client_id,
             sub: &self.config.client_id,
@@ -177,7 +165,12 @@ impl ServiceTokenProvider {
         };
         let mut header = Header::new(Algorithm::RS256);
         header.typ = Some("JWT".to_owned());
-        let assertion = encode(&header, &claims, &self.signing_key)?;
+        encode(&header, &claims, &self.signing_key)
+    }
+
+    async fn mint(&self) -> Result<CachedToken, Box<dyn std::error::Error + Send + Sync>> {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let assertion = self.assertion(now)?;
         let response = self
             .client
             .post(&self.config.token_url)
@@ -244,6 +237,26 @@ impl ServiceTokenProvider {
         *cache = Some(minted);
         Ok(value)
     }
+}
+
+fn parse_signing_key(key: &[u8]) -> Result<EncodingKey, Box<dyn std::error::Error + Send + Sync>> {
+    if key.is_empty() || key.len() > 32 * 1024 {
+        return Err("service OIDC private key must contain at most 32 KiB".into());
+    }
+    let pem = pem::parse(key)?;
+    // Retain PKCS#8 and PKCS#1 input support, using AWS-LC for private-key
+    // validation and RS256 signing (RUSTSEC-2023-0071).
+    let parsed = match pem.tag() {
+        "PRIVATE KEY" => RsaKeyPair::from_pkcs8(pem.contents())?,
+        "RSA PRIVATE KEY" => RsaKeyPair::from_der(pem.contents())?,
+        _ => return Err("service OIDC private key must be RSA PKCS#8 or PKCS#1".into()),
+    };
+    let public = RsaPublicKeyComponents::<Vec<u8>>::from(parsed.public_key());
+    let bits = public.n.len() * 8 - public.n[0].leading_zeros() as usize;
+    if bits < 3072 {
+        return Err("service OIDC RSA private key must be at least 3072 bits".into());
+    }
+    Ok(EncodingKey::from_rsa_pem(key)?)
 }
 
 fn validate_token_response(
@@ -320,18 +333,57 @@ mod tests {
 
     #[test]
     fn assertion_claims_are_short_lived_and_service_bound() {
-        let claims = ClientAssertion {
-            iss: "bot",
-            sub: "bot",
-            aud: "https://issuer",
-            iat: 100,
-            exp: 160,
-            jti: "jti".into(),
+        use aws_lc_rs::{
+            encoding::{AsDer, Pkcs8V1Der},
+            rsa::KeySize,
         };
-        assert_eq!(claims.iss, claims.sub);
-        assert_eq!(claims.aud, "https://issuer");
-        assert!(claims.exp - claims.iat <= 60);
-        assert!(!claims.jti.is_empty());
+        use jsonwebtoken::{decode, DecodingKey, Validation};
+
+        let key_pair = RsaKeyPair::generate(KeySize::Rsa3072).unwrap();
+        let der: Pkcs8V1Der<'static> = key_pair.as_der().unwrap();
+        let pem = pem::encode(&pem::Pem::new("PRIVATE KEY", der.as_ref()));
+        let signing_key = parse_signing_key(pem.as_bytes()).unwrap();
+        let issuer = "https://auth.example/realms/paladinscat";
+        let provider = ServiceTokenProvider {
+            client: Client::new(),
+            config: Arc::new(config(
+                issuer,
+                &format!("{issuer}/protocol/openid-connect/token"),
+            )),
+            signing_key: Arc::new(signing_key),
+            cache: Arc::new(Mutex::new(None)),
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let assertion = provider.assertion(now).unwrap();
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.set_audience(&[issuer]);
+        validation.set_issuer(&[&provider.config.client_id]);
+        validation.sub = Some(provider.config.client_id.clone());
+        let public = DecodingKey::from_rsa_der(key_pair.public_key().as_ref());
+        let decoded = decode::<serde_json::Value>(&assertion, &public, &validation).unwrap();
+        assert_eq!(decoded.header.alg, Algorithm::RS256);
+        assert_eq!(decoded.header.typ.as_deref(), Some("JWT"));
+        assert_eq!(decoded.claims["iat"], now);
+        assert_eq!(decoded.claims["exp"], now + 60);
+        assert!(Uuid::parse_str(decoded.claims["jti"].as_str().unwrap()).is_ok());
+        assert_ne!(assertion, provider.assertion(now).unwrap());
+        validation.set_audience(&["wrong-audience"]);
+        assert!(decode::<serde_json::Value>(&assertion, &public, &validation).is_err());
+
+        let pkcs1 = pem::encode(&pem::Pem::new(
+            "RSA PRIVATE KEY",
+            provider.signing_key.as_bytes(),
+        ));
+        assert!(parse_signing_key(pkcs1.as_bytes()).is_ok());
+        let weak = RsaKeyPair::generate(KeySize::Rsa2048).unwrap();
+        let weak_der: Pkcs8V1Der<'static> = weak.as_der().unwrap();
+        let weak_pem = pem::encode(&pem::Pem::new("PRIVATE KEY", weak_der.as_ref()));
+        assert!(parse_signing_key(weak_pem.as_bytes()).is_err());
+        assert!(parse_signing_key(b"not a key").is_err());
+        assert!(parse_signing_key(&vec![0; 32 * 1024 + 1]).is_err());
     }
 
     #[test]

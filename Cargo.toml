@@ -54,8 +54,9 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 
 # RS256 client assertions for the internal OIDC service identity
-jsonwebtoken = { version = "11.0", features = ["rust_crypto"] }
-rsa = { version = "0.9", features = ["pem"] }
+jsonwebtoken = { version = "11.0", features = ["aws_lc_rs"] }
+aws-lc-rs = "1.16.3"
+pem = "3"
 
 # URL encoding (mirrors percent-encoding from Node)
 percent-encoding = "2"
@@ -65,3 +66,7 @@ unicode-normalization = "0.1"
 
 # CDP WebSocket (Chrome DevTools Protocol for image rendering)
 tokio-tungstenite = "0.26"
+tempfile = "3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
