@@ -674,7 +674,7 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
     let talent_stats = result.get("talentStats").unwrap_or(&Value::Null);
 
     // Get identity metric
-    let identity_metric = ["dpm", "wpm", "apm", "gpm", "hpm", "mpm", "kda"]
+    let identity_metric = ["dpm", "wpm", "apm", "gpm", "hpm", "spm", "kda"]
         .iter()
         .map(|&key| performance.get(key).unwrap_or(&Value::Null))
         .find(|m| m.get("championName").is_some() || m.get("className").is_some())
@@ -728,7 +728,7 @@ pub fn build_champion_payload(result: &Value, web_url: &str, lobby_label: &str) 
         ("APM", "apm", 0),
         ("CPM", "gpm", 0),
         ("HPM", "hpm", 0),
-        ("SPM", "mpm", 0),
+        ("SPM", "spm", 0),
         ("KDA", "kda", 1),
     ];
     let mut fields = Vec::new();
@@ -1235,7 +1235,7 @@ fn performance_field(player: &Value) -> Option<EmbedField> {
     let metrics: Vec<(String, f64)> = [
         ("DPM", "avg_dpm"),
         ("HPM", "avg_hpm"),
-        ("MPM", "avg_mpm"),
+        ("SPM", "avg_spm"),
         ("EGPM", "avg_egpm"),
     ]
     .iter()

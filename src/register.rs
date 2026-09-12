@@ -333,7 +333,7 @@ pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
                         ("Damage per minute", "dpm"),
                         ("Healing per minute", "hpm"),
                         ("Credits per minute", "gpm"),
-                        ("Mitigation per minute", "mpm"),
+                        ("Shielding per minute", "spm"),
                     ]),
                 ),
                 string_option_with_choices(
