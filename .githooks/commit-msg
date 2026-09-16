@@ -1,0 +1,65 @@
+#!/bin/sh
+# commit-msg: enforce documents/01-foundations/commit-convention.md at commit
+# time. Mirrors the deploy gate (Update-PaladinsCatVps-Ovh.ps1, stamp step) so
+# a non-conforming commit is caught BEFORE it reaches immutable origin/main,
+# where it could only be papered over with a full-hash exception.
+#
+# Convention (public components: backend, frontend, locales, discordBot):
+#   subject: <type>(<scope>): <imperative, <72 chars>
+#            type in feat|fix|refactor|style|docs|chore|perf|revert
+#   body:    optional; every non-empty line must be added:/edited:/removed:
+#   internal commits (deploy/ops/ssh/hermes/ci): require 'Changelog: hidden'
+set -eu
+
+MSG_FILE="$1"
+[ -f "$MSG_FILE" ] || exit 0
+
+# Strip git template comment lines (leading '#').
+raw=$(sed -e 's/^[[:space:]]*#.*$//' "$MSG_FILE")
+
+# First non-empty line = subject; the rest = body.
+subject=$(printf '%s\n' "$raw" | sed -e '/^[[:space:]]*$/d' | sed -n '1p')
+body=$(printf '%s\n' "$raw" | sed -e '/^[[:space:]]*$/d' | sed -n '2,$p')
+
+subject=$(printf '%s' "$subject" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+body=$(printf '%s' "$body" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+# Empty subject (--allow-empty-message) or a merge commit -> topology wrapper;
+# the deploy gate omits merges, so leave it.
+[ -n "$subject" ] || exit 0
+case "$subject" in
+  Merge*) exit 0 ;;
+esac
+
+# Sanctioned escape: internal commits carry 'Changelog: hidden'.
+if printf '%s\n' "$body" | grep -qiE '^Changelog:[[:space:]]*hidden[[:space:]]*$'; then
+  exit 0
+fi
+
+# Internal subjects REQUIRE the hidden trailer (already exited above if
+# present), so reaching here means it is missing.
+if printf '%s' "$subject" | grep -qiE '^(ci\(|ci:)' \
+   || printf '%s' "$subject" | grep -qiE '^[a-z]+\((deploy|ops|release|credentials?|ports?|vps|ssh)\):' \
+   || printf '%s' "$subject" | grep -qiE 'hermes|(^|[^a-z0-9_])(ssh|openssh|ssh_askpass)([^a-z0-9_]|$)'; then
+  echo "[commit-msg] internal commit requires a 'Changelog: hidden' trailer: $subject" >&2
+  exit 1
+fi
+
+# Subject: type allowlist + <72 chars.
+subj_len=$(printf '%s' "$subject" | wc -c | tr -d '[:space:]')
+if [ "$subj_len" -gt 72 ] \
+   || ! printf '%s' "$subject" | grep -qE '^(feat|fix|refactor|style|docs|chore|perf|revert)(\([^)]+\))?: .+'; then
+  echo "[commit-msg] subject violates commit-convention.md (type: <72 chars): $subject" >&2
+  exit 1
+fi
+
+# Body: if present, every non-empty line must be added:/edited:/removed:.
+if [ -n "$body" ]; then
+  bad=$(printf '%s\n' "$body" | sed -e '/^[[:space:]]*$/d' | grep -cvE '^(added|edited|removed):[[:space:]]+[^[:space:]]' || true)
+  if [ "$bad" -gt 0 ]; then
+    echo "[commit-msg] body must use added:/edited:/removed: lines only" >&2
+    exit 1
+  fi
+fi
+
+exit 0
