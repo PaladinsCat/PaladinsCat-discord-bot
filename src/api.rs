@@ -104,7 +104,7 @@ mod tests {
     fn latest_player_match_forces_one_row_history_read_through() {
         assert_eq!(
             latest_player_match_url("http://backend:3005/api/v1", "716515038"),
-            "http://backend:3005/api/v1/players/716515038/matches?limit=1&offset=0&refresh=true"
+            "http://backend:3005/api/v1/players/716515038/matches?limit=1&offset=0"
         );
     }
 }
@@ -212,7 +212,7 @@ fn json_id(value: Option<&serde_json::Value>) -> Option<String> {
 
 fn latest_player_match_url(base: &str, player_id: &str) -> String {
     format!(
-        "{}/players/{}/matches?limit=1&offset=0&refresh=true",
+        "{}/players/{}/matches?limit=1&offset=0",
         base,
         encode(player_id)
     )
@@ -778,12 +778,12 @@ impl ApiClient {
     }
 
     /// Return the newest match observed for a player after applying the
-    /// backend-owned three-minute history TTL. `refresh=true` makes the
-    /// read-through contract explicit; the backend performs no Hi-Rez call
-    /// while fresh and synchronously persists an expired refresh.
+    /// backend-owned three-minute history TTL. Freshness is backend-owned; the
+    /// read carries no refresh flag so the developer-API guard is not tripped.
     ///
-    /// Request limit=1 with refresh=true using the slow client; return the first array row, None
-    /// for null/empty arrays, or the single JSON value. HTTP/auth/JSON failures return ApiError.
+    /// Request limit=1 using the slow client; return the first array row, None
+    /// for null/empty arrays, or the single JSON value. HTTP/auth/JSON failures
+    /// return ApiError.
     ///
     /// I/O: `&str` (player id) -> `Result<Option<serde_json::Value>, ApiError>`
     /// refs: endpoints: GET /players/{id}/matches
