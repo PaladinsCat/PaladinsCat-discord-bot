@@ -387,34 +387,34 @@ impl ApiClient {
             message: "The PaladinsCat request destination is not allowed.".into(),
             code: Some("INVALID_API_DESTINATION".into()),
         };
-        let mut trusted = reqwest::Url::parse(&self.base).map_err(|_| invalid())?;
+        let mut base_url = reqwest::Url::parse(&self.base).map_err(|_| invalid())?;
         let candidate = reqwest::Url::parse(value).map_err(|_| invalid())?;
         // HTTP is limited to loopback tests and the documented private Compose service.
-        let private_http = trusted.scheme() == "http"
+        let private_http = base_url.scheme() == "http"
             && (matches!(
-                trusted.host_str(),
+                base_url.host_str(),
                 Some("127.0.0.1" | "[::1]" | "localhost")
-            ) || (matches!(trusted.host_str(), Some("backend" | "backend-rust-api"))
-                && trusted.port() == Some(3005))
-                || (trusted.host_str() == Some("paladinscat-backend")
-                    && trusted.port() == Some(3001)));
-        if !(trusted.scheme() == "https" || private_http)
-            || !trusted.username().is_empty()
-            || trusted.password().is_some()
-            || candidate.origin() != trusted.origin()
+            ) || (matches!(base_url.host_str(), Some("backend" | "backend-rust-api"))
+                && base_url.port() == Some(3005))
+                || (base_url.host_str() == Some("paladinscat-backend")
+                    && base_url.port() == Some(3001)));
+        if !(base_url.scheme() == "https" || private_http)
+            || !base_url.username().is_empty()
+            || base_url.password().is_some()
+            || candidate.origin() != base_url.origin()
             || !candidate.username().is_empty()
             || candidate.password().is_some()
             || candidate.fragment().is_some()
-            || !(candidate.path() == trusted.path()
+            || !(candidate.path() == base_url.path()
                 || candidate
                     .path()
-                    .starts_with(&format!("{}/", trusted.path())))
+                    .starts_with(&format!("{}/", base_url.path())))
         {
             return Err(invalid());
         }
-        trusted.set_path(candidate.path());
-        trusted.set_query(candidate.query());
-        Ok(trusted)
+        base_url.set_path(candidate.path());
+        base_url.set_query(candidate.query());
+        Ok(base_url)
     }
 
     async fn post_empty(&self, url: &str) -> Result<serde_json::Value, ApiError> {
