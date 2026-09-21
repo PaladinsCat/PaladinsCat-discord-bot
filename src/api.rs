@@ -526,11 +526,14 @@ impl ApiClient {
         slot: &str,
     ) -> Result<serde_json::Value, ApiError> {
         let url = format!("{}/players/discord/saved-player", self.base);
-        let mut req = self.inner.put(url).json(&serde_json::json!({
-            "discordUserId": discord_user_id,
-            "playerId": player_id,
-            "slot": slot,
-        }));
+        let mut req = self
+            .inner
+            .put(self.request_url(&url)?)
+            .json(&serde_json::json!({
+                "discordUserId": discord_user_id,
+                "playerId": player_id,
+                "slot": slot,
+            }));
         if let Some(token) = self.bearer().await? {
             req = req.bearer_auth(token);
         }
@@ -561,7 +564,7 @@ impl ApiClient {
             encode(discord_user_id),
             encode(slot)
         );
-        let mut request = self.inner.delete(url);
+        let mut request = self.inner.delete(self.request_url(&url)?);
         if let Some(token) = self.bearer().await? {
             request = request.bearer_auth(token);
         }
