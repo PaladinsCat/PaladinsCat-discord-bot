@@ -56,7 +56,7 @@ sha2 = "0.10"
 # RS256 client assertions for the internal OIDC service identity
 jsonwebtoken = { version = "11.0", features = ["aws_lc_rs"] }
 aws-lc-rs = "1.16.3"
-pem = "3"
+pem = "4"
 
 # URL encoding (mirrors percent-encoding from Node)
 percent-encoding = "2"
