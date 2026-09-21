@@ -107,6 +107,53 @@ mod tests {
             "http://backend:3005/api/v1/players/716515038/matches?limit=1&offset=0"
         );
     }
+
+    #[test]
+    fn request_destination_cannot_escape_configured_backend() {
+        let client = ApiClient::new("http://backend:3005/api", None);
+        for url in [
+            "http://attacker.invalid/api/v1/players",
+            "http://backend:3006/api/v1/players",
+            "http://backend:3005/api/v1/../../admin",
+            "http://user@backend:3005/api/v1/players",
+            "https://backend:3005/api/v1/players",
+        ] {
+            assert!(client.request_url(url).is_err(), "{url}");
+        }
+        let url = client
+            .request_url("http://backend:3005/api/v1/players?player=https%3A%2F%2Fattacker.invalid")
+            .unwrap();
+        assert_eq!(url.host_str(), Some("backend"));
+        assert_eq!(url.path(), "/api/v1/players");
+        let public_http = ApiClient::new("http://example.com/api", None);
+        assert!(public_http
+            .request_url("http://example.com/api/v1/players")
+            .is_err());
+        let public_https = ApiClient::new("https://example.com/api", None);
+        assert!(public_https
+            .request_url("https://example.com/api/v1/players")
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn backend_redirect_is_not_followed() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let responder = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            assert!(socket.read(&mut request).await.unwrap() > 0);
+            socket.write_all(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+        });
+        let client = ApiClient::new(&format!("http://{address}"), None);
+        let error = client
+            .get_json(&format!("{}/players", client.base))
+            .await
+            .unwrap_err();
+        assert_eq!(error.status, Some(302));
+        responder.await.unwrap();
+    }
 }
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -283,10 +330,12 @@ impl ApiClient {
     pub fn new(base: &str, service_auth: Option<ServiceTokenProvider>) -> Self {
         Self {
             inner: HttpClient::builder()
+                .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(15))
                 .build()
                 .expect("build reqwest client"),
             inner_slow: HttpClient::builder()
+                .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(125))
                 .build()
                 .expect("build slow reqwest client"),
@@ -330,8 +379,46 @@ impl ApiClient {
         self.get_json_impl(&self.inner_slow, url).await
     }
 
+    /// Keep all request authority in trusted configuration; user values may only
+    /// affect paths/queries within this backend's API namespace.
+    fn request_url(&self, value: &str) -> Result<reqwest::Url, ApiError> {
+        let invalid = || ApiError {
+            status: None,
+            message: "The PaladinsCat request destination is not allowed.".into(),
+            code: Some("INVALID_API_DESTINATION".into()),
+        };
+        let mut base_url = reqwest::Url::parse(&self.base).map_err(|_| invalid())?;
+        let candidate = reqwest::Url::parse(value).map_err(|_| invalid())?;
+        // HTTP is limited to loopback tests and the documented private Compose service.
+        let private_http = base_url.scheme() == "http"
+            && (matches!(
+                base_url.host_str(),
+                Some("127.0.0.1" | "[::1]" | "localhost")
+            ) || (matches!(base_url.host_str(), Some("backend" | "backend-rust-api"))
+                && base_url.port() == Some(3005))
+                || (base_url.host_str() == Some("paladinscat-backend")
+                    && base_url.port() == Some(3001)));
+        if !(base_url.scheme() == "https" || private_http)
+            || !base_url.username().is_empty()
+            || base_url.password().is_some()
+            || candidate.origin() != base_url.origin()
+            || !candidate.username().is_empty()
+            || candidate.password().is_some()
+            || candidate.fragment().is_some()
+            || !(candidate.path() == base_url.path()
+                || candidate
+                    .path()
+                    .starts_with(&format!("{}/", base_url.path())))
+        {
+            return Err(invalid());
+        }
+        base_url.set_path(candidate.path());
+        base_url.set_query(candidate.query());
+        Ok(base_url)
+    }
+
     async fn post_empty(&self, url: &str) -> Result<serde_json::Value, ApiError> {
-        let mut request = self.inner.post(url);
+        let mut request = self.inner.post(self.request_url(url)?);
         if let Some(token) = self.bearer().await? {
             request = request.bearer_auth(token);
         }
@@ -349,9 +436,10 @@ impl ApiClient {
         url: &str,
     ) -> Result<serde_json::Value, ApiError> {
         let delays = [500u64, 1000, 2000];
+        let destination = self.request_url(url)?;
 
         for (attempt, &delay_ms) in delays.iter().enumerate() {
-            let mut req = client.get(url);
+            let mut req = client.get(destination.clone());
             req = req.header(reqwest::header::USER_AGENT, "PaladinsCatDiscordBot/0.1");
             if let Some(token) = self.bearer().await? {
                 req = req.bearer_auth(token);
@@ -438,11 +526,14 @@ impl ApiClient {
         slot: &str,
     ) -> Result<serde_json::Value, ApiError> {
         let url = format!("{}/players/discord/saved-player", self.base);
-        let mut req = self.inner.put(url).json(&serde_json::json!({
-            "discordUserId": discord_user_id,
-            "playerId": player_id,
-            "slot": slot,
-        }));
+        let mut req = self
+            .inner
+            .put(self.request_url(&url)?)
+            .json(&serde_json::json!({
+                "discordUserId": discord_user_id,
+                "playerId": player_id,
+                "slot": slot,
+            }));
         if let Some(token) = self.bearer().await? {
             req = req.bearer_auth(token);
         }
@@ -473,7 +564,7 @@ impl ApiClient {
             encode(discord_user_id),
             encode(slot)
         );
-        let mut request = self.inner.delete(url);
+        let mut request = self.inner.delete(self.request_url(&url)?);
         if let Some(token) = self.bearer().await? {
             request = request.bearer_auth(token);
         }
