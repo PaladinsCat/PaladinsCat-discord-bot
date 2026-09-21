@@ -3,10 +3,10 @@ name: Dependency security scan
 on:
   pull_request:
     branches: [main, master]
-    paths: ['Cargo.lock', '.github/workflows/security-scan.yml']
+    paths: ['Cargo.lock', 'legacy-node/package-lock.json', '.github/workflows/security-scan.yml']
   push:
     branches: [main, master]
-    paths: ['Cargo.lock', '.github/workflows/security-scan.yml']
+    paths: ['Cargo.lock', 'legacy-node/package-lock.json', '.github/workflows/security-scan.yml']
   schedule:
     - cron: '31 8 * * 1'
   workflow_dispatch:
@@ -36,6 +36,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/security-scan"/{input,reports}
           test -s 'Cargo.lock' && test ! -L 'Cargo.lock'
           cp 'Cargo.lock' "$RUNNER_TEMP/security-scan/input/"
+          test -s legacy-node/package-lock.json && test ! -L legacy-node/package-lock.json
+          cp legacy-node/package-lock.json "$RUNNER_TEMP/security-scan/input/"
           cd "$RUNNER_TEMP/security-scan"
           # Only the lockfile is analyzed; no dependency installation, scripts or private inventory API.
           # Cargo.toml is intentionally absent so Rust dev dependencies remain included.
@@ -65,12 +67,15 @@ jobs:
           packages = sum(len(r.get("Packages") or []) for r in report.get("Results", []) if r.get("Type") == "cargo")
           if not packages:
               sys.exit("SCAN UNAVAILABLE: expected cargo dependency inventory is empty.")
-          print(f"Scanned {packages} locked packages.")
+          npm_packages = sum(len(r.get("Packages") or []) for r in report.get("Results", []) if r.get("Type") == "npm")
+          if not npm_packages:
+              sys.exit("SCAN UNAVAILABLE: expected legacy npm dependency inventory is empty.")
+          print(f"Scanned {packages} Cargo and {npm_packages} npm locked packages.")
           PY
           ./trivy convert --format table --severity HIGH,CRITICAL --exit-code 1 reports/vulnerabilities.json
       - name: Retain repository-private scan evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, verified upstream commit
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1, verified upstream commit
         with:
           name: security-scan-dependencies
           path: ${{ runner.temp }}/security-scan/reports/
