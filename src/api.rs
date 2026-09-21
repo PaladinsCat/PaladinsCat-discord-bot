@@ -125,6 +125,14 @@ mod tests {
             .unwrap();
         assert_eq!(url.host_str(), Some("backend"));
         assert_eq!(url.path(), "/api/v1/players");
+        let public_http = ApiClient::new("http://example.com/api", None);
+        assert!(public_http
+            .request_url("http://example.com/api/v1/players")
+            .is_err());
+        let public_https = ApiClient::new("https://example.com/api", None);
+        assert!(public_https
+            .request_url("https://example.com/api/v1/players")
+            .is_ok());
     }
 
     #[tokio::test]
@@ -381,7 +389,18 @@ impl ApiClient {
         };
         let mut trusted = reqwest::Url::parse(&self.base).map_err(|_| invalid())?;
         let candidate = reqwest::Url::parse(value).map_err(|_| invalid())?;
-        if !matches!(trusted.scheme(), "http" | "https")
+        // HTTP is limited to loopback tests and the documented private Compose service.
+        let private_http = trusted.scheme() == "http"
+            && (matches!(
+                trusted.host_str(),
+                Some("127.0.0.1" | "[::1]" | "localhost")
+            ) || (matches!(trusted.host_str(), Some("backend" | "backend-rust-api"))
+                && trusted.port() == Some(3005))
+                || (trusted.host_str() == Some("paladinscat-backend")
+                    && trusted.port() == Some(3001)));
+        if !(trusted.scheme() == "https" || private_http)
+            || !trusted.username().is_empty()
+            || trusted.password().is_some()
             || candidate.origin() != trusted.origin()
             || !candidate.username().is_empty()
             || candidate.password().is_some()
