@@ -2,6 +2,7 @@ import http from 'node:http';
 import { PaladinsCatApi } from './api-client.js';
 import { renderDiscordPreview } from './discord-preview.js';
 import { buildPlayerProfileMessage } from './player-profile-message.js';
+import type { ReferenceCache } from './reference-cache.js';
 import {
   buildChampionPayload,
   buildCurrentPayload,
@@ -75,6 +76,7 @@ function handlePreviewCommand(
   params: Record<string, string>,
   api: PaladinsCatApi,
   webUrl: string,
+  reference: ReferenceCache,
 ) {
   switch (command) {
     case 'help': return buildHelpPayload();
@@ -82,7 +84,7 @@ function handlePreviewCommand(
       const response = api.discordPlayer(params.player ?? '');
       return (async () => {
         const profile = await response;
-        return buildPlayerProfileMessage(profile, webUrl);
+        return buildPlayerProfileMessage(profile, webUrl, reference);
       })();
     }
     case 'history': {
@@ -95,12 +97,12 @@ function handlePreviewCommand(
     }
     case 'current': {
       if ((params.player ?? '').trim().toLocaleLowerCase() === 'mock') {
-        return buildCurrentPayload(CURRENT_MATCH_MOCK, webUrl);
+        return buildCurrentPayload(CURRENT_MATCH_MOCK, webUrl, reference);
       }
       const fetch = api.liveMatch(params.player ?? '');
       return (async () => {
         const result = await fetch;
-        return buildCurrentPayload(result, webUrl);
+        return buildCurrentPayload(result, webUrl, reference);
       })();
     }
     case 'loadout': {
@@ -133,7 +135,7 @@ function handlePreviewCommand(
       const fetch = api.championPageData((params.champion ?? '').toLocaleLowerCase(), scope);
       return (async () => {
         const result = await fetch;
-        return buildChampionPayload(result, webUrl, scope.label);
+        return buildChampionPayload(result, webUrl, scope.label, reference);
       })();
     }
     case 'maps': {
@@ -153,7 +155,7 @@ function handlePreviewCommand(
   }
 }
 
-export function startHealthServer(port: number, renders: RenderService, api: PaladinsCatApi, webUrl: string, state: () => Record<string, unknown>) {
+export function startHealthServer(port: number, renders: RenderService, api: PaladinsCatApi, webUrl: string, state: () => Record<string, unknown>, reference: ReferenceCache) {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://preview.local');
     const pathname = url.pathname;
@@ -168,7 +170,7 @@ export function startHealthServer(port: number, renders: RenderService, api: Pal
     if (request.method === 'GET' && previewMatch?.[1]) {
       try {
         const profile = await api.playerById(previewMatch[1]);
-        const payload = buildPlayerProfileMessage(profile, webUrl);
+        const payload = buildPlayerProfileMessage(profile, webUrl, reference);
         const wantsJson = previewMatch[0].endsWith('.json') || url.searchParams.get('format') === 'json';
         response.writeHead(200, { 'content-type': wantsJson ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8', 'cache-control': 'no-store' });
         response.end(wantsJson ? JSON.stringify(payload) : renderDiscordPreview(payload));
@@ -230,7 +232,7 @@ export function startHealthServer(port: number, renders: RenderService, api: Pal
         if (key !== 'format') params[key] = value;
       }
       try {
-        const result = handlePreviewCommand(cmd, params, api, webUrl);
+        const result = handlePreviewCommand(cmd, params, api, webUrl, reference);
         const payload = await (result as Promise<any>);
         response.writeHead(200, { 'content-type': wantsJson ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8', 'cache-control': 'no-store' });
         response.end(wantsJson ? JSON.stringify(payload) : renderDiscordPreview(payload));

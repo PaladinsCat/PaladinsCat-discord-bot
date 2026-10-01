@@ -243,4 +243,14 @@ export class PaladinsCatApi {
     if (scope.tierMax != null) query.set('tierMax', String(scope.tierMax));
     return this.get(`/stats/items?${query.toString()}`);
   }
+
+  /** Single source of queue names: the backend queue_types reference table. */
+  async referenceQueues(): Promise<Array<{ queue_id: number; queue_name: string; is_ranked: boolean }>> {
+    return this.get('/reference/queues');
+  }
+
+  /** Single source of tier names: the backend ranked_tiers reference table. */
+  async referenceTiers(): Promise<Array<{ tier_id: number; tier_name: string }>> {
+    return this.get('/reference/tiers');
+  }
 }

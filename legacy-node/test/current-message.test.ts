@@ -2,6 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { validateDiscordMessage } from '../src/discord-message.js';
 import { buildCurrentPayload } from '../src/message-builders.js';
+import { ReferenceCache } from '../src/reference-cache.js';
+
+// Seed the reference cache with the backend reference rows the assertions rely
+// on. The bot no longer keeps local copies; it reads through this cache (SSoT).
+function makeReference(): ReferenceCache {
+  const reference = new ReferenceCache();
+  reference.seed(
+    [{ queue_id: 486, queue_name: 'Ranked Siege' }],
+    [
+      { tier_id: 15, tier_name: 'Gold I' },
+      { tier_id: 21, tier_name: 'Diamond V' },
+      { tier_id: 26, tier_name: 'Master' },
+    ],
+  );
+  return reference;
+}
 
 test('current match renders a compact two-team lobby instead of JSON', () => {
   const payload = buildCurrentPayload({
@@ -16,7 +32,7 @@ test('current match renders a compact two-team lobby instead of JSON', () => {
       { player_id: '44', player_name: 'Flank', champion_name: 'Vatu', live_tier: 21, task_force: 2 },
       { player_id: '-1', player_name: 'Private Account', champion_name: 'Io', task_force: 2 },
     ],
-  }, 'https://paladinscat.com');
+  }, 'https://paladinscat.com', makeReference());
 
   assert.deepEqual(validateDiscordMessage(payload), []);
   const embed = payload.embeds?.[0];
@@ -37,19 +53,24 @@ test('current match renders a compact two-team lobby instead of JSON', () => {
 });
 
 test('current match uses dedicated pending and not-live states', () => {
-  const pending = buildCurrentPayload({ match: null, players: [], pending: true }, 'https://paladinscat.com');
+  const reference = makeReference();
+  const pending = buildCurrentPayload({ match: null, players: [], pending: true }, 'https://paladinscat.com', reference);
   assert.equal(pending.embeds?.[0]?.title, 'Live lobby loading');
   assert.match(pending.embeds?.[0]?.description ?? '', /Try `\/current` again shortly/);
 
-  const offline = buildCurrentPayload({ match: null, players: [], player_id: '42' }, 'https://paladinscat.com');
+  const offline = buildCurrentPayload({ match: null, players: [], player_id: '42' }, 'https://paladinscat.com', reference);
   assert.equal(offline.embeds?.[0]?.title, 'Not in a live match');
   assert.doesNotMatch(offline.embeds?.[0]?.description ?? '', /json/i);
 });
 
-test('current match estimates complementary team win chances from database stats', () => {
+test('current match formats the backend-owned team win chances', () => {
   const payload = buildCurrentPayload({
     player_id: '1',
     match: { match_id: '9002', queue_id: 486, map: 'Bazaar', region: 'EU' },
+    // Win-chance is owned by the backend live read-model (ranked only). The
+    // bot only formats the backend-provided team_one/two_win_chance fields.
+    team_one_win_chance: 72,
+    team_two_win_chance: 28,
     players: [
       { player_id: '1', player_name: 'One', champion_name: 'Ash', task_force: 1, queue_elo: 1800, profile_win_rate: 55 },
       { player_id: '2', player_name: 'Two', champion_name: 'Furia', task_force: 1, queue_elo: 1700, profile_win_rate: 52 },
@@ -58,15 +79,15 @@ test('current match estimates complementary team win chances from database stats
       { player_id: '5', player_name: 'Five', champion_name: 'Vatu', task_force: 2, queue_elo: 1500, profile_win_rate: 48 },
       { player_id: '6', player_name: 'Six', champion_name: 'Ying', task_force: 2, queue_elo: 1400, profile_win_rate: 45 },
     ],
-  }, 'https://paladinscat.com');
+  }, 'https://paladinscat.com', makeReference());
 
   assert.deepEqual(validateDiscordMessage(payload), []);
   assert.equal(payload.embeds?.[0]?.fields?.[0]?.name, 'Team 1 · 72% win chance');
   assert.equal(payload.embeds?.[0]?.fields?.[1]?.name, 'Team 2 · 28% win chance');
-  assert.match(payload.embeds?.[0]?.footer?.text ?? '', /Estimate blends queue ELO with global win rate/);
+  assert.match(payload.embeds?.[0]?.footer?.text ?? '', /Win chance is estimated by the PaladinsCat backend/);
 });
 
-test('current match omits an estimate when either team lacks enough ELO coverage', () => {
+test('current match omits the estimate when the backend provides no win chance', () => {
   const payload = buildCurrentPayload({
     player_id: '1',
     match: { match_id: '9003', queue_id: 486, map: 'Bazaar', region: 'EU' },
@@ -78,9 +99,9 @@ test('current match omits an estimate when either team lacks enough ELO coverage
       { player_id: '5', player_name: 'Five', champion_name: 'Vatu', task_force: 2 },
       { player_id: '6', player_name: 'Six', champion_name: 'Ying', task_force: 2 },
     ],
-  }, 'https://paladinscat.com');
+  }, 'https://paladinscat.com', makeReference());
 
   assert.equal(payload.embeds?.[0]?.fields?.[0]?.name, 'Team 1');
   assert.equal(payload.embeds?.[0]?.fields?.[1]?.name, 'Team 2');
-  assert.doesNotMatch(payload.embeds?.[0]?.footer?.text ?? '', /Estimate/);
+  assert.doesNotMatch(payload.embeds?.[0]?.footer?.text ?? '', /win chance/i);
 });

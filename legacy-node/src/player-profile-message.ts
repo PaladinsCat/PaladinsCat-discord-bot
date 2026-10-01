@@ -2,6 +2,7 @@ import { escapeMarkdown, type APIEmbed, type APIEmbedField } from 'discord.js';
 import { assertDiscordMessage, type DiscordMessagePayload } from './discord-message.js';
 import { canonicalAvatarAssetUrl } from './paladins-avatar-assets.js';
 import type { PlayerProfileResponse } from './types.js';
+import { ReferenceCache } from './reference-cache.js';
 
 const accent = 0x2dd4a3;
 export const DEFAULT_PLAYER_AVATAR_PATH = '/images/icons/Avatar_Default_Icon.png';
@@ -27,11 +28,13 @@ function formatNumber(value: unknown): string {
   return parsed == null ? '—' : parsed.toLocaleString();
 }
 
-function formatPercent(wins: unknown, losses: unknown): string | null {
-  const winValue = number(wins) ?? 0;
-  const lossValue = number(losses) ?? 0;
-  const games = winValue + lossValue;
-  return games > 0 ? `${((winValue / games) * 100).toFixed(1)}%` : null;
+// Win rate and KDA are owned by the backend (/players/discord derived
+// metrics: player.win_rate, kbm_win_rate, controller_win_rate, globalStats.kda).
+// The bot only formats the backend-provided value (R-A/R-F). Nullable when the
+// backend has no underlying data (R-E: no invented zeros).
+function formatPercent(winRate: unknown): string | null {
+  const value = number(winRate);
+  return value == null ? null : `${value.toFixed(1)}%`;
 }
 
 function codeBlock(lines: string[]): string {
@@ -68,41 +71,28 @@ function formatDate(value: unknown): string | null {
 
 function globalKda(stats: unknown): string | null {
   if (!stats || typeof stats !== 'object') return null;
-  const values = stats as Record<string, unknown>;
-  const kills = number(values.kills);
-  const deaths = number(values.deaths);
-  const assists = number(values.assists);
-  if (kills == null || deaths == null || assists == null) return null;
-  const games = (number(values.wins) ?? 0) + (number(values.losses) ?? 0);
-  if (kills + deaths + assists === 0 && games === 0) return null;
-  return ((kills + assists / 2) / Math.max(deaths, 1)).toFixed(2);
+  const value = number((stats as Record<string, unknown>).kda);
+  return value == null ? null : value.toFixed(2);
 }
 
-function tierName(tier: unknown, rank: unknown): string {
+function tierName(tier: unknown, rank: unknown, reference: ReferenceCache): string {
   const value = integer(tier) ?? 0;
   const leaderboardRank = integer(rank) ?? 0;
   if (value === 26 && leaderboardRank > 0 && leaderboardRank <= 100) return `Grandmaster #${leaderboardRank}`;
   if (value === 26) return leaderboardRank > 100 ? `Master #${leaderboardRank - 100}` : 'Master';
-  const names: Record<number, string> = {
-    1: 'Bronze V', 2: 'Bronze IV', 3: 'Bronze III', 4: 'Bronze II', 5: 'Bronze I',
-    6: 'Silver V', 7: 'Silver IV', 8: 'Silver III', 9: 'Silver II', 10: 'Silver I',
-    11: 'Gold V', 12: 'Gold IV', 13: 'Gold III', 14: 'Gold II', 15: 'Gold I',
-    16: 'Platinum V', 17: 'Platinum IV', 18: 'Platinum III', 19: 'Platinum II', 20: 'Platinum I',
-    21: 'Diamond V', 22: 'Diamond IV', 23: 'Diamond III', 24: 'Diamond II', 25: 'Diamond I',
-  };
-  return names[value] ?? 'Unranked';
+  return reference.tierName(value);
 }
 
-function rankedField(label: string, tier: unknown, rank: unknown, points: unknown, wins: unknown, losses: unknown, leaves: unknown): APIEmbedField | null {
+function rankedField(label: string, tier: unknown, rank: unknown, points: unknown, wins: unknown, losses: unknown, leaves: unknown, winRate: unknown, reference: ReferenceCache): APIEmbedField | null {
   const value = integer(tier) ?? 0;
   const games = (number(wins) ?? 0) + (number(losses) ?? 0);
   if (value <= 0 && games <= 0 && (number(points) ?? 0) <= 0) return null;
   const lines = [
-    statLine('Rank', tierName(tier, rank)),
+    statLine('Rank', tierName(tier, rank, reference)),
     statLine('TP', formatNumber(points)),
   ];
-  const winRate = formatPercent(wins, losses);
-  if (winRate) lines.push(statLine('Win rate', `${winRate} (${formatNumber(wins)}–${formatNumber(losses)})`));
+  const formattedWinRate = formatPercent(winRate);
+  if (formattedWinRate) lines.push(statLine('Win rate', `${formattedWinRate} (${formatNumber(wins)}–${formatNumber(losses)})`));
   const leavesValue = number(leaves);
   if (leavesValue != null && leavesValue > 0) lines.push(statLine('Times deserted', formatNumber(leavesValue)));
   return { name: label, value: codeBlock(lines), inline: false };
@@ -125,6 +115,7 @@ function performanceField(player: Record<string, unknown>): APIEmbedField | null
 export function buildPlayerProfileMessage(
   response: PlayerProfileResponse,
   webUrl: string,
+  reference: ReferenceCache = new ReferenceCache(),
 ): DiscordMessagePayload {
   const player = response.player;
   const playerId = encodeURIComponent(String(player.id));
@@ -133,7 +124,7 @@ export function buildPlayerProfileMessage(
   const heading = title ? `${playerName} (${title})`.slice(0, 256) : playerName;
   const fields: APIEmbedField[] = [];
 
-  const record = formatPercent(player.wins, player.losses);
+  const record = formatPercent(player.win_rate);
   const wins = number(player.wins) ?? 0;
   const losses = number(player.losses) ?? 0;
   const totalMatches = wins + losses;
@@ -152,8 +143,8 @@ export function buildPlayerProfileMessage(
     inline: false,
   });
 
-  const kbm = rankedField('Ranked KBM', player.kbm_tier, player.kbm_rank, player.kbm_points, player.kbm_wins, player.kbm_losses, player.kbm_leaves);
-  const controller = rankedField('Ranked Controller', player.controller_tier, player.controller_rank, player.controller_points, player.controller_wins, player.controller_losses, player.controller_leaves);
+  const kbm = rankedField('Ranked KBM', player.kbm_tier, player.kbm_rank, player.kbm_points, player.kbm_wins, player.kbm_losses, player.kbm_leaves, player.kbm_win_rate, reference);
+  const controller = rankedField('Ranked Controller', player.controller_tier, player.controller_rank, player.controller_points, player.controller_wins, player.controller_losses, player.controller_leaves, player.controller_win_rate, reference);
   if (kbm) fields.push(kbm);
   if (controller) fields.push(controller);
 

@@ -2,6 +2,7 @@ import type { APIEmbed } from 'discord.js';
 import type { PlayerLoadout, PlayerProfileResponse } from './types.js';
 import { assertDiscordMessage, type DiscordMessagePayload } from './discord-message.js';
 import { buildPlayerProfileMessage } from './player-profile-message.js';
+import { ReferenceCache } from './reference-cache.js';
 
 const accent = 0x2dd4a3;
 
@@ -61,20 +62,9 @@ export function buildHistoryPayload(
   });
 }
 
-const QUEUE_LABELS: Record<number, string> = {
-  1: 'Casual Queue', 2: 'KBM', 4: '1v1', 8: 'Team Queue', 16: 'Open', 32: 'Doomspire',
-  424: 'Casual Siege', 428: 'Ranked Siege (Controller)', 437: 'Casual Payload',
-  451: 'PvE Survival', 452: 'Casual Onslaught', 469: 'Casual Team Deathmatch',
-  474: 'Casual Battlegrounds Solo', 475: 'Casual Battlegrounds Duo',
-  476: 'Casual Battlegrounds Quad', 486: 'Ranked Siege',
-};
-const TIER_NAMES = [
-  'Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I',
-  'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I',
-  'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I',
-  'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I',
-  'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster',
-];
+// Queue names and tier names are owned by the backend reference tables
+// (queue_types / ranked_tiers) and read through ReferenceCache. The bot no
+// longer keeps local copies (R-A/R-B/R-F).
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -93,49 +83,16 @@ function numericMetric(value: unknown): number | null {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function estimateLiveTeamWinChance(players: Record<string, unknown>[]): { teamOne: number; teamTwo: number } | null {
-  const teamMetrics = (taskForce: number) => {
-    const team = players.filter((player) => Number(player.task_force) === taskForce);
-    const elos = team.flatMap((player) => {
-      const value = numericMetric(player.queue_elo);
-      return value != null && value > 0 && value <= 3500 ? [value] : [];
-    });
-    const winRates = team.flatMap((player) => {
-      const value = numericMetric(player.profile_win_rate);
-      return value != null && value >= 0 && value <= 100 ? [value] : [];
-    });
-    const minimumCoverage = Math.min(3, team.length);
-    return {
-      averageElo: elos.length >= minimumCoverage
-        ? elos.reduce((sum, value) => sum + value, 0) / elos.length
-        : null,
-      averageWinRate: winRates.length >= minimumCoverage
-        ? winRates.reduce((sum, value) => sum + value, 0) / winRates.length
-        : null,
-    };
-  };
+// Live team win-chance is owned by the backend live read-model
+// (team_one_win_chance / team_two_win_chance, ranked only). The bot no longer
+// recomputes it (R-A/R-F).
 
-  const teamOne = teamMetrics(1);
-  const teamTwo = teamMetrics(2);
-  if (teamOne.averageElo == null || teamTwo.averageElo == null) return null;
-
-  // Queue ELO is the primary matchup signal. Global win rate provides a small
-  // calibration only when both teams have enough PaladinsCat profile history.
-  const eloProbability = 1 / (1 + 10 ** ((teamTwo.averageElo - teamOne.averageElo) / 400));
-  const winRateProbability = teamOne.averageWinRate != null && teamTwo.averageWinRate != null
-    ? teamOne.averageWinRate / (teamOne.averageWinRate + teamTwo.averageWinRate || 100)
-    : 0.5;
-  const blended = Math.min(0.85, Math.max(0.15, eloProbability * 0.85 + winRateProbability * 0.15));
-  const teamOnePercent = Math.round(blended * 100);
-  return { teamOne: teamOnePercent, teamTwo: 100 - teamOnePercent };
-}
-
-function currentPlayerLine(player: Record<string, unknown>, sourcePlayerId: string, webUrl: string): string {
+function currentPlayerLine(player: Record<string, unknown>, sourcePlayerId: string, webUrl: string, reference: ReferenceCache): string {
   const playerId = String(player.player_id ?? '');
   const playerName = cleanDiscordText(player.player_name, 'Private Account');
   const champion = cleanDiscordText(player.champion_name, 'Unknown champion');
   const tierNumber = Number(player.kbm_tier ?? player.live_tier ?? player.tier ?? 0);
-  const tier = TIER_NAMES[Number.isInteger(tierNumber) ? tierNumber : 0] ?? 'Unranked';
+  const tier = reference.tierName(Number.isInteger(tierNumber) ? tierNumber : 0);
   const name = /^\d+$/.test(playerId) && Number(playerId) > 0
     ? `[${playerName}](${webUrl}/players/${encodeURIComponent(playerId)})`
     : playerName;
@@ -150,7 +107,7 @@ function currentPlayerLine(player: Record<string, unknown>, sourcePlayerId: stri
   return `${marker}**${champion}** · ${name}${details.length > 0 ? ` · ${details.join(' · ')}` : ''}`;
 }
 
-export function buildCurrentPayload(result: Record<string, unknown>, webUrl: string): DiscordMessagePayload {
+export function buildCurrentPayload(result: Record<string, unknown>, webUrl: string, reference: ReferenceCache): DiscordMessagePayload {
   const match = record(result.match);
   const players = Array.isArray(result.players) ? result.players.map(record) : [];
   const playerId = String(result.player_id ?? match.source_player_id ?? '');
@@ -175,25 +132,29 @@ export function buildCurrentPayload(result: Record<string, unknown>, webUrl: str
 
   const matchId = String(match.match_id);
   const queueId = Number(match.queue_id ?? 0);
-  const queue = QUEUE_LABELS[queueId] ?? (queueId > 0 ? `Queue #${queueId}` : 'Unknown queue');
+  const queue = reference.queueLabel(queueId);
   const map = cleanDiscordText(String(match.map ?? '').replace(/^(?:(?:live|ranked|wip)\s+)+/i, ''), 'Unknown map');
   const region = cleanDiscordText(match.region, 'Unknown region');
   const detectedAt = String(match.detected_at ?? '');
-  const estimate = estimateLiveTeamWinChance(players);
+  // Win-chance is owned by the backend live read-model (ranked only). The bot
+  // only formats the backend-provided team_one/two_win_chance fields.
+  const teamOneChance = numericMetric(result.team_one_win_chance);
+  const teamTwoChance = numericMetric(result.team_two_win_chance);
+  const hasWinChance = teamOneChance != null && teamTwoChance != null;
   const team = (taskForce: number) => players
     .filter((player) => Number(player.task_force) === taskForce)
-    .map((player) => currentPlayerLine(player, playerId, webUrl))
+    .map((player) => currentPlayerLine(player, playerId, webUrl, reference))
     .join('\n') || 'Lobby details unavailable.';
   const embed: APIEmbed = {
     color: accent,
     title: `${map} · Live match`,
     description: `**${queue}** · ${region}\nMatch ID \`${matchId}\``,
     fields: [
-      { name: estimate ? `Team 1 · ${estimate.teamOne}% win chance` : 'Team 1', value: team(1), inline: true },
-      { name: estimate ? `Team 2 · ${estimate.teamTwo}% win chance` : 'Team 2', value: team(2), inline: true },
+      { name: hasWinChance ? `Team 1 · ${Math.round(teamOneChance!)}% win chance` : 'Team 1', value: team(1), inline: true },
+      { name: hasWinChance ? `Team 2 · ${Math.round(teamTwoChance!)}% win chance` : 'Team 2', value: team(2), inline: true },
     ],
     footer: {
-      text: `${estimate ? 'Estimate blends queue ELO with global win rate · ' : ''}▸ marks the requested player · Live lobby snapshot`,
+      text: `${hasWinChance ? 'Win chance is estimated by the PaladinsCat backend · ' : ''}▸ marks the requested player · Live lobby snapshot`,
     },
   };
   if (!Number.isNaN(Date.parse(detectedAt))) embed.timestamp = new Date(detectedAt).toISOString();
@@ -255,6 +216,7 @@ export function buildChampionPayload(
   result: Record<string, unknown>,
   webUrl: string,
   lobbyLabel = 'Global ranked lobbies',
+  reference: ReferenceCache = new ReferenceCache(),
 ): DiscordMessagePayload {
   const champion = record(result.champion);
   const stats = record(result.stats);
@@ -273,10 +235,10 @@ export function buildChampionPayload(
     });
   };
   const averageTier = numericMetric(stats.avg_league_tier);
-  const roundedTier = averageTier == null ? 0 : Math.max(0, Math.min(TIER_NAMES.length - 1, Math.round(averageTier)));
+  const roundedTier = averageTier == null ? 0 : Math.max(0, Math.min(27, Math.round(averageTier)));
   const tierValue = averageTier == null || averageTier <= 0
     ? '—'
-    : `**${TIER_NAMES[roundedTier]}**\n${averageTier.toFixed(1)} average`;
+    : `**${reference.tierName(roundedTier)}**\n${averageTier.toFixed(1)} average`;
   const winRate = numericMetric(stats.win_rate);
   const recordValue = [
     winRate == null ? '**—** win rate' : `**${winRate.toFixed(1)}%** win rate`,

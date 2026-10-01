@@ -4,6 +4,7 @@ import type { ChatInputCommandInteraction } from 'discord.js';
 import { PaladinsCatApi } from '../src/api-client.js';
 import { CommandHandler } from '../src/commands.js';
 import type { RenderService } from '../src/render-service.js';
+import { ReferenceCache } from '../src/reference-cache.js';
 
 type MockInteraction = ChatInputCommandInteraction & {
   replies: unknown[];
@@ -137,7 +138,9 @@ function backendFetch(requests: string[]): typeof fetch {
 test('save then every player command resolves the Discord-linked default end to end', async () => {
   const requests: string[] = [];
   const api = new PaladinsCatApi('http://backend:3005', 1000, { fetchImpl: backendFetch(requests) });
-  const handler = new CommandHandler(api, {} as RenderService, 'https://paladinscat.com');
+  const reference = new ReferenceCache();
+  reference.seed([{ queue_id: 486, queue_name: 'Ranked Siege' }], [{ tier_id: 15, tier_name: 'Gold I' }, { tier_id: 21, tier_name: 'Diamond V' }, { tier_id: 26, tier_name: 'Master' }]);
+  const handler = new CommandHandler(api, {} as RenderService, 'https://paladinscat.com', reference);
   const userId = 'test-user-1';
 
   const save = interaction('save', userId, { player: 'NabiCookTV' });
@@ -200,7 +203,9 @@ test('save then every player command resolves the Discord-linked default end to 
 test('profile without an argument or saved player returns the actionable missing-player error', async () => {
   const requests: string[] = [];
   const api = new PaladinsCatApi('http://backend:3005', 1000, { fetchImpl: backendFetch(requests) });
-  const handler = new CommandHandler(api, {} as RenderService, 'https://paladinscat.com');
+  const reference = new ReferenceCache();
+  reference.seed([{ queue_id: 486, queue_name: 'Ranked Siege' }], [{ tier_id: 15, tier_name: 'Gold I' }, { tier_id: 21, tier_name: 'Diamond V' }, { tier_id: 26, tier_name: 'Master' }]);
+  const handler = new CommandHandler(api, {} as RenderService, 'https://paladinscat.com', reference);
   const profile = interaction('profile', 'test-user-2');
 
   await handler.handle(profile);
@@ -218,7 +223,9 @@ test('profile without an argument or saved player returns the actionable missing
 test('an explicit profile player overrides the saved-player lookup', async () => {
   const requests: string[] = [];
   const api = new PaladinsCatApi('http://backend:3005', 1000, { fetchImpl: backendFetch(requests) });
-  const handler = new CommandHandler(api, {} as RenderService, 'https://paladinscat.com');
+  const reference = new ReferenceCache();
+  reference.seed([{ queue_id: 486, queue_name: 'Ranked Siege' }], [{ tier_id: 15, tier_name: 'Gold I' }, { tier_id: 21, tier_name: 'Diamond V' }, { tier_id: 26, tier_name: 'Master' }]);
+  const handler = new CommandHandler(api, {} as RenderService, 'https://paladinscat.com', reference);
   const profile = interaction('profile', 'test-user-1', { player: 'OtherPlayer' });
 
   await handler.handle(profile);

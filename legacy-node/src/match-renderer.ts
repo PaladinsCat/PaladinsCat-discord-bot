@@ -3,6 +3,7 @@ import path from 'node:path';
 import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 import type { LoadoutRenderRecord, MatchPlayer, MatchRecord } from './types.js';
 import { AssetCatalog } from './asset-catalog.js';
+import { ReferenceCache } from './reference-cache.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -10,7 +11,6 @@ const MATCH_SCALE = 1.6;
 const LOADOUT_SCALE = 1;
 const TEMPLATE_VERSION = 14;
 const LOADOUT_TEMPLATE_VERSION = 9;
-const TIER_NAMES = ['Unranked', 'Bronze V', 'Bronze IV', 'Bronze III', 'Bronze II', 'Bronze I', 'Silver V', 'Silver IV', 'Silver III', 'Silver II', 'Silver I', 'Gold V', 'Gold IV', 'Gold III', 'Gold II', 'Gold I', 'Platinum V', 'Platinum IV', 'Platinum III', 'Platinum II', 'Platinum I', 'Diamond V', 'Diamond IV', 'Diamond III', 'Diamond II', 'Diamond I', 'Master', 'Grandmaster'];
 
 const QUEUE_PRESENTATION: Record<number, { category: string; mode: string; ranked: boolean }> = {
   424: { category: 'Casual', mode: 'Siege', ranked: false },
@@ -37,6 +37,14 @@ function xml(value: unknown) {
 }
 
 function number(value: number | undefined) { return Math.round(Number(value ?? 0)).toLocaleString('en-US'); }
+// R-E: a genuinely-absent metric renders as an em dash, never an invented 0.
+// Real values (including a true 0) format identically to number().
+function numberOrNull(value: number | null | undefined) { return value == null ? '—' : Math.round(value).toLocaleString('en-US'); }
+function metricValue(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 function score(value: number | null | undefined) { return value ?? '?'; }
 function compact(value: number) { return Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(1)}k` : number(value); }
 function duration(seconds: number) { return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`; }
@@ -63,7 +71,11 @@ function utcTimestamp(value: string) {
   const timePart = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' });
   return `${datePart} · ${timePart} UTC`;
 }
-function damage(player: MatchPlayer) { return Number(player.damage_done_physical || player.damage_done_in_hand || 0); }
+function damage(player: MatchPlayer): number | null {
+  const physical = metricValue(player.damage_done_physical);
+  const inHand = metricValue(player.damage_done_in_hand);
+  return physical ?? inHand;
+}
 type TierSource = Partial<Pick<MatchPlayer, 'kbm_tier' | 'tier' | 'league_tier' | 'kbm_rank' | 'profile_snapshot'>>;
 
 function baseTier(player: TierSource) {
@@ -151,7 +163,7 @@ function defaultChromiumPath() {
   return '/usr/bin/chromium-browser';
 }
 
-type Metrics = { credits: number; objective: number; damage: number; taken: number; shielding: number; healing: number };
+type Metrics = { credits: number | null; objective: number | null; damage: number | null; taken: number | null; shielding: number | null; healing: number | null };
 
 /**
  * Browser renderer for the Discord attachment. The CSS is extracted directly
@@ -163,13 +175,15 @@ export class MatchRenderer {
   readonly theme: MatchImageTheme;
   private readonly css: string;
   private readonly cheaterPatternUrl: string;
+  private readonly reference: ReferenceCache;
   private browserPromise: Promise<Browser> | null = null;
 
   constructor(
     private readonly assets: AssetCatalog,
-    options: { theme?: MatchImageTheme; templatePath?: string; chromiumPath?: string } = {},
+    options: { theme?: MatchImageTheme; templatePath?: string; chromiumPath?: string; reference?: ReferenceCache } = {},
   ) {
     this.theme = options.theme ?? DEFAULT_MATCH_IMAGE_THEME;
+    this.reference = options.reference ?? new ReferenceCache();
     const templatePath = options.templatePath ?? defaultTemplatePath();
     const template = fs.readFileSync(templatePath, 'utf8');
     const match = template.match(/<style>([\s\S]*?)<\/style>/i);
@@ -381,7 +395,7 @@ export class MatchRenderer {
     const rightBanMarkup = ranked
       ? `<div class="score-bans right"><span class="ban-label">Bans</span><div class="ban-picks">${banSet(bans.slice(split))}</div></div>`
       : '';
-    const tierName = TIER_NAMES[averageTier] ?? 'Unranked';
+    const tierName = this.reference.tierName(averageTier);
     const tierMarkup = `<div class="tier-meta"${ranked ? '' : ' aria-hidden="true"'}><img src="${assetUrl(this.assets.rankIcon(averageTier))}" alt="${ranked ? xml(tierName) : ''}"/><div><div class="meta-value">${xml(tierName)}</div><div class="meta-label">Avg tier</div></div></div>`;
     const statusMarkup = [
       `<span class="status-tag ${ranked ? 'ranked' : 'casual'}">${ranked ? 'Ranked' : 'Casual'}</span>`,
@@ -397,7 +411,7 @@ export class MatchRenderer {
     const players = record.players.filter((player) => player.task_force === team).slice(0, 5);
     const facts = new Map((record.facts ?? []).map((fact) => [String(fact.player_id), fact]));
     const metrics = players.map((player) => this.metrics(player));
-    const max = (key: keyof Metrics) => Math.max(0, ...metrics.map((values) => values[key]));
+    const max = (key: keyof Metrics) => Math.max(0, ...metrics.map((values) => values[key] ?? 0));
     return players.map((player, index) => {
       const values = metrics[index]!;
       const playerTier = matchPlayerDisplayTier(player);
@@ -405,7 +419,7 @@ export class MatchRenderer {
       const talent = fact?.talents?.[0];
       const talentIcon = talent ? this.assets.talentIcon(talent.talent_id, talent.champion_name || player.champion_name, talent.talent_name) : null;
       const peak = (key: keyof Metrics, requireValue = false) => values[key] === max(key) && (!requireValue || values[key] > 0) ? ' peak' : '';
-      const level = Number(player.final_match_level ?? 0) || Number(player.account_level ?? 0);
+      const level = metricValue(player.final_match_level) ?? metricValue(player.account_level);
       const cheater = Boolean(player.cheater);
       const suspicious = !cheater && Number(player.sus_count ?? 0) > 0;
       const verificationBadge = (player.verified ?? player.profile_snapshot?.verified)
@@ -418,25 +432,33 @@ export class MatchRenderer {
         const talentMarkup = talentIcon
           ? `<img class="talent-icon" src="${assetUrl(talentIcon)}" alt="${xml(talent?.talent_name ?? '')}"/>`
           : '<span class="talent-icon talent-empty" aria-label="Talent unavailable">—</span>';
-        return `<div class="player-row grid-row${cheater ? ' cheater-row' : ''}"><div class="champion-wrap"><img class="champion-icon" src="${assetUrl(this.assets.championIcon(player.champion_name))}" alt="${xml(player.champion_name)}"/>${partyNumber ? `<span class="party-badge" title="Party ${partyNumber}">${partyNumber}</span>` : ''}</div><div class="rank"><img src="${assetUrl(this.assets.rankIcon(playerTier))}" alt="${xml(TIER_NAMES[playerTier] ?? 'Unranked')}"/></div><div class="level">${number(level)}</div><div class="player"><div class="player-name"><span class="player-name-text">${xml(player.player_name || 'PRIVATE')}</span>${verificationBadge}${moderationTag}</div><div class="player-sub">PID ${xml(player.player_id || 0)}</div></div><div class="player-elo">${player.queue_elo ? number(player.queue_elo) : '—'}</div>${talentMarkup}<div class="metric credits${peak('credits')}"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${number(values.credits)}</div><div class="metric kda">${player.kills} / ${player.deaths} / ${player.assists}</div><div class="metric obj${peak('objective')}">${number(values.objective)}</div><div class="metric damage${peak('damage')}">${number(values.damage)}</div><div class="metric taken${peak('taken')}">${number(values.taken)}</div><div class="metric shield${peak('shielding', true)}">${number(values.shielding)}</div><div class="metric heal${peak('healing', true)}">${number(values.healing)}</div></div>`;
+        return `<div class="player-row grid-row${cheater ? ' cheater-row' : ''}"><div class="champion-wrap"><img class="champion-icon" src="${assetUrl(this.assets.championIcon(player.champion_name))}" alt="${xml(player.champion_name)}"/>${partyNumber ? `<span class="party-badge" title="Party ${partyNumber}">${partyNumber}</span>` : ''}</div><div class="rank"><img src="${assetUrl(this.assets.rankIcon(playerTier))}" alt="${xml(this.reference.tierName(playerTier))}"/></div><div class="level">${numberOrNull(level)}</div><div class="player"><div class="player-name"><span class="player-name-text">${xml(player.player_name || 'PRIVATE')}</span>${verificationBadge}${moderationTag}</div><div class="player-sub">PID ${xml(player.player_id || 0)}</div></div><div class="player-elo">${player.queue_elo ? number(player.queue_elo) : '—'}</div>${talentMarkup}<div class="metric credits${peak('credits')}"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${numberOrNull(values.credits)}</div><div class="metric kda">${player.kills} / ${player.deaths} / ${player.assists}</div><div class="metric obj${peak('objective')}">${numberOrNull(values.objective)}</div><div class="metric damage${peak('damage')}">${numberOrNull(values.damage)}</div><div class="metric taken${peak('taken')}">${numberOrNull(values.taken)}</div><div class="metric shield${peak('shielding', true)}">${numberOrNull(values.shielding)}</div><div class="metric heal${peak('healing', true)}">${numberOrNull(values.healing)}</div></div>`;
     }).join('');
   }
 
   private summary(record: MatchRecord, team: 1 | 2) {
     const players = record.players.filter((player) => player.task_force === team).slice(0, 5);
     const metrics = players.map((player) => this.metrics(player));
-    const sum = (key: keyof Metrics) => metrics.reduce((total, values) => total + values[key], 0);
-    const divisor = Math.max(1, players.length);
-    const level = Math.round(players.reduce((total, player) => total + (Number(player.final_match_level ?? 0) || Number(player.account_level ?? 0)), 0) / divisor);
-    const elo = Math.round(players.reduce((total, player) => total + Number(player.queue_elo ?? 0), 0) / divisor);
+    const sum = (key: keyof Metrics) => metrics.reduce((total, values) => total + (values[key] ?? 0), 0);
+    // R-E: average only over players that actually carry the value. Real ranked
+    // data has it for every player, so the average is unchanged; when nobody
+    // has it, render '—' instead of an invented 0.
+    const averageLevel = (() => {
+      const values = players.map((player) => metricValue(player.final_match_level) ?? metricValue(player.account_level)).filter((value): value is number => value != null);
+      return values.length ? Math.round(values.reduce((total, value) => total + value, 0) / values.length) : null;
+    })();
+    const averageElo = (() => {
+      const values = players.map((player) => metricValue(player.queue_elo)).filter((value): value is number => value != null);
+      return values.length ? Math.round(values.reduce((total, value) => total + value, 0) / values.length) : null;
+    })();
     const kda = `${players.reduce((total, player) => total + player.kills, 0)} / ${players.reduce((total, player) => total + player.deaths, 0)} / ${players.reduce((total, player) => total + player.assists, 0)}`;
     const won = record.match.winning_task_force === team;
     const classes = team === 1 ? 'team-one' : 'team-two';
-    return `<div class="team-bar ${classes} grid-row" id="team-${team === 1 ? 'one' : 'two'}-summary"><div class="team-heading"><div class="team-name">Team ${team} <span class="result">${won ? 'Win' : 'Defeat'}</span></div></div><div class="team-total level-total average-total"><span class="team-average-label">AVG</span>${number(level)}</div><div class="team-total elo-total average-total"><span class="team-average-label">AVG</span>${number(elo)}</div><div class="team-total credits-total"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${compact(sum('credits'))}</div><div class="team-total kda-total">${kda}</div><div class="team-total objective-total">${compact(sum('objective'))}</div><div class="team-total damage-total">${compact(sum('damage'))}</div><div class="team-total taken-total">${compact(sum('taken'))}</div><div class="team-total shield-total">${compact(sum('shielding'))}</div><div class="team-total healing-total">${compact(sum('healing'))}</div></div>`;
+    return `<div class="team-bar ${classes} grid-row" id="team-${team === 1 ? 'one' : 'two'}-summary"><div class="team-heading"><div class="team-name">Team ${team} <span class="result">${won ? 'Win' : 'Defeat'}</span></div></div><div class="team-total level-total average-total"><span class="team-average-label">AVG</span>${numberOrNull(averageLevel)}</div><div class="team-total elo-total average-total"><span class="team-average-label">AVG</span>${numberOrNull(averageElo)}</div><div class="team-total credits-total"><img src="${assetUrl(this.assets.icon('Currency_Credits'))}" alt=""/>${compact(sum('credits'))}</div><div class="team-total kda-total">${kda}</div><div class="team-total objective-total">${compact(sum('objective'))}</div><div class="team-total damage-total">${compact(sum('damage'))}</div><div class="team-total taken-total">${compact(sum('taken'))}</div><div class="team-total shield-total">${compact(sum('shielding'))}</div><div class="team-total healing-total">${compact(sum('healing'))}</div></div>`;
   }
 
   private metrics(player: MatchPlayer): Metrics {
-    return { credits: Number(player.gold_earned ?? 0), objective: Number(player.objective_assists ?? 0), damage: damage(player), taken: Number(player.damage_taken ?? 0), shielding: Number(player.damage_mitigated ?? 0), healing: Number(player.healing ?? 0) };
+    return { credits: metricValue(player.gold_earned), objective: metricValue(player.objective_assists), damage: damage(player), taken: metricValue(player.damage_taken), shielding: metricValue(player.damage_mitigated), healing: metricValue(player.healing) };
   }
 
   private averageTier(players: MatchPlayer[]) {

@@ -13,6 +13,7 @@ import {
 } from 'discord.js';
 import { PaladinsCatApi, PaladinsCatApiError } from './api-client.js';
 import { buildPlayerProfileMessage } from './player-profile-message.js';
+import type { ReferenceCache } from './reference-cache.js';
 import {
   buildChampionPayload,
   buildCurrentPayload,
@@ -122,7 +123,7 @@ export class CommandHandler {
   private readonly loadoutSessions = new Map<string, LoadoutSession>();
   private championCache: { values: Champion[]; expiresAt: number } | null = null;
 
-  constructor(private readonly api: PaladinsCatApi, private readonly renders: RenderService, private readonly webUrl: string) {}
+  constructor(private readonly api: PaladinsCatApi, private readonly renders: RenderService, private readonly webUrl: string, private readonly reference: ReferenceCache) {}
 
   async warmAutocomplete(): Promise<void> {
     await this.championsForAutocomplete();
@@ -215,7 +216,7 @@ export class CommandHandler {
   private async player(interaction: ChatInputCommandInteraction) {
     const input = await this.playerInput(interaction);
     const response = await this.api.discordPlayer(input.query);
-    return interaction.editReply(buildPlayerProfileMessage(response, this.webUrl));
+    return interaction.editReply(buildPlayerProfileMessage(response, this.webUrl, this.reference));
   }
 
   private async save(interaction: ChatInputCommandInteraction) {
@@ -255,7 +256,7 @@ export class CommandHandler {
   private async current(interaction: ChatInputCommandInteraction) {
     const input = await this.playerInput(interaction);
     const result = await this.api.liveMatch(input.query);
-    return interaction.editReply(buildCurrentPayload(result, this.webUrl));
+    return interaction.editReply(buildCurrentPayload(result, this.webUrl, this.reference));
   }
 
   private async loadout(interaction: ChatInputCommandInteraction) {
@@ -303,7 +304,7 @@ export class CommandHandler {
     const name = interaction.options.getString('champion', true);
     const scope = rankedLobbyScope(interaction.options.getString('lobby'));
     const result = await this.api.championPageData(name.toLocaleLowerCase(), scope);
-    return interaction.editReply(buildChampionPayload(result, this.webUrl, scope.label));
+    return interaction.editReply(buildChampionPayload(result, this.webUrl, scope.label, this.reference));
   }
 
   private async maps(interaction: ChatInputCommandInteraction) {

@@ -8,6 +8,7 @@ import { commandData, CommandHandler } from './commands.js';
 import { startHealthServer } from './health.js';
 import { syncDiscordCommands } from './command-registration.js';
 import { ServiceTokenProvider } from './service-auth.js';
+import { ReferenceCache } from './reference-cache.js';
 
 const config = loadConfig();
 const api = new PaladinsCatApi(config.apiUrl, 12000, {
@@ -15,7 +16,17 @@ const api = new PaladinsCatApi(config.apiUrl, 12000, {
   matchTimeoutMs: config.matchLookupTimeoutMs,
   serviceAuth: config.serviceAuth ? new ServiceTokenProvider(config.serviceAuth) : undefined,
 });
-const renderer = new MatchRenderer(new AssetCatalog(config.assetRoot));
+// Load the reference cache (queue names + tier names) before serving requests.
+// The backend reference tables are the single source of truth (SSoT); the bot
+// only formats what the backend provides (R-A/R-B/R-F).
+const reference = new ReferenceCache();
+try {
+  await reference.load(api);
+  console.log(`[bot] reference cache loaded (queues: ${reference.isLoaded ? 'ok' : 'partial'}, tiers: ${reference.isLoaded ? 'ok' : 'partial'})`);
+} catch (error) {
+  console.warn(`[bot] reference cache load failed: ${error instanceof Error ? error.message : error}`);
+}
+const renderer = new MatchRenderer(new AssetCatalog(config.assetRoot), { reference });
 const renders = new RenderService(renderer, {
   concurrency: config.renderConcurrency,
   queueLimit: config.renderQueueLimit,
@@ -27,7 +38,7 @@ const renders = new RenderService(renderer, {
   cacheTtlMs: config.renderCacheTtlMs,
 });
 let discordState = config.mode === 'dummy' ? 'dummy' : 'starting';
-const health = startHealthServer(config.healthPort, renders, api, config.webUrl, () => ({ mode: config.mode, discord: discordState }));
+const health = startHealthServer(config.healthPort, renders, api, config.webUrl, () => ({ mode: config.mode, discord: discordState }), reference);
 let client: Client | null = null;
 void renders.warm()
   .then(() => console.log('[bot] Chromium renderer warmed'))
@@ -37,7 +48,7 @@ if (config.mode === 'dummy') {
   console.log(`[bot] dummy mode; health listening on ${config.healthPort}`);
 } else {
   client = new Client({ intents: [GatewayIntentBits.Guilds] });
-  const commands = new CommandHandler(api, renders, config.webUrl);
+  const commands = new CommandHandler(api, renders, config.webUrl, reference);
 
   client.once(Events.ClientReady, async (ready) => {
     discordState = 'ready';

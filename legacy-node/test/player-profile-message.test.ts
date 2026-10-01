@@ -9,13 +9,14 @@ test('player profile message uses a compact, Discord-safe profile layout', () =>
     player: {
       id: '42', name: 'Name_with_*markdown*', level: 999, region: 'NA', platform: 'Steam',
       title: '<font color="#ff00ff">Champion *of* Tides</font>', wins: 5506, losses: 3830,
+      win_rate: 59.0, kbm_win_rate: 63.2, controller_win_rate: 55.0,
       hours_played: 2920, kbm_tier: 26, kbm_rank: 12, kbm_points: 1234, kbm_wins: 24, kbm_losses: 14,
       controller_tier: 0, avg_dpm: 5234.6, avg_hpm: null, avg_mpm: 455.2,
       avatar_id: 23226, avatar_url: 'https://cdn.example/avatar.png', last_updated: '2026-07-14T00:00:00Z',
       created_datetime: '2018-11-25T00:00:00Z', last_login_datetime: '2026-07-14T00:00:00Z',
     },
     profileRefresh: { refreshed_at: '2026-07-14T00:00:00Z' },
-    globalStats: { kills: 16869, deaths: 9454, assists: 23460, wins: 964, losses: 779 },
+    globalStats: { kills: 16869, deaths: 9454, assists: 23460, wins: 964, losses: 779, kda: 3.03 },
   }, 'https://paladinscat.com');
 
   assert.deepEqual(validateDiscordMessage(payload), []);
@@ -47,6 +48,8 @@ test('player profile message uses a compact, Discord-safe profile layout', () =>
 });
 
 test('player profile does not report missing all-zero career totals as a real KDA', () => {
+  // KDA is owned by the backend (globalStats.kda). Absent → no line (R-E);
+  // a real 0.00 from the backend → rendered as 0.00.
   const missing = buildPlayerProfileMessage({
     player: { id: '42', name: 'Missing totals', wins: 10, losses: 5 },
     globalStats: { wins: 0, losses: 0, kills: 0, deaths: 0, assists: 0 },
@@ -56,7 +59,7 @@ test('player profile does not report missing all-zero career totals as a real KD
 
   const legitimateZero = buildPlayerProfileMessage({
     player: { id: '43', name: 'Zero KDA', wins: 1, losses: 0 },
-    globalStats: { wins: 1, losses: 0, kills: 0, deaths: 1, assists: 0 },
+    globalStats: { wins: 1, losses: 0, kills: 0, deaths: 1, assists: 0, kda: 0 },
   }, 'https://paladinscat.com');
   const zeroGeneral = legitimateZero.embeds?.[0]?.fields?.find((field) => field.name === 'General')?.value ?? '';
   assert.match(zeroGeneral, /Global KDA\s+: 0\.00/);
