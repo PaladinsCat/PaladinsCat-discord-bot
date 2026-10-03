@@ -136,6 +136,16 @@ fn integer_option(name: &str, description: &str) -> CommandOption {
     option
 }
 
+fn history_refresh_option() -> CommandOption {
+    let mut option = string_option(
+        "refresh",
+        "Fetch newest history now (5-second spam protection)",
+        false,
+    );
+    option.kind = CommandOptionType::Boolean;
+    option
+}
+
 fn choices(values: &[(&str, &str)]) -> Vec<CommandOptionChoice> {
     values
         .iter()
@@ -235,7 +245,7 @@ pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
         command(
             "match",
             "Render a match result image",
-            vec![option_match_id()],
+            vec![option_match_id(), history_refresh_option()],
         ),
         command(
             "history",
@@ -262,6 +272,7 @@ pub fn all_command_definitions(social_commands_enabled: bool) -> Vec<Command> {
                     choices(&[("Wins", "Winner"), ("Losses", "Loser")]),
                 ),
                 integer_option("page", "History page (10 matches per page)"),
+                history_refresh_option(),
             ],
         ),
         command(
@@ -557,5 +568,23 @@ mod tests {
     #[test]
     fn match_id_is_optional_for_saved_player_fallback() {
         assert_eq!(option_match_id().required, Some(false));
+    }
+
+    #[test]
+    fn history_and_match_offer_optional_immediate_refresh() {
+        for name in ["history", "match"] {
+            let commands = all_command_definitions(false);
+            let command = commands
+                .iter()
+                .find(|command| command.name == name)
+                .unwrap();
+            let refresh = command
+                .options
+                .iter()
+                .find(|option| option.name == "refresh")
+                .unwrap();
+            assert_eq!(refresh.kind, CommandOptionType::Boolean);
+            assert_eq!(refresh.required, Some(false));
+        }
     }
 }

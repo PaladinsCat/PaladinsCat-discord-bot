@@ -101,11 +101,63 @@ mod tests {
     }
 
     #[test]
-    fn latest_player_match_forces_one_row_history_read_through() {
+    fn history_refresh_url_is_encoded_and_scoped_to_discord_service() {
         assert_eq!(
-            latest_player_match_url("http://backend:3005/api/v1", "716515038"),
-            "http://backend:3005/api/v1/players/716515038/matches?limit=1&offset=0"
+            player_history_url("http://backend:3005/api/v1", "716515038", 1, &HistoryFilters::default(), true),
+            "http://backend:3005/api/v1/players/discord/history?playerId=716515038&limit=1&offset=0&refresh=true"
         );
+    }
+
+    #[tokio::test]
+    async fn history_and_latest_match_post_refresh_without_bot_cache() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let responder = tokio::spawn(async move {
+            for (path, body) in [
+                ("playerId=716515038&limit=11&offset=10&refresh=false&queueId=486&championId=2205&winStatus=Win", r#"[{"match_id":"1281335238"}]"#),
+                ("playerId=716515038&limit=1&offset=0&refresh=true", r#"[{"match_id":"1281335239"}]"#),
+                ("playerId=716515038&limit=1&offset=0&refresh=true", "null"),
+                ("playerId=716515038&limit=1&offset=0&refresh=true", "invalid JSON"),
+            ] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0u8; 4096];
+                let count = socket.read(&mut request).await.unwrap();
+                let request = std::str::from_utf8(&request[..count]).unwrap();
+                assert!(request.starts_with(&format!("POST /api/v1/players/discord/history?{path} HTTP/1.1\r\n")), "{request}");
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let client = ApiClient::new(&format!("http://{address}/api"), None);
+        let filters = HistoryFilters {
+            offset: 10,
+            queue_id: Some("486".into()),
+            champion_id: Some("2205".into()),
+            win_status: Some("Win".into()),
+        };
+        let rows = client
+            .player_history("716515038", 11, &filters, false)
+            .await
+            .unwrap();
+        assert_eq!(rows[0]["match_id"], "1281335238");
+        let latest = client
+            .latest_player_match("716515038", true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest["match_id"], "1281335239");
+        assert!(client
+            .latest_player_match("716515038", true)
+            .await
+            .unwrap()
+            .is_none());
+        let error = client
+            .latest_player_match("716515038", true)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code.as_deref(), Some("HISTORY_INVALID_RESPONSE"));
+        responder.await.unwrap();
     }
 
     #[test]
@@ -257,12 +309,52 @@ fn json_id(value: Option<&serde_json::Value>) -> Option<String> {
     })
 }
 
-fn latest_player_match_url(base: &str, player_id: &str) -> String {
-    format!(
-        "{}/players/{}/matches?limit=1&offset=0",
-        base,
-        encode(player_id)
-    )
+fn player_history_url(
+    base: &str,
+    player_id: &str,
+    limit: usize,
+    filters: &HistoryFilters,
+    refresh: bool,
+) -> String {
+    let mut url = format!(
+        "{base}/players/discord/history?playerId={}&limit={limit}&offset={}&refresh={refresh}",
+        encode(player_id),
+        filters.offset
+    );
+    for (key, value) in [
+        ("queueId", filters.queue_id.as_deref()),
+        ("championId", filters.champion_id.as_deref()),
+        ("winStatus", filters.win_status.as_deref()),
+    ] {
+        if let Some(value) = value.filter(|value| !value.is_empty()) {
+            url.push_str(&format!("&{key}={}", encode(value)));
+        }
+    }
+    url
+}
+
+fn history_request_error(error: reqwest::Error) -> ApiError {
+    let (code, message) = if error.is_timeout() {
+        (
+            "HISTORY_TIMEOUT",
+            "Match history refresh timed out after 60 seconds. Try refreshing history again.",
+        )
+    } else if error.is_decode() {
+        (
+            "HISTORY_INVALID_RESPONSE",
+            "PaladinsCat returned unreadable match history. Try refreshing history again.",
+        )
+    } else {
+        (
+            "HISTORY_UNAVAILABLE",
+            "Could not retrieve match history from PaladinsCat. Try refreshing history again.",
+        )
+    };
+    ApiError {
+        status: error.status().map(|status| status.as_u16()),
+        code: Some(code.into()),
+        message: message.into(),
+    }
 }
 
 const PUBLIC_MODERATION_FIELDS: [&str; 20] = [
@@ -831,37 +923,37 @@ impl ApiClient {
     /// Get player match history.
     ///
     /// Mirrors TS: playerHistoryById(playerId, limit).
-    /// Route: GET /players/{id}/matches?limit={}
-    /// Uses slow client (125s timeout) — large history sets can be slow.
+    /// POST /players/discord/history with a one-minute deadline. The backend
+    /// owns the 30-second freshness window and explicit refresh spam guard.
     ///
     /// Encode nonempty filters and pass limit/offset without local clamping; an array is returned
     /// directly and other JSON is wrapped as one row. HTTP/auth/JSON failures return ApiError.
     ///
-    /// I/O: `&str` (player id), `usize` (limit), `&HistoryFilters` -> `Result<Vec<serde_json::Value>, ApiError>`
-    /// refs: endpoints: GET /players/{id}/matches
+    /// I/O: player id, limit, filters, explicit refresh -> history rows or ApiError.
+    /// refs: endpoints: POST /players/discord/history
     pub async fn player_history(
         &self,
         player_id: &str,
         limit: usize,
         filters: &HistoryFilters,
+        refresh: bool,
     ) -> Result<Vec<serde_json::Value>, ApiError> {
-        let mut url = format!(
-            "{}/players/{}/matches?limit={}&offset={}",
-            self.base,
-            encode(player_id),
-            limit,
-            filters.offset
-        );
-        for (key, value) in [
-            ("queueId", filters.queue_id.as_deref()),
-            ("championId", filters.champion_id.as_deref()),
-            ("winStatus", filters.win_status.as_deref()),
-        ] {
-            if let Some(value) = value.filter(|value| !value.is_empty()) {
-                url.push_str(&format!("&{key}={}", encode(value)));
-            }
+        let url = player_history_url(&self.base, player_id, limit, filters, refresh);
+        let mut request = self
+            .inner_slow
+            .post(self.request_url(&url)?)
+            .timeout(Duration::from_secs(60));
+        if let Some(token) = self.bearer().await? {
+            request = request.bearer_auth(token);
         }
-        let val: serde_json::Value = self.get_json_slow(&url).await?;
+        let response = request.send().await.map_err(history_request_error)?;
+        if !response.status().is_success() {
+            return Err(response_error(
+                response.status(),
+                &response.text().await.map_err(history_request_error)?,
+            ));
+        }
+        let val: serde_json::Value = response.json().await.map_err(history_request_error)?;
         match &val {
             serde_json::Value::Array(arr) => Ok(arr.to_vec()),
             _ => Ok(vec![val]),
@@ -869,27 +961,26 @@ impl ApiClient {
     }
 
     /// Return the newest match observed for a player after applying the
-    /// backend-owned three-minute history TTL. Freshness is backend-owned; the
-    /// read carries no refresh flag so the developer-API guard is not tripped.
+    /// backend-owned 30-second history TTL, or explicitly refresh via the
+    /// Discord-only service endpoint when requested.
     ///
     /// Request limit=1 using the slow client; return the first array row, None
     /// for null/empty arrays, or the single JSON value. HTTP/auth/JSON failures
     /// return ApiError.
     ///
-    /// I/O: `&str` (player id) -> `Result<Option<serde_json::Value>, ApiError>`
-    /// refs: endpoints: GET /players/{id}/matches
+    /// I/O: player id, explicit refresh -> newest history row or ApiError.
+    /// refs: endpoints: POST /players/discord/history
     pub async fn latest_player_match(
         &self,
         player_id: &str,
+        refresh: bool,
     ) -> Result<Option<serde_json::Value>, ApiError> {
-        let value = self
-            .get_json_slow(&latest_player_match_url(&self.base, player_id))
-            .await?;
-        Ok(match value {
-            serde_json::Value::Array(rows) => rows.into_iter().next(),
-            serde_json::Value::Null => None,
-            row => Some(row),
-        })
+        Ok(self
+            .player_history(player_id, 1, &HistoryFilters::default(), refresh)
+            .await?
+            .into_iter()
+            .next()
+            .filter(|value| !value.is_null()))
     }
 
     /// Get a player's champion roster.

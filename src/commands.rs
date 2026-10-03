@@ -583,7 +583,15 @@ impl Handler {
             if extract_user_id(&interaction).as_deref() != Some(session.user_id.as_str()) {
                 self.reply_ephemeral_text(
                     &interaction,
-                    "Only the player who opened this history can page it.",
+                    "Only the player who opened this history can page or refresh it.",
+                )
+                .await;
+                return;
+            }
+            if !claim_command_rate(&interaction) {
+                self.reply_ephemeral_text(
+                    &interaction,
+                    "Too many history actions. Try again in a few seconds.",
                 )
                 .await;
                 return;
@@ -591,13 +599,19 @@ impl Handler {
             session.page = match action {
                 "next" => session.page.saturating_add(1),
                 "prev" => session.page.saturating_sub(1),
+                "refresh" => 0,
                 _ => session.page,
             };
             session.filters.offset = session.page * 10;
             self.defer_update(&interaction).await;
             match self
                 .api
-                .player_history(&session.player_id, 11, &session.filters)
+                .player_history(
+                    &session.player_id,
+                    11,
+                    &session.filters,
+                    action == "refresh",
+                )
                 .await
             {
                 Ok(mut rows) => {
@@ -967,7 +981,11 @@ impl Handler {
                 if let Err(message) = claim_image_cooldown(&user_id) {
                     return self.reply_text(interaction, message).await;
                 }
-                let latest = match self.api.latest_player_match(&player_id).await {
+                let latest = match self
+                    .api
+                    .latest_player_match(&player_id, opt_boolean(opts, "refresh").unwrap_or(false))
+                    .await
+                {
                     Ok(Some(row)) => row,
                     Ok(None) => {
                         return self
@@ -1103,7 +1121,16 @@ impl Handler {
                     win_status: opt_string(opts, "result"),
                     offset: page * 10,
                 };
-                match self.api.player_history(&id, 11, &filters).await {
+                match self
+                    .api
+                    .player_history(
+                        &id,
+                        11,
+                        &filters,
+                        opt_boolean(opts, "refresh").unwrap_or(false),
+                    )
+                    .await
+                {
                     Ok(mut rows) => {
                         let has_next = rows.len() > 10;
                         rows.truncate(10);
@@ -1780,7 +1807,7 @@ impl Handler {
             },
             "Paladins History" => match self
                 .api
-                .player_history(&id, 10, &HistoryFilters::default())
+                .player_history(&id, 10, &HistoryFilters::default(), false)
                 .await
             {
                 Ok(rows) => {
@@ -2156,6 +2183,12 @@ fn history_components(token: &str, page: usize, has_next: bool, rows: &[Value]) 
                 ButtonStyle::Primary,
                 !has_next,
             ),
+            button(
+                format!("history:{token}:refresh"),
+                "Refresh",
+                ButtonStyle::Secondary,
+                false,
+            ),
         ],
     })];
     let options = rows
@@ -2398,6 +2431,14 @@ mod tests {
             })],
         );
         assert_eq!(components.len(), 2);
+        let payload = serde_json::to_value(&components).unwrap();
+        assert_eq!(
+            payload[0]["components"][2]["custom_id"],
+            "history:token:refresh"
+        );
+        assert!(!payload[0]["components"][2]["disabled"]
+            .as_bool()
+            .unwrap_or_default());
     }
 
     #[test]

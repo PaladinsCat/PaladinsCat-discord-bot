@@ -341,7 +341,16 @@ async fn preview_history(state: &AppState, params: &HashMap<String, String>) -> 
                     win_status: params.get("result").cloned(),
                     offset: param_int(params, "page", 1).saturating_sub(1) * 10,
                 };
-                match state.api.player_history(&id, 10, &filters).await {
+                match state
+                    .api
+                    .player_history(
+                        &id,
+                        10,
+                        &filters,
+                        params.get("refresh").is_some_and(|value| value == "true"),
+                    )
+                    .await
+                {
                     Ok(rows) => serde_json::json!({
                         "type": "history",
                         "player": n,
